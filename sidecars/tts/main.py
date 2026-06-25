@@ -17,6 +17,7 @@ import json
 import os
 import re
 import sys
+import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "shared"))
 from base_sidecar import BaseSidecar
@@ -39,22 +40,37 @@ class TtsSidecar(BaseSidecar):
         self._voice = None       # persistent PiperVoice (piper engine)
         self._kokoro = None      # persistent Kokoro (kokoro engine)
         self._cancel = False
+        self._load_lock = threading.Lock()
 
     def initialize(self) -> None:
-        if self.engine == "kokoro":
-            self._load_kokoro()
-            detail = f"engine=kokoro voice={self.voice_name}"
-        elif self.engine == "piper":
-            # Piper voice names look like en_US-lessac-medium; fall back if a
-            # Kokoro-style name leaked into the piper path.
-            if self.voice_name.startswith(("af_", "am_", "bf_", "bm_")):
-                self.voice_name = "en_US-lessac-medium"
-            self.voice_model_path = self._find_piper_voice()
-            self._load_piper()
-            detail = f"engine=piper voice={os.path.basename(self.voice_model_path)}"
-        else:
-            raise RuntimeError(f"Unsupported TTS engine: {self.engine}")
+        detail = self._ensure_loaded()
         self._emit_status("initialized", detail)
+
+    def _ensure_loaded(self) -> str:
+        """Load the configured engine's model if it isn't already loaded.
+
+        Idempotent and lock-guarded so it is safe to call from both initialize()
+        (main thread) and a 'synthesize' control message (the stdin thread). This
+        closes a startup race: a synthesize arriving before initialize() finished
+        loading used to hit a None model ("'NoneType' object has no attribute
+        'create'") and produce no audio on the very first utterance.
+        """
+        with self._load_lock:
+            if self.engine == "kokoro":
+                if self._kokoro is None:
+                    self._load_kokoro()
+                return f"engine=kokoro voice={self.voice_name}"
+            elif self.engine == "piper":
+                if self._voice is None:
+                    # Piper voice names look like en_US-lessac-medium; fall back if
+                    # a Kokoro-style name leaked into the piper path.
+                    if self.voice_name.startswith(("af_", "am_", "bf_", "bm_")):
+                        self.voice_name = "en_US-lessac-medium"
+                    self.voice_model_path = self._find_piper_voice()
+                    self._load_piper()
+                return f"engine=piper voice={os.path.basename(self.voice_model_path)}"
+            else:
+                raise RuntimeError(f"Unsupported TTS engine: {self.engine}")
 
     # --- Kokoro ---------------------------------------------------------------
     def _load_kokoro(self) -> None:
@@ -130,6 +146,10 @@ class TtsSidecar(BaseSidecar):
         size + sample rate is announced over stdout before its bytes go out over
         the socket.
         """
+        # Guard against a first-utterance race: the model may not have finished
+        # loading when this synthesize arrived. _ensure_loaded() is idempotent.
+        self._ensure_loaded()
+
         sentences = [s.strip() for s in SENTENCE_SPLIT.split(text) if s.strip()]
         total = len(sentences)
 

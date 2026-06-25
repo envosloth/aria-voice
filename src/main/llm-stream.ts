@@ -49,6 +49,14 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): void {
     return;
   }
 
+  // If only a base URL was entered (host:port with no API path), assume the
+  // conventional OpenAI route so "http://127.0.0.1:8642" works the same as the
+  // full "http://127.0.0.1:8642/v1/chat/completions". Without this a POST to "/"
+  // 404s, which (not being a connection error) silently fell back to the LLM.
+  if (url.pathname === '/' || url.pathname === '') {
+    url.pathname = '/v1/chat/completions';
+  }
+
   const isHttps = url.protocol === 'https:';
   const transport = isHttps ? https : http;
 
