@@ -41,8 +41,10 @@ linux:
       arch: [x64]
     - target: deb        # Debian / Ubuntu / Mint / Pop!_OS
       arch: [x64]
-    - target: rpm        # Fedora / RHEL / openSUSE
-      arch: [x64]
+    # rpm dropped: it needs the `rpmbuild` system tool (not present here), and
+    # its failure aborted `npm run dist` even after the .deb/.AppImage built.
+    # Re-add `- target: rpm` (and `apt-get install rpm`) if a Fedora/RHEL build
+    # is ever needed.
   category: Utility
   synopsis: GPU-accelerated local voice assistant
   description: >
