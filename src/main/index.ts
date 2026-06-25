@@ -4,8 +4,8 @@ import fs from 'fs';
 import { Supervisor } from './supervisor';
 import { config } from './config';
 import { getSecureBackend, isSecureBackendSafe, setSecret, getSecret, deleteSecret } from './secure-storage';
-import { streamLlmResponse } from './llm-client';
 import { streamChat } from './llm-stream';
+import { coordinate } from './coordinator';
 import { buildManifest, missingModels, downloadModel } from './model-manager';
 import { IPC } from '../shared/ipc-channels';
 import { SidecarName } from '../shared/constants';
@@ -121,7 +121,8 @@ function setupIpcHandlers(): void {
   ipcMain.handle(IPC.SECURE_STORE_DELETE, (_e, key: string) => deleteSecret(key));
 
   ipcMain.on(IPC.LLM_SEND, (_e, message: string) => {
-    streamLlmResponse(message, {
+    coordinate(message, {
+      onRoute: (info) => mainWindow?.webContents.send(IPC.LLM_ROUTE, info),
       onToken: (token) => mainWindow?.webContents.send(IPC.LLM_TOKEN, token),
       onDone: (text) => mainWindow?.webContents.send(IPC.LLM_DONE, text),
       onError: (err) => mainWindow?.webContents.send(IPC.LLM_ERROR, err),
@@ -216,11 +217,17 @@ app.whenReady().then(async () => {
   // sidecars. Downloads are resumable + checksummed; progress goes to the UI.
   const modelsOk = await ensureModelsReady();
 
-  // Always-on wake-word listener (its models ship bundled). STT and TTS are
-  // lazy-loaded on first use (see ensureSidecar) to keep idle memory low — the
-  // 16 GiB budget assumes we don't hold every model resident when idle.
+  // Always-on wake-word listener (its models ship bundled).
   if (modelsOk && config.get('wakeword.enabled')) {
     await supervisor.start('wakeword');
+  }
+
+  // Pre-warm STT shortly after startup (unless disabled) so the first wake word
+  // doesn't pay the whisper model-load cost mid-utterance — the main source of
+  // the "laggy until STT finishes" hitch. Done in the background so it doesn't
+  // block startup. TTS stays lazy (loaded when first needed).
+  if (modelsOk && !SMOKE && config.get('stt.prewarm') !== false) {
+    setTimeout(() => { void ensureSidecar('stt'); }, 2500);
   }
 
   if (SMOKE) {
@@ -237,6 +244,14 @@ app.whenReady().then(async () => {
       // Offscreen screenshot for UI verification (no visible window).
       if (process.env.ARIA_SMOKE_SHOT && mainWindow) {
         try {
+          if (process.env.ARIA_ORB_STATE) {
+            const s = process.env.ARIA_ORB_STATE;
+            const js = s === 'speaking'
+              ? `AriaOrb.setState('speaking'); for(let i=0;i<200;i++){AriaOrb.setLevel(0.7);} true;`
+              : `AriaOrb.setState('${s}'); true;`;
+            await mainWindow.webContents.executeJavaScript(js);
+            await new Promise((r) => setTimeout(r, 800)); // let colour ease in
+          }
           const img = await mainWindow.webContents.capturePage();
           require('fs').writeFileSync(process.env.ARIA_SMOKE_SHOT, img.toPNG());
           console.log('[ARIA_SMOKE] screenshot saved:', process.env.ARIA_SMOKE_SHOT);

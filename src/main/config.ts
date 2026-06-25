@@ -5,6 +5,7 @@ interface AppConfig {
   stt: {
     model: string;
     backend: 'vulkan' | 'cpu';
+    prewarm: boolean;
   };
   tts: {
     engine: 'piper' | 'kokoro';
@@ -15,9 +16,18 @@ interface AppConfig {
     phrase: string;
   };
   llm: {
-    harness: string;
+    // Regular conversational LLM.
     endpoint: string;
     model: string;
+  };
+  harness: {
+    // Agent harness (Claude Code, Codex, …).
+    id: string;
+    endpoint: string;
+    model: string;
+  };
+  routing: {
+    mode: 'auto' | 'llm' | 'harness';
   };
   audio: {
     inputDevice: string;
@@ -34,6 +44,7 @@ const defaults: AppConfig = {
   stt: {
     model: DEFAULT_STT_MODEL,
     backend: 'vulkan',
+    prewarm: true,
   },
   tts: {
     engine: 'piper',
@@ -47,9 +58,16 @@ const defaults: AppConfig = {
     phrase: 'hey_jarvis',
   },
   llm: {
-    harness: '',
     endpoint: '',
     model: '',
+  },
+  harness: {
+    id: '',
+    endpoint: '',
+    model: '',
+  },
+  routing: {
+    mode: 'auto',
   },
   audio: {
     inputDevice: 'default',

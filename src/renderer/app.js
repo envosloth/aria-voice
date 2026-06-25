@@ -60,6 +60,7 @@ textInput.addEventListener('keydown', (e) => {
     const text = textInput.value.trim();
     textInput.value = '';
     addMessage('user', text);
+    orbState('processing');
     aria.llm.send(text);
   }
 });
@@ -112,9 +113,13 @@ function updateVad(samples) {
   if (vad && vad.pushFrame(samples)) endUtterance();
 }
 
+// Drive the orb's visual state through the conversation pipeline.
+function orbState(s) { if (window.AriaOrb) window.AriaOrb.setState(s); }
+
 function beginUtterance(opts) {
   listening = true;
   micBtn.classList.add('listening');
+  orbState('listening');
   aria.stt.start();
   // VAD endpointing only for hands-free (wake-word) turns; push-to-talk ends on
   // button release.
@@ -131,6 +136,7 @@ function endUtterance() {
   vad = null;
   clearTimeout(vadSafetyTimer);
   micBtn.classList.remove('listening');
+  orbState('processing'); // STT + LLM working
   aria.stt.end();
 }
 
@@ -145,7 +151,10 @@ aria.stt.onResult((text) => {
   if (text.trim()) {
     partialEl.textContent = '';
     addMessage('user', text);
+    orbState('processing'); // STT done, LLM thinking
     aria.llm.send(text);
+  } else {
+    orbState('idle'); // nothing recognized
   }
 });
 
@@ -160,19 +169,34 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
+// Which target (LLM vs Agent harness) the coordinator routed to.
+let pendingRoute = null;
+aria.llm.onRoute((info) => { pendingRoute = info; });
+
 aria.llm.onToken((token) => {
   if (!currentAssistantMsg) {
     currentAssistantMsg = addMessage('assistant', '');
+    if (pendingRoute) {
+      const badge = document.createElement('span');
+      badge.className = 'route-badge route-' + pendingRoute.target;
+      badge.textContent = pendingRoute.name;
+      currentAssistantMsg.prepend(badge);
+      pendingRoute = null;
+    }
   }
-  currentAssistantMsg.textContent += token;
+  currentAssistantMsg.appendChild(document.createTextNode(token));
   conversationEl.scrollTop = conversationEl.scrollHeight;
 });
 
 aria.llm.onDone((fullText) => {
-  if (currentAssistantMsg) {
-    currentAssistantMsg.textContent = fullText;
+  // Streaming already populated the message text (preserving the route badge);
+  // only fill in if nothing streamed (e.g. non-streaming reply).
+  if (currentAssistantMsg && !currentAssistantMsg.textContent.trim()) {
+    currentAssistantMsg.appendChild(document.createTextNode(fullText));
   }
   currentAssistantMsg = null;
+  pendingRoute = null;
+  orbState('speaking'); // agent is about to talk -> dynamic motion
   aria.tts.play(fullText);
 });
 
@@ -235,12 +259,16 @@ aria.tts.onAudio((pcmArrayBuffer) => {
 
 aria.tts.onState((state) => {
   if (state && state.state === 'done') {
+    // Return to idle once the remaining buffered audio finishes playing.
+    const remainMs = audioCtx ? Math.max(0, (nextPlayTime - audioCtx.currentTime) * 1000) : 0;
+    setTimeout(() => orbState('idle'), remainMs + 150);
     nextPlayTime = 0;
   }
 });
 
 aria.llm.onError((error) => {
   currentAssistantMsg = null;
+  orbState('idle');
   showError(`LLM error: ${error}. Text input remains available.`);
 });
 
@@ -283,13 +311,15 @@ const savedMsg = document.getElementById('settings-saved-msg');
 const secureWarning = document.getElementById('secure-warning');
 
 const cfg = {
-  harness: document.getElementById('cfg-llm-harness'),
-  endpointRow: document.getElementById('cfg-endpoint-row'),
+  routingMode: document.getElementById('cfg-routing-mode'),
+  llmEndpoint: document.getElementById('cfg-llm-endpoint'),
+  llmModel: document.getElementById('cfg-llm-model'),
+  llmKey: document.getElementById('cfg-llm-key'),
+  harness: document.getElementById('cfg-harness'),
+  harnessEndpoint: document.getElementById('cfg-harness-endpoint'),
+  harnessModel: document.getElementById('cfg-harness-model'),
+  harnessKey: document.getElementById('cfg-harness-key'),
   harnessNote: document.getElementById('cfg-harness-note'),
-  keyRow: document.getElementById('cfg-key-row'),
-  endpoint: document.getElementById('cfg-llm-endpoint'),
-  model: document.getElementById('cfg-llm-model'),
-  key: document.getElementById('cfg-llm-key'),
   sttModel: document.getElementById('cfg-stt-model'),
   sttBackend: document.getElementById('cfg-stt-backend'),
   ttsVoice: document.getElementById('cfg-tts-voice'),
@@ -301,7 +331,7 @@ const cfg = {
 // Live theme preview while the dropdown changes (persisted on Save).
 cfg.theme.addEventListener('change', () => applyTheme(cfg.theme.value));
 
-// Populate the provider dropdown once.
+// Populate the harness dropdown once.
 for (const h of window.AriaHarnesses.HARNESSES) {
   const opt = document.createElement('option');
   opt.value = h.id;
@@ -309,40 +339,35 @@ for (const h of window.AriaHarnesses.HARNESSES) {
   cfg.harness.appendChild(opt);
 }
 
-// Reflect a selected harness in the dependent fields (endpoint, model, key,
-// note). For non-custom presets the endpoint is fixed (hidden); custom shows
-// the URL field. Local providers hide the API key field.
+// Pick a harness preset -> prefill its endpoint/model + note (all editable).
 function applyHarnessSelection(id, opts) {
   const h = window.AriaHarnesses.byId(id) || window.AriaHarnesses.byId('custom');
-  // Agent harnesses vary in how they serve their endpoint, so keep the URL
-  // visible and editable; the preset just pre-fills a default + a setup note.
-  cfg.endpointRow.style.display = '';
-  cfg.keyRow.style.display = '';
   cfg.harnessNote.textContent = h.note || '';
-  if (opts && opts.prefillModel) {
-    if (h.endpoint) cfg.endpoint.value = h.endpoint;
-    if (h.defaultModel) cfg.model.value = h.defaultModel;
+  if (opts && opts.prefill) {
+    if (h.endpoint) cfg.harnessEndpoint.value = h.endpoint;
+    if (h.defaultModel) cfg.harnessModel.value = h.defaultModel;
   }
-  cfg.key.placeholder = 'optional — leave blank to keep existing';
 }
-
-cfg.harness.addEventListener('change', () => applyHarnessSelection(cfg.harness.value, { prefillModel: true }));
+cfg.harness.addEventListener('change', () => applyHarnessSelection(cfg.harness.value, { prefill: true }));
 
 async function loadSettings() {
-  cfg.endpoint.value = (await aria.config.get('llm.endpoint')) || '';
-  cfg.model.value = (await aria.config.get('llm.model')) || '';
-  // Pick the dropdown from the saved harness id, else infer from the endpoint.
-  const savedHarness = (await aria.config.get('llm.harness')) || '';
-  const inferred = savedHarness || (window.AriaHarnesses.fromEndpoint(cfg.endpoint.value) || {}).id || 'custom';
+  cfg.routingMode.value = (await aria.config.get('routing.mode')) || 'auto';
+  cfg.llmEndpoint.value = (await aria.config.get('llm.endpoint')) || '';
+  cfg.llmModel.value = (await aria.config.get('llm.model')) || '';
+  cfg.llmKey.value = '';
+  cfg.harnessEndpoint.value = (await aria.config.get('harness.endpoint')) || '';
+  cfg.harnessModel.value = (await aria.config.get('harness.model')) || '';
+  cfg.harnessKey.value = '';
+  const savedHarness = (await aria.config.get('harness.id')) || '';
+  const inferred = savedHarness || (window.AriaHarnesses.fromEndpoint(cfg.harnessEndpoint.value) || {}).id || 'custom';
   cfg.harness.value = inferred;
-  applyHarnessSelection(inferred, { prefillModel: false });
+  applyHarnessSelection(inferred, { prefill: false });
   cfg.sttModel.value = (await aria.config.get('stt.model')) || 'small';
   cfg.sttBackend.value = (await aria.config.get('stt.backend')) || 'vulkan';
   cfg.ttsVoice.value = (await aria.config.get('tts.voice')) || '';
   cfg.wwEnabled.checked = !!(await aria.config.get('wakeword.enabled'));
   cfg.wwPhrase.value = (await aria.config.get('wakeword.phrase')) || 'hey_jarvis';
   cfg.theme.value = (await aria.config.get('ui.theme')) || 'midnight';
-  cfg.key.value = '';
 
   const { backend, safe } = await aria.secure.getBackend();
   if (!safe) {
@@ -373,9 +398,12 @@ settingsOverlay.addEventListener('click', (e) => {
 });
 
 settingsSave.addEventListener('click', async () => {
-  await aria.config.set('llm.harness', cfg.harness.value);
-  await aria.config.set('llm.endpoint', cfg.endpoint.value.trim());
-  await aria.config.set('llm.model', cfg.model.value.trim());
+  await aria.config.set('routing.mode', cfg.routingMode.value);
+  await aria.config.set('llm.endpoint', cfg.llmEndpoint.value.trim());
+  await aria.config.set('llm.model', cfg.llmModel.value.trim());
+  await aria.config.set('harness.id', cfg.harness.value);
+  await aria.config.set('harness.endpoint', cfg.harnessEndpoint.value.trim());
+  await aria.config.set('harness.model', cfg.harnessModel.value.trim());
   await aria.config.set('stt.model', cfg.sttModel.value);
   await aria.config.set('stt.backend', cfg.sttBackend.value);
   await aria.config.set('tts.voice', cfg.ttsVoice.value.trim());
@@ -384,10 +412,9 @@ settingsSave.addEventListener('click', async () => {
   await aria.config.set('ui.theme', cfg.theme.value);
   applyTheme(cfg.theme.value);
 
-  // Only write the API key if the user entered one (blank keeps existing).
-  if (cfg.key.value.trim()) {
-    await aria.secure.set('llm-api-key', cfg.key.value.trim());
-  }
+  // Write keys only if entered (blank keeps existing).
+  if (cfg.llmKey.value.trim()) await aria.secure.set('llm-api-key', cfg.llmKey.value.trim());
+  if (cfg.harnessKey.value.trim()) await aria.secure.set('harness-api-key', cfg.harnessKey.value.trim());
 
   savedMsg.textContent = 'Saved ✓';
   setTimeout(() => { savedMsg.textContent = ''; }, 2500);
@@ -472,8 +499,8 @@ onb.test.addEventListener('click', async () => {
   onb.test.disabled = true;
   onb.testResult.textContent = 'Testing…';
   onb.testResult.className = '';
-  if (onb.key.value.trim()) await aria.secure.set('llm-api-key', onb.key.value.trim());
-  const apiKey = await aria.secure.get('llm-api-key');
+  if (onb.key.value.trim()) await aria.secure.set('harness-api-key', onb.key.value.trim());
+  const apiKey = await aria.secure.get('harness-api-key');
   const r = await aria.llm.test({ endpoint: onbResolveEndpoint(), model: onb.model.value.trim(), apiKey });
   if (r.ok) { onb.testResult.textContent = '✓ Connected'; onb.testResult.className = 'ok-msg'; }
   else { onb.testResult.textContent = '✕ ' + (r.error || 'failed'); onb.testResult.className = 'err-msg'; }
@@ -489,10 +516,12 @@ onb.mic.addEventListener('click', async () => {
 });
 
 async function onbFinish() {
-  await aria.config.set('llm.harness', onb.harness.value);
-  await aria.config.set('llm.endpoint', onbResolveEndpoint());
-  await aria.config.set('llm.model', onb.model.value.trim());
-  if (onb.key.value.trim()) await aria.secure.set('llm-api-key', onb.key.value.trim());
+  // Onboarding configures the agent harness (the primary target). A separate
+  // conversational LLM is optional, set later in Settings.
+  await aria.config.set('harness.id', onb.harness.value);
+  await aria.config.set('harness.endpoint', onbResolveEndpoint());
+  await aria.config.set('harness.model', onb.model.value.trim());
+  if (onb.key.value.trim()) await aria.secure.set('harness-api-key', onb.key.value.trim());
   await aria.config.set('ui.onboarded', true);
   onb.overlay.classList.remove('visible');
 }

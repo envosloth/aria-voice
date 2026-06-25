@@ -27,6 +27,7 @@ export const IPC = {
   LLM_DONE: 'llm:done',
   LLM_ERROR: 'llm:error',
   LLM_TEST: 'llm:test',        // renderer -> main: test a provider endpoint/key
+  LLM_ROUTE: 'llm:route',      // main -> renderer: which target answered (llm|harness)
 
   CONFIG_GET: 'config:get',
   CONFIG_SET: 'config:set',

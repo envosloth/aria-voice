@@ -59,6 +59,8 @@ const api = {
       ipcRenderer.on(IPC.LLM_DONE, (_e, text) => cb(text)),
     onError: (cb: (error: string) => void) =>
       ipcRenderer.on(IPC.LLM_ERROR, (_e, error) => cb(error)),
+    onRoute: (cb: (info: { target: string; name: string }) => void) =>
+      ipcRenderer.on(IPC.LLM_ROUTE, (_e, info) => cb(info)),
   },
 
   sidecar: {

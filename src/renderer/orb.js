@@ -1,33 +1,56 @@
-// Reactive mesh-orb background. A wireframe sphere on a full-window Canvas
-// behind the UI: idles with gentle rotation + breathing, and when the agent is
-// talking it spins faster, distorts, and glows — amplitude from AriaOrb.setLevel
-// (called from the TTS audio handler). Canvas 2D, no deps.
+// Reactive mesh-orb background with a visual state machine.
 //
-// Performance: per-point spherical trig is precomputed once; per-frame work
-// reuses flat typed arrays (no allocations), shadow blur is gated to active
-// frames, and the glow gradient is rebuilt only when the level bucket changes —
-// keeping frame render time well under the 6.25 ms needed for 160 FPS.
+// States (AriaOrb.setState):
+//   idle       — calm slow rotation, muted slate. (default)
+//   listening  — cyan, gentle steady breathing (NOT audio-reactive).
+//   processing — amber, faster shimmer/spin (NOT audio-reactive).
+//   speaking   — theme accent, FULL audio-reactive distortion from TTS RMS.
+//
+// Only `speaking` moves dynamically with the audio; other states convey progress
+// through colour + subtle calm motion. Keeping non-speaking states cheap also
+// reduces GPU contention with whisper's Vulkan inference while STT is running.
+//
+// Performance: per-point trig precomputed once; per-frame work uses reused flat
+// typed arrays (no allocations); shadow blur gated to the speaking state.
 
 (function (root) {
-  const LAT = 13;
-  const LON = 24;
+  const LAT = 18, LON = 32;
   const NPTS = (LAT + 1) * LON;
   const TWO_PI = Math.PI * 2;
 
   let canvas, ctx, w, h, cx, cy, baseR;
-  let t = 0, level = 0, smooth = 0, raf = null;
+  let t = 0, audio = 0, audioSmooth = 0, raf = null;
 
-  // Theme accent (r,g,b), refreshed from CSS so the orb matches the theme.
+  // State machine + colour easing.
+  const STATE_COLORS = {
+    idle:       [136, 150, 180],
+    listening:  [ 80, 200, 230],
+    processing: [240, 180,  90],
+    speaking:   [233,  69,  96], // overridden by theme accent
+  };
+  let state = 'idle';
+  const col = [136, 150, 180];   // current eased colour
+  let target = STATE_COLORS.idle.slice();
   let accent = [233, 69, 96];
+
   function refreshAccent() {
     try {
       const v = getComputedStyle(document.documentElement)
         .getPropertyValue('--accent-rgb').trim();
       if (v) accent = v.split(',').map((n) => parseInt(n, 10));
     } catch (e) { /* keep default */ }
+    STATE_COLORS.speaking = accent.slice();
+    if (state === 'speaking') target = accent.slice();
   }
 
-  // Precomputed per-point statics: sin/cos of phi & theta, and a phase seed.
+  function setState(s) {
+    if (!STATE_COLORS[s]) return;
+    state = s;
+    target = (s === 'speaking' ? accent : STATE_COLORS[s]).slice();
+    if (s !== 'speaking') audio = 0; // stop dynamic motion outside speaking
+  }
+
+  // Precomputed per-point statics.
   const sinPhi = new Float32Array(NPTS), cosPhi = new Float32Array(NPTS);
   const sinTh = new Float32Array(NPTS), cosTh = new Float32Array(NPTS);
   const phiArr = new Float32Array(NPTS), thArr = new Float32Array(NPTS);
@@ -46,13 +69,11 @@
     }
   })();
 
-  // Reused per-frame buffers.
   const px = new Float32Array(NPTS), py = new Float32Array(NPTS);
   const pz = new Float32Array(NPTS), pp = new Float32Array(NPTS);
 
   const TILT = 0.42, SIN_TILT = Math.sin(TILT), COS_TILT = Math.cos(TILT);
-
-  let gradLevelBucket = -1, gradCache = null;
+  let gradBucket = -1, gradCache = null, gradColKey = '';
 
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -60,62 +81,58 @@
     canvas.width = w * dpr; canvas.height = h * dpr;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     cx = w / 2; cy = h / 2;
-    baseR = Math.min(w, h) * 0.26;
-    gradLevelBucket = -1; // force gradient rebuild
+    baseR = Math.min(w, h) * 0.27;
+    gradBucket = -1;
   }
 
-  // FPS / frame-time measurement (enabled via AriaOrb.measure()).
   let measuring = false, mFrames = 0, mTime = 0, mLast = 0;
-
-  let fpsVisible = false, fpsCount = 0, fpsLast = 0, fpsValue = 0;
-  function loop(now) {
-    render(now);
-    // Live FPS (actual rAF rate — reflects the display/compositor).
-    fpsCount++;
-    if (now - fpsLast >= 500) {
-      fpsValue = Math.round((fpsCount * 1000) / (now - fpsLast));
-      fpsCount = 0; fpsLast = now;
-    }
-    if (fpsVisible) {
-      ctx.save();
-      ctx.shadowBlur = 0;
-      ctx.font = '600 13px system-ui, sans-serif';
-      ctx.fillStyle = fpsValue >= 160 ? '#2ecc71' : fpsValue >= 60 ? '#e0e0e0' : '#f39c12';
-      ctx.fillText(`${fpsValue} FPS`, 12, 22);
-      ctx.restore();
-    }
-    raf = requestAnimationFrame(loop);
-  }
 
   function render(now) {
     const t0 = measuring ? performance.now() : 0;
 
-    smooth += (level - smooth) * 0.12;
-    level *= 0.94;
-    const active = smooth;
-    t += 0.006 + active * 0.03;
+    // Ease colour toward the target state colour.
+    col[0] += (target[0] - col[0]) * 0.08;
+    col[1] += (target[1] - col[1]) * 0.08;
+    col[2] += (target[2] - col[2]) * 0.08;
+    const cr = col[0] | 0, cg = col[1] | 0, cb = col[2] | 0;
+
+    // Audio drives motion only in the speaking state.
+    audioSmooth += (audio - audioSmooth) * 0.15;
+    if (state === 'speaking') audio *= 0.94; else audioSmooth *= 0.9;
+    const react = state === 'speaking' ? audioSmooth : 0;
+
+    // Per-state calm motion (independent of audio).
+    let spin = 0.004, breatheAmp = 0.02, pulse = 0;
+    if (state === 'listening') { spin = 0.006; breatheAmp = 0.05; }
+    else if (state === 'processing') { spin = 0.022; breatheAmp = 0.03; pulse = 0.03 * Math.sin(t * 5); }
+    else if (state === 'speaking') { spin = 0.006 + react * 0.04; breatheAmp = 0.025; }
+
+    t += spin + react * 0.02;
     const rot = t, cosR = Math.cos(rot), sinR = Math.sin(rot);
 
     ctx.clearRect(0, 0, w, h);
 
-    // Glow gradient — rebuilt only when the level bucket changes.
-    const bucket = (active * 12) | 0;
-    if (bucket !== gradLevelBucket) {
-      gradLevelBucket = bucket;
-      const glowR = baseR * (1.7 + active * 0.8);
-      const g = ctx.createRadialGradient(cx, cy, baseR * 0.2, cx, cy, glowR);
-      const a = 0.10 + active * 0.35;
-      g.addColorStop(0, `rgba(${accent[0]},${accent[1]},${accent[2]},${a})`);
-      g.addColorStop(1, `rgba(${accent[0]},${accent[1]},${accent[2]},0)`);
+    // Glow gradient — rebuilt when the level bucket or colour shifts notably.
+    const activity = Math.max(react, state === 'idle' ? 0.05 : 0.18);
+    const bucket = (activity * 12) | 0;
+    const colKey = `${cr},${cg},${cb}`;
+    if (bucket !== gradBucket || colKey !== gradColKey) {
+      gradBucket = bucket; gradColKey = colKey;
+      const glowR = baseR * (1.8 + activity * 0.9);
+      const g = ctx.createRadialGradient(cx, cy, baseR * 0.1, cx, cy, glowR);
+      g.addColorStop(0, `rgba(${cr},${cg},${cb},${0.16 + activity * 0.3})`);
+      g.addColorStop(0.5, `rgba(${cr},${cg},${cb},${0.05 + activity * 0.12})`);
+      g.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
       gradCache = g;
     }
     ctx.fillStyle = gradCache;
     ctx.fillRect(0, 0, w, h);
 
-    // Project all points into the reused buffers.
+    // Project all points.
+    let minZ = 1e9, maxZ = -1e9;
     for (let k = 0; k < NPTS; k++) {
-      const breathe = 0.03 * Math.sin(t * 1.3 + phiArr[k] * 3);
-      const reactive = active * 0.22 * Math.sin(t * 6 + seed[k] * 6 + thArr[k] * 4);
+      const breathe = breatheAmp * Math.sin(t * 1.3 + phiArr[k] * 3) + pulse;
+      const reactive = react * 0.22 * Math.sin(t * 6 + seed[k] * 6 + thArr[k] * 4);
       const r = baseR * (1 + breathe + reactive);
       const sp = sinPhi[k];
       const x = r * sp * cosTh[k];
@@ -125,51 +142,61 @@
       const z2 = x * sinR + z * cosR;
       const y2 = y * COS_TILT - z2 * SIN_TILT;
       const z3 = y * SIN_TILT + z2 * COS_TILT;
-      const persp = 520 / (520 + z3);
+      const persp = 540 / (540 + z3);
       px[k] = cx + x2 * persp; py[k] = cy + y2 * persp;
       pz[k] = z3; pp[k] = persp;
+      if (z3 < minZ) minZ = z3; if (z3 > maxZ) maxZ = z3;
     }
+    const zRange = (maxZ - minZ) || 1;
 
-    // Line color eases muted-slate -> accent with activity.
-    const lr = Math.round(136 + active * (accent[0] - 136));
-    const lg = Math.round(136 + active * (accent[1] - 136));
-    const lb = Math.round(170 + active * (accent[2] - 170));
+    // Soft inner core glow for depth/richness.
+    const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, baseR * 0.9);
+    core.addColorStop(0, `rgba(${cr},${cg},${cb},${0.18 + react * 0.25})`);
+    core.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+    ctx.fillStyle = core;
+    ctx.beginPath();
+    ctx.arc(cx, cy, baseR * 0.9, 0, TWO_PI);
+    ctx.fill();
 
-    ctx.lineWidth = 1;
-    if (active > 0.02) {
-      ctx.shadowColor = `rgba(${accent[0]},${accent[1]},${accent[2]},${active})`;
-      ctx.shadowBlur = active * 14;
-    } else {
-      ctx.shadowBlur = 0;
-    }
+    // Depth-shaded wireframe: front lines brighter/thicker than back.
+    if (react > 0.04) { ctx.shadowColor = `rgba(${cr},${cg},${cb},${react})`; ctx.shadowBlur = react * 16; }
+    else ctx.shadowBlur = 0;
 
-    // Longitude lines
-    ctx.strokeStyle = `rgba(${lr},${lg},${lb},0.22)`;
+    // Longitude lines (segment alpha by depth).
     for (let j = 0; j < LON; j++) {
-      ctx.beginPath();
-      for (let i = 0; i <= LAT; i++) {
-        const k = i * LON + j;
-        if (i === 0) ctx.moveTo(px[k], py[k]); else ctx.lineTo(px[k], py[k]);
+      for (let i = 0; i < LAT; i++) {
+        const k = i * LON + j, k2 = k + LON;
+        const depth = ((pz[k] + pz[k2]) * 0.5 - minZ) / zRange; // 0 back .. 1 front
+        const a = 0.10 + depth * 0.45;
+        ctx.strokeStyle = `rgba(${cr},${cg},${cb},${a})`;
+        ctx.lineWidth = 0.7 + depth * 1.3;
+        ctx.beginPath();
+        ctx.moveTo(px[k], py[k]); ctx.lineTo(px[k2], py[k2]);
+        ctx.stroke();
       }
-      ctx.stroke();
     }
-    // Latitude rings
-    ctx.strokeStyle = `rgba(${lr},${lg},${lb},0.18)`;
+    // Latitude rings.
     for (let i = 0; i <= LAT; i++) {
-      ctx.beginPath();
       const base = i * LON;
-      ctx.moveTo(px[base], py[base]);
-      for (let j = 1; j < LON; j++) ctx.lineTo(px[base + j], py[base + j]);
-      ctx.lineTo(px[base], py[base]);
-      ctx.stroke();
+      for (let j = 0; j < LON; j++) {
+        const k = base + j, k2 = base + ((j + 1) % LON);
+        const depth = ((pz[k] + pz[k2]) * 0.5 - minZ) / zRange;
+        const a = 0.08 + depth * 0.38;
+        ctx.strokeStyle = `rgba(${cr},${cg},${cb},${a})`;
+        ctx.lineWidth = 0.7 + depth * 1.1;
+        ctx.beginPath();
+        ctx.moveTo(px[k], py[k]); ctx.lineTo(px[k2], py[k2]);
+        ctx.stroke();
+      }
     }
     ctx.shadowBlur = 0;
 
-    // Front-facing vertex dots.
-    ctx.fillStyle = `rgba(${lr},${lg},${lb},0.5)`;
+    // Front vertex dots, brighter with depth + activity.
     for (let k = 0; k < NPTS; k++) {
       if (pz[k] < 0) continue;
-      const r = (0.6 + active * 1.6) * pp[k];
+      const depth = (pz[k] - minZ) / zRange;
+      const r = (0.8 + react * 1.8 + depth * 0.8) * pp[k];
+      ctx.fillStyle = `rgba(${cr},${cg},${cb},${0.35 + depth * 0.5})`;
       ctx.beginPath();
       ctx.arc(px[k], py[k], r, 0, TWO_PI);
       ctx.fill();
@@ -179,10 +206,34 @@
       mTime += performance.now() - t0; mFrames++;
       if (now - mLast >= 1000) {
         const avg = mTime / mFrames;
-        console.log(`[orb] render ${avg.toFixed(2)}ms/frame -> max ${(1000 / avg) | 0} FPS, ${mFrames} frames/s`);
+        console.log(`[orb] render ${avg.toFixed(2)}ms/frame -> max ${(1000 / avg) | 0} FPS`);
         mFrames = 0; mTime = 0; mLast = now;
       }
     }
+  }
+
+  // Frame-rate cap per state. `speaking` runs uncapped (smooth, audio-reactive);
+  // other states throttle to ~30 FPS so whisper's Vulkan STT isn't starved of
+  // the GPU while listening/processing (the wake->STT lag fix).
+  const STATE_MIN_MS = { idle: 33, listening: 33, processing: 33, speaking: 0 };
+  let lastRenderAt = 0;
+
+  let fpsVisible = false, fpsCount = 0, fpsLast = 0, fpsValue = 0;
+  function loop(now) {
+    const minMs = STATE_MIN_MS[state] || 0;
+    if (now - lastRenderAt < minMs) { raf = requestAnimationFrame(loop); return; }
+    lastRenderAt = now;
+    render(now);
+    fpsCount++;
+    if (now - fpsLast >= 500) { fpsValue = Math.round((fpsCount * 1000) / (now - fpsLast)); fpsCount = 0; fpsLast = now; }
+    if (fpsVisible) {
+      ctx.save(); ctx.shadowBlur = 0;
+      ctx.font = '600 13px system-ui, sans-serif';
+      ctx.fillStyle = fpsValue >= 160 ? '#2ecc71' : fpsValue >= 60 ? '#e0e0e0' : '#f39c12';
+      ctx.fillText(`${fpsValue} FPS · ${state}`, 12, 22);
+      ctx.restore();
+    }
+    raf = requestAnimationFrame(loop);
   }
 
   function init() {
@@ -195,24 +246,22 @@
     if (!raf) raf = requestAnimationFrame(loop);
   }
 
-  function setLevel(v) { if (v > level) level = Math.min(1, v); }
+  // Feed an audio level (0..1). Only has visible effect in the speaking state.
+  function setLevel(v) { if (v > audio) audio = Math.min(1, v); }
   function measure() { measuring = true; mLast = performance.now(); mFrames = 0; mTime = 0; }
-
-  // Throttle-independent render benchmark: time `n` renders without rAF.
-  // Returns avg ms/frame and the FPS that render budget could sustain.
   function benchmark(n) {
     n = n || 300;
-    // warm up
-    for (let i = 0; i < 30; i++) { level = 0.6; render(performance.now()); }
+    setState('speaking');
+    for (let i = 0; i < 30; i++) { audio = 0.6; render(performance.now()); }
     const start = performance.now();
-    for (let i = 0; i < n; i++) { level = 0.6; render(performance.now()); }
-    const total = performance.now() - start;
-    const avg = total / n;
+    for (let i = 0; i < n; i++) { audio = 0.6; render(performance.now()); }
+    const avg = (performance.now() - start) / n;
+    setState('idle');
     return { avgMs: +avg.toFixed(3), maxFps: Math.round(1000 / avg), n };
   }
-
   function toggleFps() { fpsVisible = !fpsVisible; return fpsVisible; }
-  root.AriaOrb = { init, setLevel, measure, benchmark, refreshAccent, toggleFps };
+
+  root.AriaOrb = { init, setLevel, setState, measure, benchmark, refreshAccent, toggleFps };
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);
 })(typeof self !== 'undefined' ? self : this);

@@ -289,6 +289,15 @@
     button.primary:hover { opacity: 0.9; }
     #settings-saved-msg { color: var(--success); font-size: 13px; }
 
+    .route-badge {
+      display: inline-block; font-size: 10px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      padding: 2px 7px; border-radius: 5px; margin-right: 8px;
+      vertical-align: middle; color: #fff;
+    }
+    .route-llm { background: var(--accent); }
+    .route-harness { background: var(--accent-active); }
+
     /* Onboarding */
     .onboard-overlay {
       position: fixed; inset: 0; background: var(--bg);
@@ -373,19 +382,44 @@
       <div class="settings-warning" id="secure-warning"></div>
 
       <section>
-        <h3>Agent harness</h3>
-        <label>Harness
-          <select id="cfg-llm-harness"></select>
+        <h3>Routing</h3>
+        <label>When you speak, ARIA routes to…
+          <select id="cfg-routing-mode">
+            <option value="auto">Auto — agent for tasks, LLM for chat</option>
+            <option value="llm">Always the conversational LLM</option>
+            <option value="harness">Always the agent harness</option>
+          </select>
         </label>
-        <label id="cfg-endpoint-row" style="display:none;">Endpoint URL
-          <input type="url" id="cfg-llm-endpoint" placeholder="http://localhost:8080/v1/chat/completions">
+        <p class="hint" style="margin:-6px 0 0;">Auto sends coding/tool/file requests to the agent harness and everyday chat to the LLM. Say “use the agent…” to force the harness.</p>
+      </section>
+
+      <section>
+        <h3>Conversational LLM <span class="hint">(everyday chat)</span></h3>
+        <label>Endpoint URL
+          <input type="url" id="cfg-llm-endpoint" placeholder="https://api.openai.com/v1/chat/completions">
         </label>
-        <p class="hint" id="cfg-harness-note" style="margin:-6px 0 12px;"></p>
         <label>Model
           <input type="text" id="cfg-llm-model" placeholder="gpt-4o-mini">
         </label>
-        <label id="cfg-key-row">API Key <span class="hint">(stored in OS keyring via safeStorage)</span>
+        <label>API Key <span class="hint">(OS keyring)</span>
           <input type="password" id="cfg-llm-key" placeholder="leave blank to keep existing">
+        </label>
+      </section>
+
+      <section>
+        <h3>Agent harness <span class="hint">(coding / tasks)</span></h3>
+        <label>Harness
+          <select id="cfg-harness"></select>
+        </label>
+        <label>Endpoint URL
+          <input type="url" id="cfg-harness-endpoint" placeholder="http://localhost:8080/v1/chat/completions">
+        </label>
+        <p class="hint" id="cfg-harness-note" style="margin:-6px 0 12px;"></p>
+        <label>Model
+          <input type="text" id="cfg-harness-model" placeholder="model name">
+        </label>
+        <label>API Key <span class="hint">(optional, OS keyring)</span>
+          <input type="password" id="cfg-harness-key" placeholder="optional — leave blank to keep existing">
         </label>
       </section>
 

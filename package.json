@@ -1,6 +1,6 @@
 {
   "name": "aria",
-  "version": "0.1.0",
+  "version": "1.5.0",
   "description": "GPU-accelerated voice assistant with local STT/TTS and remote LLM",
   "main": "dist/main/index.js",
   "scripts": {
@@ -21,10 +21,11 @@
     "smoke:audio": "node scripts/smoke-audio.js",
     "smoke:e2e": "npm run build && bash scripts/gen-test-audio.sh && node scripts/smoke-e2e.js",
     "smoke:boot": "npm run build && ARIA_SMOKE=1 electron --no-sandbox dist/main/index.js",
-    "smoke:all": "npm run smoke && npm run smoke:tts && npm run smoke:stt && npm run smoke:resilience && npm run smoke:pdeathsig && npm run smoke:memory && npm run smoke:llm && npm run smoke:models && npm run smoke:audio && npm run smoke:e2e",
+    "smoke:all": "npm run smoke && npm run smoke:tts && npm run smoke:stt && npm run smoke:resilience && npm run smoke:pdeathsig && npm run smoke:memory && npm run smoke:llm && npm run smoke:router && npm run smoke:models && npm run smoke:audio && npm run smoke:e2e",
     "package:sidecars": "for s in stt tts wakeword; do bash scripts/package-sidecar.sh $s; done",
     "package:whisper": "bash scripts/stage-whisper.sh",
-    "dist": "npm run build && npm run package:sidecars && npm run package:whisper && electron-builder --config electron-builder.yml"
+    "dist": "npm run build && npm run package:sidecars && npm run package:whisper && electron-builder --config electron-builder.yml",
+    "smoke:router": "npm run build && node scripts/smoke-router.js"
   },
   "author": "ARIA Project <aria@localhost>",
   "homepage": "https://github.com/aria-voice/aria",
