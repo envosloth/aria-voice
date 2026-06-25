@@ -1,0 +1,68 @@
+# electron-builder config for ARIA — Linux AppImage + .deb.
+#
+# Prerequisites before `electron-builder`:
+#   1. npm run build                       (compile TS + copy renderer)
+#   2. for s in stt tts wakeword; do scripts/package-sidecar.sh $s; done
+#      (freezes PyInstaller onedir bundles into build/sidecars/<name>/)
+#
+# Model weights are NOT bundled — they download on first run (see model-manager).
+appId: com.aria.voice
+productName: ARIA
+copyright: Copyright © 2026
+
+directories:
+  output: dist-installers
+  buildResources: assets
+
+# App files that go into the asar
+files:
+  - dist/**/*
+  - package.json
+  - "!**/*.map"
+
+# PyInstaller-frozen sidecars shipped alongside the app (unpacked, executable).
+# Lands at <resources>/sidecars/<name>/<name>, which the supervisor resolves via
+# process.resourcesPath.
+extraResources:
+  - from: build/sidecars
+    to: sidecars
+    filter:
+      - "**/*"
+
+linux:
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: deb
+      arch: [x64]
+  category: Utility
+  synopsis: GPU-accelerated local voice assistant
+  description: >
+    ARIA is a local-first voice assistant with GPU-accelerated speech-to-text
+    (whisper.cpp/Vulkan), local text-to-speech (Piper), and wake-word detection
+    (openWakeWord), routing to a user-configured remote LLM.
+  desktop:
+    entry:
+      Name: ARIA
+      Comment: Voice assistant
+      Categories: Utility;AudioVideo;
+
+# .deb runtime dependencies. gnome-keyring/libsecret is REQUIRED for safeStorage
+# to encrypt API keys (else it silently falls back to plaintext obfuscation).
+deb:
+  maintainer: ARIA Project <aria@localhost>
+  depends:
+    - libsecret-1-0
+    - gnome-keyring
+    - libnotify4
+    - libnss3
+    - libasound2
+  recommends:
+    - libfuse2  # AppImage runtime on older targets
+
+appImage:
+  # AppImage needs libfuse2 on some targets; documented in README.
+  artifactName: ${productName}-${version}-${arch}.AppImage
+
+# Chromium sandbox must be set up properly (root:root, mode 4755). electron-builder
+# handles this for the packaged app; never ship --no-sandbox.

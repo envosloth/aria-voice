@@ -1,0 +1,114 @@
+import https from 'https';
+import http from 'http';
+import { URL } from 'url';
+
+export interface LlmCallbacks {
+  onToken: (token: string) => void;
+  onDone: (fullText: string) => void;
+  onError: (error: string) => void;
+}
+
+export interface ChatOptions {
+  endpoint: string;
+  model: string;
+  apiKey?: string | null;
+  message: string;
+  timeoutMs?: number;
+}
+
+/**
+ * Pure SSE chat streamer for OpenAI-compatible /chat/completions endpoints.
+ * No Electron dependency — unit-testable against a mock HTTP server.
+ */
+export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): void {
+  const { endpoint, model, apiKey, message, timeoutMs = 30000 } = opts;
+
+  if (!endpoint) {
+    callbacks.onError('No LLM endpoint configured. Go to Settings to add one.');
+    return;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    callbacks.onError(`Invalid LLM endpoint URL: ${endpoint}`);
+    return;
+  }
+
+  const isHttps = url.protocol === 'https:';
+  const transport = isHttps ? https : http;
+
+  const body = JSON.stringify({
+    model,
+    messages: [{ role: 'user', content: message }],
+    stream: true,
+  });
+
+  const req = transport.request(
+    {
+      hostname: url.hostname,
+      port: url.port || (isHttps ? 443 : 80),
+      path: url.pathname + url.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      },
+    },
+    (res) => {
+      if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
+        let errBody = '';
+        res.on('data', (chunk) => { errBody += chunk; });
+        res.on('end', () => {
+          callbacks.onError(`LLM returned ${res.statusCode}: ${errBody.slice(0, 200)}`);
+        });
+        return;
+      }
+
+      let fullText = '';
+      let buffer = '';
+
+      res.on('data', (chunk: Buffer) => {
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          const trimmed = line.trimStart();
+          if (!trimmed.startsWith('data:')) continue;
+          const payload = trimmed.slice(5).trim();
+          if (payload === '[DONE]') continue;
+
+          try {
+            const parsed = JSON.parse(payload);
+            const delta = parsed.choices?.[0]?.delta?.content;
+            if (delta) {
+              fullText += delta;
+              callbacks.onToken(delta);
+            }
+          } catch {
+            // skip malformed SSE lines
+          }
+        }
+      });
+
+      res.on('end', () => {
+        callbacks.onDone(fullText);
+      });
+    },
+  );
+
+  req.on('error', (err) => {
+    callbacks.onError(`LLM connection failed: ${err.message}. Check endpoint and network.`);
+  });
+
+  req.setTimeout(timeoutMs, () => {
+    req.destroy();
+    callbacks.onError(`LLM request timed out after ${Math.round(timeoutMs / 1000)}s.`);
+  });
+
+  req.write(body);
+  req.end();
+}

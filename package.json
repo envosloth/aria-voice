@@ -1,0 +1,39 @@
+{
+  "name": "aria",
+  "version": "0.1.0",
+  "description": "GPU-accelerated voice assistant with local STT/TTS and remote LLM",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build": "tsc && npm run build:preload && cp src/renderer/index.html src/renderer/app.js src/renderer/audio-utils.js src/renderer/mic-worklet.js dist/renderer/",
+    "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js",
+    "start": "npm run build && electron dist/main/index.js",
+    "dev": "npm run build && electron --inspect dist/main/index.js",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit",
+    "smoke": "npm run build && node scripts/smoke-supervisor.js wakeword tts stt",
+    "smoke:tts": "npm run build && node scripts/smoke-tts.js",
+    "smoke:stt": "npm run build && bash scripts/gen-test-audio.sh && node scripts/smoke-stt.js",
+    "smoke:resilience": "npm run build && node scripts/smoke-resilience.js",
+    "smoke:pdeathsig": "npm run build && node scripts/smoke-pdeathsig.js",
+    "smoke:llm": "npm run build && node scripts/smoke-llm.js",
+    "smoke:memory": "npm run build && node scripts/smoke-memory.js",
+    "smoke:models": "npm run build && node scripts/smoke-models.js",
+    "smoke:audio": "node scripts/smoke-audio.js",
+    "smoke:e2e": "npm run build && bash scripts/gen-test-audio.sh && node scripts/smoke-e2e.js",
+    "smoke:boot": "npm run build && ARIA_SMOKE=1 electron --no-sandbox dist/main/index.js",
+    "smoke:all": "npm run smoke && npm run smoke:tts && npm run smoke:stt && npm run smoke:resilience && npm run smoke:pdeathsig && npm run smoke:memory && npm run smoke:llm && npm run smoke:models && npm run smoke:audio && npm run smoke:e2e",
+    "package:sidecars": "for s in stt tts wakeword; do bash scripts/package-sidecar.sh $s; done",
+    "dist": "npm run build && npm run package:sidecars && electron-builder --config electron-builder.yml"
+  },
+  "author": "ARIA Project <aria@localhost>",
+  "homepage": "https://github.com/aria-voice/aria",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "electron": "^40.0.0",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.28.1",
+    "eslint": "^9.0.0",
+    "typescript": "^5.8.0"
+  }
+}

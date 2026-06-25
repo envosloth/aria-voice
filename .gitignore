@@ -1,0 +1,44 @@
+node_modules/
+dist/
+*.js.map
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+sidecars/*/venv/
+sidecars/*/build/
+sidecars/*/dist/
+sidecars/*/*.spec
+*.egg-info/
+
+# PyInstaller frozen sidecar bundles
+build/
+
+# electron-builder installer output
+dist-installers/
+
+# Models (downloaded at runtime)
+models/*.bin
+models/*.onnx
+models/*.tflite
+models/*.pt
+
+# Electron
+out/
+*.AppImage
+*.deb
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+*.key
+credentials.json
