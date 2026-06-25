@@ -22,9 +22,10 @@
     },
     {
       id: 'hermes', name: 'Hermes Agent', kind: 'agent',
-      endpoint: 'http://localhost:8000/v1/chat/completions',
-      defaultModel: 'hermes', keyHint: '',
-      note: 'Start the Hermes agent server, then set its endpoint.',
+      endpoint: 'http://localhost:8642/v1/chat/completions',
+      defaultModel: 'minimax-m3', keyHint: 'gateway key',
+      note: 'Hermes serves its OpenAI-compatible gateway on port 8642 (not 8000). '
+        + 'Use a Hermes gateway API key — not your conversational-LLM key.',
     },
     {
       id: 'openclaw', name: 'OpenClaw', kind: 'agent',

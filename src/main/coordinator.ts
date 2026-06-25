@@ -53,6 +53,12 @@ function isConnectionError(msg: string): boolean {
   return /connection failed|ECONNREFUSED|timed out|ENOTFOUND|EHOSTUNREACH|socket hang up/i.test(msg);
 }
 
+// The endpoint rejected the image content (model/server has no vision support).
+// Detected so we can retry the same target with text only.
+function isVisionUnsupportedError(msg: string): boolean {
+  return /image_url|unknown variant|image|vision|multimodal|content.*must be a string|invalid type.*image/i.test(msg);
+}
+
 /**
  * Route a user message to the conversational LLM or the agent harness, then
  * stream the reply. The full shared conversation history is sent to whichever
@@ -101,7 +107,11 @@ export async function coordinate(
     primary === 'harness' && hasLlm ? 'llm' :
     primary === 'llm' && hasHarness ? 'harness' : null;
 
-  const run = async (target: Target, isFallback: boolean) => {
+  // `withImage` attaches the screen frame to THIS run. We never forward the image
+  // on a fallback to a different target (a plain LLM usually can't take images —
+  // that was the source of the `unknown variant image_url` 400), and we retry the
+  // same target without the image if it rejects vision.
+  const run = async (target: Target, isFallback: boolean, withImage: boolean) => {
     const { endpoint, model, apiKeyName } = await resolve(target);
     const apiKey = await getSecret(apiKeyName);
     cb.onRoute?.({ target, name: TARGET_NAMES[target] + (isFallback ? ' (fallback)' : '') });
@@ -109,7 +119,7 @@ export async function coordinate(
     const messages: ChatMessage[] = [{ role: 'system', content: SYSTEM_PROMPT }, ...history];
     // Attach the screen-share frame to the final (current) user message as an
     // OpenAI-vision content array so the agent can see the desktop.
-    if (opts.image) {
+    if (withImage && opts.image) {
       const lastIdx = messages.length - 1;
       const last = messages[lastIdx];
       if (last && last.role === 'user') {
@@ -134,9 +144,15 @@ export async function coordinate(
         cb.onDone(fullText);
       },
       onError: (err) => {
-        // On a connection failure, try the other configured target once.
+        // This target can't accept the screen image — retry it WITHOUT the image
+        // so the user still gets a text answer instead of a hard 400.
+        if (withImage && isVisionUnsupportedError(err)) {
+          void run(target, isFallback, false);
+          return;
+        }
+        // On a connection failure, try the OTHER configured target once (no image).
         if (!isFallback && fallback && isConnectionError(err)) {
-          void run(fallback, true);
+          void run(fallback, true, false);
           return;
         }
         const which = target === 'harness' ? 'agent harness' : 'LLM';
@@ -154,5 +170,6 @@ export async function coordinate(
     });
   };
 
-  await run(primary, false);
+  // Only the primary target (the one chosen because of the image) gets the frame.
+  await run(primary, false, !!opts.image);
 }

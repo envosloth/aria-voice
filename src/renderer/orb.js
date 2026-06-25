@@ -76,9 +76,14 @@
   let gradBucket = -1, gradCache = null, gradColKey = '';
 
   function resize() {
+    const cw = canvas.clientWidth, ch = canvas.clientHeight;
+    // Skip until the canvas has a real layout size — sizing the backing store to
+    // 0 (or to a pre-layout value) is what left the mesh looking thin/blurry
+    // until a window minimize/restore forced a correct resize.
+    if (cw < 2 || ch < 2) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    w = canvas.clientWidth; h = canvas.clientHeight;
-    canvas.width = w * dpr; canvas.height = h * dpr;
+    w = cw; h = ch;
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     cx = w / 2; cy = h / 2;
     baseR = Math.min(w, h) * 0.27;
@@ -134,7 +139,11 @@
     const rScale = 1 + breatheAmp * Math.sin(t * 1.3) + pulse + react * 0.16;
     const r = baseR * rScale;
 
-    let minZ = 1e9, maxZ = -1e9;
+    // "Nearness" is measured by the perspective scale (pp): a larger pp means the
+    // point is closer to the viewer. Using pp (not the raw rotated z) removes any
+    // sign-convention ambiguity, so the side facing the user is reliably the one
+    // drawn thick + bright (fixes "the mesh gets thinner closer to the user").
+    let ppMin = 1e9, ppMax = -1e9;
     for (let k = 0; k < NPTS; k++) {
       const sp = sinPhi[k];
       const x = r * sp * cosTh[k];
@@ -147,9 +156,9 @@
       const persp = 540 / (540 + z3);
       px[k] = cx + x2 * persp; py[k] = cy + y2 * persp;
       pz[k] = z3; pp[k] = persp;
-      if (z3 < minZ) minZ = z3; if (z3 > maxZ) maxZ = z3;
+      if (persp < ppMin) ppMin = persp; if (persp > ppMax) ppMax = persp;
     }
-    const zRange = (maxZ - minZ) || 1;
+    const ppRange = (ppMax - ppMin) || 1;
 
     // Bright glowing core — a hot center fading to the orb colour.
     const coreR = baseR * (0.85 * rScale);
@@ -177,7 +186,7 @@
     const NB = 6;
     for (let b = 0; b < NB; b++) {
       const d0 = b / NB, d1 = (b + 1) / NB;
-      const dc = (d0 + d1) * 0.5;            // bucket center depth (0 back .. 1 front)
+      const dc = (d0 + d1) * 0.5;            // bucket center nearness (0 back .. 1 front)
       const last = b === NB - 1;
       ctx.strokeStyle = `rgba(${cr},${cg},${cb},${0.20 + dc * 0.65})`; // floor 0.20
       ctx.lineWidth = 1.3 + dc * 2.1;        // ~1.3 (back) .. ~3.3px (front)
@@ -186,8 +195,8 @@
       for (let j = 0; j < LON; j++) {
         for (let i = 0; i < LAT; i++) {
           const k = i * LON + j, k2 = k + LON;
-          const depth = ((pz[k] + pz[k2]) * 0.5 - minZ) / zRange;
-          if (depth < d0 || (depth >= d1 && !last)) continue;
+          const front = ((pp[k] + pp[k2]) * 0.5 - ppMin) / ppRange;
+          if (front < d0 || (front >= d1 && !last)) continue;
           ctx.moveTo(px[k], py[k]); ctx.lineTo(px[k2], py[k2]);
         }
       }
@@ -196,8 +205,8 @@
         const base = i * LON;
         for (let j = 0; j < LON; j++) {
           const k = base + j, k2 = base + ((j + 1) % LON);
-          const depth = ((pz[k] + pz[k2]) * 0.5 - minZ) / zRange;
-          if (depth < d0 || (depth >= d1 && !last)) continue;
+          const front = ((pp[k] + pp[k2]) * 0.5 - ppMin) / ppRange;
+          if (front < d0 || (front >= d1 && !last)) continue;
           ctx.moveTo(px[k], py[k]); ctx.lineTo(px[k2], py[k2]);
         }
       }
@@ -205,15 +214,16 @@
     }
     ctx.shadowBlur = 0;
 
-    // Front vertex dots, batched into 3 depth buckets (one fill per bucket).
+    // Vertex dots on the near hemisphere (the half facing the user), brighter and
+    // larger the closer they are. Batched into 3 nearness buckets (one fill each).
     for (let b = 0; b < 3; b++) {
       const d0 = b / 3, d1 = (b + 1) / 3, dc = (d0 + d1) * 0.5, last = b === 2;
       ctx.fillStyle = `rgba(${cr},${cg},${cb},${0.45 + dc * 0.5})`;
       ctx.beginPath();
       for (let k = 0; k < NPTS; k++) {
-        if (pz[k] < 0) continue;
-        const depth = (pz[k] - minZ) / zRange;
-        if (depth < d0 || (depth >= d1 && !last)) continue;
+        const front = (pp[k] - ppMin) / ppRange;
+        if (front < 0.5) continue;          // near hemisphere only
+        if (front < d0 || (front >= d1 && !last)) continue;
         const rr = (1.0 + react * 1.8 + dc * 1.0) * pp[k];
         ctx.moveTo(px[k] + rr, py[k]);
         ctx.arc(px[k], py[k], rr, 0, TWO_PI);
@@ -262,6 +272,20 @@
     refreshAccent();
     resize();
     window.addEventListener('resize', resize);
+    // A ResizeObserver catches layout-driven size changes the window 'resize'
+    // event misses (the real cause of the "thin until you minimize/restore" bug).
+    if (typeof ResizeObserver !== 'undefined') {
+      new ResizeObserver(() => resize()).observe(canvas);
+    }
+    // Re-resize when the window is shown again or regains focus / changes DPR
+    // (e.g. dragged to another monitor) so the backing store never goes stale.
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) resize(); });
+    window.addEventListener('focus', resize);
+    window.addEventListener('pageshow', resize);
+    // Settle initial sizing across a couple of frames in case layout isn't final.
+    requestAnimationFrame(resize);
+    setTimeout(resize, 120);
+    setTimeout(resize, 500);
     if (!raf) raf = requestAnimationFrame(loop);
   }
 

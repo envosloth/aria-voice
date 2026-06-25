@@ -290,7 +290,19 @@ app.whenReady().then(async () => {
   }
 });
 
+// One-time migration: the TTS default moved from Piper to Kokoro. An older
+// config that still pins engine=piper while selecting a Kokoro voice (af_/am_/
+// bf_/bm_) would silently keep playing Piper — flip it to Kokoro.
+function migrateConfig(): void {
+  const eng = config.get('tts.engine') as string;
+  const voice = (config.get('tts.voice') as string) || '';
+  if (eng === 'piper' && /^(af_|am_|bf_|bm_)/.test(voice)) {
+    config.set('tts.engine', 'kokoro');
+  }
+}
+
 function applyConfigToEnv(): void {
+  migrateConfig();
   process.env.ARIA_STT_MODEL = (config.get('stt.model') as string) || 'small';
   process.env.ARIA_STT_BACKEND = (config.get('stt.backend') as string) || 'vulkan';
   process.env.ARIA_TTS_ENGINE = (config.get('tts.engine') as string) || 'kokoro';

@@ -57,7 +57,7 @@ window.addEventListener('unhandledrejection', (e) => {
 
 function assistantSay(text) {
   addMessage('assistant', text);
-  try { aria.tts.play(text); orbState('speaking'); } catch (e) {}
+  try { stopPlayback(true); aria.tts.play(text); orbState('speaking'); } catch (e) {}
 }
 
 // Single entry point for user turns (text box + voice). Handles screen-share
@@ -69,7 +69,7 @@ async function submitUserMessage(rawText) {
   addMessage('user', text);
   if (await handleScreenCommand(text)) return;
   orbState('processing');
-  const image = isSharing() ? captureScreenFrame() : null;
+  const image = isSharing() ? await captureScreenFrame() : null;
   aria.llm.send(text, image);
 }
 
@@ -82,7 +82,8 @@ textInput.addEventListener('keydown', (e) => {
 });
 
 // --- Screen share: feed the live desktop to the agent as vision context ---
-let screenStream = null, screenVideo = null, screenCanvas = null;
+let screenStream = null, screenTrack = null, screenGrabber = null, screenVideo = null;
+const screenCanvas = document.createElement('canvas');
 const screenShareBtn = document.getElementById('screen-btn');
 
 function isSharing() { return !!screenStream; }
@@ -90,16 +91,24 @@ function isSharing() { return !!screenStream; }
 async function startScreenShare() {
   if (screenStream) return true;
   try {
-    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false });
-    screenVideo = document.createElement('video');
-    screenVideo.srcObject = screenStream;
-    screenVideo.muted = true;
-    await screenVideo.play();
-    screenCanvas = document.createElement('canvas');
-    screenStream.getVideoTracks()[0].addEventListener('ended', () => {
-      stopScreenShare();
-      assistantSay('Screen sharing stopped.');
+    // Low frame rate + capped width: we only need an occasional still for the
+    // agent, so a continuous high-res decode (the old approach) just caused jank.
+    screenStream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: { ideal: 1, max: 2 }, width: { max: 1280 } },
+      audio: false,
     });
+    screenTrack = screenStream.getVideoTracks()[0];
+    // Prefer ImageCapture: grabs a single frame on demand with no playing <video>
+    // element continuously decoding in the background.
+    screenGrabber = (typeof ImageCapture !== 'undefined') ? new ImageCapture(screenTrack) : null;
+    if (!screenGrabber) {
+      // Fallback for engines without ImageCapture: a muted off-DOM video.
+      screenVideo = document.createElement('video');
+      screenVideo.srcObject = screenStream;
+      screenVideo.muted = true;
+      await screenVideo.play();
+    }
+    screenTrack.addEventListener('ended', () => { stopScreenShare(); assistantSay('Screen sharing stopped.'); });
     if (screenShareBtn) screenShareBtn.classList.add('active');
     assistantSay('Screen sharing is on — I can see your screen now.');
     return true;
@@ -112,20 +121,32 @@ async function startScreenShare() {
 
 function stopScreenShare() {
   if (screenStream) screenStream.getTracks().forEach((t) => t.stop());
-  screenStream = null; screenVideo = null;
+  screenStream = null; screenTrack = null; screenGrabber = null; screenVideo = null;
   if (screenShareBtn) screenShareBtn.classList.remove('active');
 }
 
-// Grab the current desktop frame as a downscaled JPEG data URL (small + fast).
-function captureScreenFrame() {
-  if (!screenStream || !screenVideo || !screenVideo.videoWidth) return null;
-  const maxW = 1280;
-  const scale = Math.min(1, maxW / screenVideo.videoWidth);
-  const cw = Math.round(screenVideo.videoWidth * scale);
-  const ch = Math.round(screenVideo.videoHeight * scale);
-  screenCanvas.width = cw; screenCanvas.height = ch;
-  screenCanvas.getContext('2d').drawImage(screenVideo, 0, 0, cw, ch);
-  return screenCanvas.toDataURL('image/jpeg', 0.6);
+// Grab one desktop frame as a downscaled JPEG data URL (small + fast). Async:
+// ImageCapture.grabFrame() resolves an ImageBitmap we draw once.
+async function captureScreenFrame() {
+  try {
+    let srcW, srcH, drawable;
+    if (screenGrabber) {
+      const bmp = await screenGrabber.grabFrame();
+      srcW = bmp.width; srcH = bmp.height; drawable = bmp;
+    } else if (screenVideo && screenVideo.videoWidth) {
+      srcW = screenVideo.videoWidth; srcH = screenVideo.videoHeight; drawable = screenVideo;
+    } else { return null; }
+    const maxW = 1280;
+    const scale = Math.min(1, maxW / srcW);
+    const cw = Math.max(1, Math.round(srcW * scale));
+    const ch = Math.max(1, Math.round(srcH * scale));
+    screenCanvas.width = cw; screenCanvas.height = ch;
+    screenCanvas.getContext('2d').drawImage(drawable, 0, 0, cw, ch);
+    if (drawable.close) drawable.close(); // free the ImageBitmap
+    return screenCanvas.toDataURL('image/jpeg', 0.55);
+  } catch (e) {
+    return null;
+  }
 }
 
 async function toggleScreenShare() {
@@ -309,7 +330,8 @@ aria.llm.onDone((fullText) => {
   currentAssistantMsg = null;
   streamTextNode = null;
   pendingRoute = null;
-  orbState('speaking'); // agent is about to talk -> dynamic motion
+  stopPlayback(true);    // interrupt any prior audio: never talk over ourselves
+  orbState('speaking');  // agent is about to talk -> dynamic motion
   aria.tts.play(fullText);
 });
 
@@ -322,6 +344,8 @@ aria.llm.onDone((fullText) => {
 let ttsChunkRate = 24000; // updated per chunk from the 'chunk' state message
 let audioCtx = null;
 let nextPlayTime = 0;
+let ttsSources = [];      // currently scheduled buffer sources (this utterance)
+let idleTimer = null;
 
 function getAudioCtx() {
   if (!audioCtx) {
@@ -333,7 +357,17 @@ function getAudioCtx() {
     ttsAnalyser.connect(audioCtx.destination);
     pollTtsLevel();
   }
+  if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
   return audioCtx;
+}
+
+// Hard-stop the current utterance's audio (used when a new utterance begins, so
+// the agent never speaks over itself). Cancels the sidecar synth too.
+function stopPlayback(cancelSidecar) {
+  for (const s of ttsSources) { try { s.onended = null; s.stop(); } catch (e) {} }
+  ttsSources = [];
+  nextPlayTime = 0;
+  if (cancelSidecar) { try { aria.tts.stop(); } catch (e) {} }
 }
 
 let ttsAnalyser = null;
@@ -368,20 +402,33 @@ aria.tts.onAudio((pcmArrayBuffer) => {
   source.connect(ttsAnalyser);
 
   const now = ctx.currentTime;
-  if (nextPlayTime < now) nextPlayTime = now;
+  // Small lead so the very first chunk isn't clipped while the graph spins up.
+  if (nextPlayTime < now + 0.03) nextPlayTime = now + 0.03;
   source.start(nextPlayTime);
   nextPlayTime += buffer.duration;
+  ttsSources.push(source);
+  source.onended = () => {
+    const i = ttsSources.indexOf(source);
+    if (i >= 0) ttsSources.splice(i, 1);
+  };
 });
 
 aria.tts.onState((state) => {
-  if (state && state.state === 'chunk' && state.sample_rate) {
-    ttsChunkRate = state.sample_rate; // tag upcoming audio buffers with true rate
+  if (!state) return;
+  if (state.state === 'chunk') {
+    if (state.sample_rate) ttsChunkRate = state.sample_rate; // true rate for buffers
+    // A new utterance's first sentence: clear any leftover scheduling so chunks
+    // line up seamlessly (backstop to stopPlayback at play time).
+    if (state.index === 0 && idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
   }
-  if (state && state.state === 'done') {
-    // Return to idle once the remaining buffered audio finishes playing.
+  if (state.state === 'done') {
+    // Return to idle only after ALL buffered audio has finished — including the
+    // final chunk's full tail (no early cutoff). +250ms guard.
     const remainMs = audioCtx ? Math.max(0, (nextPlayTime - audioCtx.currentTime) * 1000) : 0;
-    setTimeout(() => orbState('idle'), remainMs + 150);
-    nextPlayTime = 0;
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { if (ttsSources.length === 0) orbState('idle'); }, remainMs + 250);
+    // NOTE: do NOT reset nextPlayTime here — that previously let the tail be
+    // overwritten/clipped. It's reset by stopPlayback() when the next turn starts.
   }
 });
 
