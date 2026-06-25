@@ -25,7 +25,9 @@ import wave
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "shared"))
 from base_sidecar import BaseSidecar
 
-LIB_DIR = os.path.expanduser("~/.local/lib")
+# Prefer the bundled whisper.cpp libs (set by the packaged app) so STT works on
+# a fresh PC; fall back to a local build for development.
+LIB_DIR = os.environ.get("ARIA_WHISPER_LIB_DIR") or os.path.expanduser("~/.local/lib")
 
 
 class SttSidecar(BaseSidecar):
@@ -215,8 +217,10 @@ class SttSidecar(BaseSidecar):
 
     def _find_binary(self, name: str) -> str:
         import shutil
+        bundled = os.environ.get("ARIA_WHISPER_BIN_DIR", "")
         candidates = [
             os.environ.get(f"{name.upper().replace('-', '_')}_BIN", ""),
+            os.path.join(bundled, name) if bundled else "",   # packaged app: bundled whisper
             os.path.expanduser(f"~/.local/bin/{name}"),
             f"/usr/local/bin/{name}",
         ]

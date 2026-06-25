@@ -15,6 +15,7 @@ interface AppConfig {
     phrase: string;
   };
   llm: {
+    harness: string;
     endpoint: string;
     model: string;
   };
@@ -25,6 +26,7 @@ interface AppConfig {
   ui: {
     globalShortcut: string;
     theme: 'system' | 'light' | 'dark';
+    onboarded: boolean;
   };
 }
 
@@ -45,6 +47,7 @@ const defaults: AppConfig = {
     phrase: 'hey_jarvis',
   },
   llm: {
+    harness: '',
     endpoint: '',
     model: '',
   },
@@ -55,6 +58,7 @@ const defaults: AppConfig = {
   ui: {
     globalShortcut: 'Super+Shift+A',
     theme: 'system',
+    onboarded: false,
   },
 };
 

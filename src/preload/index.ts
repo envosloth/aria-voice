@@ -51,6 +51,8 @@ const api = {
 
   llm: {
     send: (message: string) => ipcRenderer.send(IPC.LLM_SEND, message),
+    test: (opts: { endpoint: string; model: string; apiKey?: string }) =>
+      ipcRenderer.invoke(IPC.LLM_TEST, opts),
     onToken: (cb: (token: string) => void) =>
       ipcRenderer.on(IPC.LLM_TOKEN, (_e, token) => cb(token)),
     onDone: (cb: (fullText: string) => void) =>

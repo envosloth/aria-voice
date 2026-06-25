@@ -26,6 +26,7 @@ export const IPC = {
   LLM_TOKEN: 'llm:token',
   LLM_DONE: 'llm:done',
   LLM_ERROR: 'llm:error',
+  LLM_TEST: 'llm:test',        // renderer -> main: test a provider endpoint/key
 
   CONFIG_GET: 'config:get',
   CONFIG_SET: 'config:set',

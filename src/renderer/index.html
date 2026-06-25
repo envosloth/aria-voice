@@ -8,16 +8,43 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
-    :root {
+    /* Default theme: Midnight */
+    :root, html[data-theme="midnight"] {
       --bg: #1a1a2e;
       --surface: #16213e;
       --text: #e0e0e0;
       --text-muted: #8888aa;
       --accent: #0f3460;
       --accent-active: #e94560;
+      --accent-rgb: 233, 69, 96;
       --success: #2ecc71;
       --warning: #f39c12;
       --error: #e74c3c;
+    }
+    html[data-theme="nord"] {
+      --bg: #2e3440; --surface: #3b4252; --text: #eceff4; --text-muted: #8a93a5;
+      --accent: #434c5e; --accent-active: #88c0d0; --accent-rgb: 136, 192, 208;
+      --success: #a3be8c; --warning: #ebcb8b; --error: #bf616a;
+    }
+    html[data-theme="solarized"] {
+      --bg: #002b36; --surface: #073642; --text: #eee8d5; --text-muted: #93a1a1;
+      --accent: #094f5a; --accent-active: #2aa198; --accent-rgb: 42, 161, 152;
+      --success: #859900; --warning: #b58900; --error: #dc322f;
+    }
+    html[data-theme="synthwave"] {
+      --bg: #1a1033; --surface: #261748; --text: #f5e6ff; --text-muted: #9d7bc4;
+      --accent: #3a1f6e; --accent-active: #ff4ecd; --accent-rgb: 255, 78, 205;
+      --success: #36f9c5; --warning: #ffcc66; --error: #ff5277;
+    }
+    html[data-theme="forest"] {
+      --bg: #14201a; --surface: #1d2e26; --text: #e3f0e7; --text-muted: #7fa08c;
+      --accent: #1f4032; --accent-active: #4caf7d; --accent-rgb: 76, 175, 125;
+      --success: #6fcf97; --warning: #e0b15b; --error: #d96c6c;
+    }
+    html[data-theme="light"] {
+      --bg: #f4f5f9; --surface: #ffffff; --text: #1c1f26; --text-muted: #6b7280;
+      --accent: #e2e8f0; --accent-active: #e94560; --accent-rgb: 233, 69, 96;
+      --success: #16a34a; --warning: #d97706; --error: #dc2626;
     }
 
     body {
@@ -28,6 +55,19 @@
       display: flex;
       flex-direction: column;
     }
+
+    /* Reactive mesh-orb background canvas, behind all UI */
+    #orb-canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 0;
+      pointer-events: none;
+    }
+    header, main, .input-area { position: relative; z-index: 1; }
+    /* Let the orb show through the conversation area */
+    main { background: transparent; }
 
     header {
       display: flex;
@@ -248,9 +288,57 @@
     }
     button.primary:hover { opacity: 0.9; }
     #settings-saved-msg { color: var(--success); font-size: 13px; }
+
+    /* Onboarding */
+    .onboard-overlay {
+      position: fixed; inset: 0; background: var(--bg);
+      display: none; align-items: center; justify-content: center; z-index: 200;
+    }
+    .onboard-overlay.visible { display: flex; }
+    .onboard-panel {
+      width: 90%; max-width: 460px; background: var(--surface);
+      border-radius: 16px; padding: 32px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    }
+    .onboard-steps { display: flex; gap: 8px; justify-content: center; margin-bottom: 24px; }
+    .onboard-steps .dot {
+      width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.15);
+      transition: background 0.3s, width 0.3s;
+    }
+    .onboard-steps .dot.active { background: var(--accent-active); width: 22px; border-radius: 4px; }
+    .onboard-steps .dot.done { background: var(--success); }
+    .onboard-step { text-align: center; min-height: 220px; }
+    .onboard-step h2 { font-size: 22px; margin-bottom: 12px; }
+    .onboard-step p { color: var(--text-muted); font-size: 14px; line-height: 1.6; margin-bottom: 18px; }
+    .onboard-step label { display: block; text-align: left; font-size: 13px; margin-bottom: 14px; }
+    .onboard-step input, .onboard-step select {
+      width: 100%; margin-top: 5px; padding: 10px 12px; background: var(--bg);
+      border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
+      color: var(--text); font-size: 14px; outline: none;
+    }
+    .onboard-step input:focus, .onboard-step select:focus { border-color: var(--accent-active); }
+    .onboard-logo { font-size: 56px; margin-bottom: 8px; }
+    .onboard-secondary {
+      background: var(--accent); color: var(--text); border: none;
+      padding: 9px 18px; border-radius: 8px; cursor: pointer; font-size: 13px;
+    }
+    .onboard-secondary:hover { background: var(--accent-active); }
+    .onboard-secondary:disabled { opacity: 0.5; cursor: default; }
+    #onb-test-result, #onb-mic-result { margin-left: 10px; font-size: 13px; }
+    .ok-msg { color: var(--success); }
+    .err-msg { color: var(--error); }
+    .onboard-footer {
+      display: flex; gap: 10px; align-items: center; margin-top: 28px;
+    }
+    .onboard-ghost {
+      background: none; border: none; color: var(--text-muted);
+      cursor: pointer; font-size: 13px; padding: 8px;
+    }
+    .onboard-ghost:hover { color: var(--text); }
+    #onb-skip { margin-left: auto; }
   </style>
 </head>
 <body>
+  <canvas id="orb-canvas"></canvas>
   <header>
     <h1>ARIA</h1>
     <div class="status-bar">
@@ -285,15 +373,19 @@
       <div class="settings-warning" id="secure-warning"></div>
 
       <section>
-        <h3>Language Model (remote)</h3>
-        <label>Endpoint URL
-          <input type="url" id="cfg-llm-endpoint" placeholder="https://api.example.com/v1/chat/completions">
+        <h3>Agent harness</h3>
+        <label>Harness
+          <select id="cfg-llm-harness"></select>
         </label>
+        <label id="cfg-endpoint-row" style="display:none;">Endpoint URL
+          <input type="url" id="cfg-llm-endpoint" placeholder="http://localhost:8080/v1/chat/completions">
+        </label>
+        <p class="hint" id="cfg-harness-note" style="margin:-6px 0 12px;"></p>
         <label>Model
           <input type="text" id="cfg-llm-model" placeholder="gpt-4o-mini">
         </label>
-        <label>API Key <span class="hint">(stored in OS keyring via safeStorage)</span>
-          <input type="password" id="cfg-llm-key" placeholder="sk-... (leave blank to keep existing)">
+        <label id="cfg-key-row">API Key <span class="hint">(stored in OS keyring via safeStorage)</span>
+          <input type="password" id="cfg-llm-key" placeholder="leave blank to keep existing">
         </label>
       </section>
 
@@ -335,9 +427,92 @@
         </label>
       </section>
 
+      <section>
+        <h3>Appearance</h3>
+        <label>Theme
+          <select id="cfg-theme">
+            <option value="midnight">Midnight</option>
+            <option value="nord">Nord</option>
+            <option value="solarized">Solarized Dark</option>
+            <option value="synthwave">Synthwave</option>
+            <option value="forest">Forest</option>
+            <option value="light">Light</option>
+          </select>
+        </label>
+      </section>
+
       <div class="settings-footer">
         <button id="settings-save" class="primary">Save</button>
         <span id="settings-saved-msg"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- First-run onboarding walkthrough -->
+  <div class="onboard-overlay" id="onboard-overlay">
+    <div class="onboard-panel">
+      <div class="onboard-steps" id="onboard-dots"></div>
+
+      <!-- Step 0: Welcome -->
+      <div class="onboard-step" data-step="0">
+        <div class="onboard-logo">🎙️</div>
+        <h2>Welcome to ARIA</h2>
+        <p>A local-first voice assistant. Speech recognition and speech run on
+        your machine; only the language model is remote. Let's get you set up —
+        takes about a minute.</p>
+      </div>
+
+      <!-- Step 1: Agent harness -->
+      <div class="onboard-step" data-step="1" hidden>
+        <h2>Choose your agent harness</h2>
+        <p>ARIA routes your voice to an agent harness over an OpenAI-compatible
+        endpoint. Pick one and confirm its endpoint URL.</p>
+        <label>Harness
+          <select id="onb-harness"></select>
+        </label>
+        <label id="onb-endpoint-row" style="display:none;">Endpoint URL
+          <input type="url" id="onb-endpoint" placeholder="http://localhost:8080/v1/chat/completions">
+        </label>
+        <p class="hint" id="onb-note"></p>
+        <label>Model
+          <input type="text" id="onb-model" placeholder="model name">
+        </label>
+      </div>
+
+      <!-- Step 2: API key -->
+      <div class="onboard-step" data-step="2" hidden>
+        <h2>API key <span style="color:var(--text-muted);font-size:14px;">(optional)</span></h2>
+        <p id="onb-key-desc">If your harness needs a key, paste it here — it's
+        stored encrypted in your OS keyring. Local harnesses usually don't need
+        one; leave it blank.</p>
+        <label>API Key
+          <input type="password" id="onb-key" placeholder="optional">
+        </label>
+        <button id="onb-test" class="onboard-secondary">Test connection</button>
+        <span id="onb-test-result"></span>
+      </div>
+
+      <!-- Step 3: Microphone -->
+      <div class="onboard-step" data-step="3" hidden>
+        <h2>Microphone access</h2>
+        <p>ARIA listens for a wake word and your voice. Grant microphone access
+        so it can hear you. You can always type instead.</p>
+        <button id="onb-mic" class="onboard-secondary">Enable microphone</button>
+        <span id="onb-mic-result"></span>
+      </div>
+
+      <!-- Step 4: Done -->
+      <div class="onboard-step" data-step="4" hidden>
+        <div class="onboard-logo">✅</div>
+        <h2>You're all set</h2>
+        <p>Say <b id="onb-wake">"hey jarvis"</b> or press the mic button to talk.
+        Change anything later in Settings (gear icon).</p>
+      </div>
+
+      <div class="onboard-footer">
+        <button id="onb-back" class="onboard-ghost">Back</button>
+        <button id="onb-skip" class="onboard-ghost">Skip setup</button>
+        <button id="onb-next" class="primary">Next</button>
       </div>
     </div>
   </div>
@@ -361,6 +536,8 @@
   </div>
 
   <script src="audio-utils.js"></script>
+  <script src="harnesses.js"></script>
+  <script src="orb.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

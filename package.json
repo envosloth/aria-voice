@@ -4,7 +4,7 @@
   "description": "GPU-accelerated voice assistant with local STT/TTS and remote LLM",
   "main": "dist/main/index.js",
   "scripts": {
-    "build": "tsc && npm run build:preload && cp src/renderer/index.html src/renderer/app.js src/renderer/audio-utils.js src/renderer/mic-worklet.js dist/renderer/",
+    "build": "tsc && npm run build:preload && cp src/renderer/index.html src/renderer/app.js src/renderer/audio-utils.js src/renderer/mic-worklet.js src/renderer/harnesses.js src/renderer/orb.js dist/renderer/",
     "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js",
     "start": "npm run build && electron dist/main/index.js",
     "dev": "npm run build && electron --inspect dist/main/index.js",
@@ -23,7 +23,8 @@
     "smoke:boot": "npm run build && ARIA_SMOKE=1 electron --no-sandbox dist/main/index.js",
     "smoke:all": "npm run smoke && npm run smoke:tts && npm run smoke:stt && npm run smoke:resilience && npm run smoke:pdeathsig && npm run smoke:memory && npm run smoke:llm && npm run smoke:models && npm run smoke:audio && npm run smoke:e2e",
     "package:sidecars": "for s in stt tts wakeword; do bash scripts/package-sidecar.sh $s; done",
-    "dist": "npm run build && npm run package:sidecars && electron-builder --config electron-builder.yml"
+    "package:whisper": "bash scripts/stage-whisper.sh",
+    "dist": "npm run build && npm run package:sidecars && npm run package:whisper && electron-builder --config electron-builder.yml"
   },
   "author": "ARIA Project <aria@localhost>",
   "homepage": "https://github.com/aria-voice/aria",

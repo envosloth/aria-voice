@@ -28,6 +28,11 @@ extraResources:
     to: sidecars
     filter:
       - "**/*"
+  # whisper.cpp binaries + libs so STT works on a fresh PC (no local whisper.cpp).
+  - from: build/whisper
+    to: whisper
+    filter:
+      - "**/*"
 
 linux:
   target:
@@ -42,23 +47,26 @@ linux:
     (whisper.cpp/Vulkan), local text-to-speech (Piper), and wake-word detection
     (openWakeWord), routing to a user-configured remote LLM.
   desktop:
-    entry:
-      Name: ARIA
-      Comment: Voice assistant
-      Categories: Utility;AudioVideo;
+    Name: ARIA
+    Comment: Voice assistant
+    Categories: Utility;
 
 # .deb runtime dependencies. gnome-keyring/libsecret is REQUIRED for safeStorage
 # to encrypt API keys (else it silently falls back to plaintext obfuscation).
 deb:
   maintainer: ARIA Project <aria@localhost>
+  afterInstall: assets/deb-after-install.sh
   depends:
     - libsecret-1-0
     - gnome-keyring
     - libnotify4
     - libnss3
     - libasound2
+    - libvulkan1      # whisper.cpp Vulkan backend (GPU STT)
+    - libgomp1        # OpenMP runtime for whisper.cpp
   recommends:
-    - libfuse2  # AppImage runtime on older targets
+    - libfuse2                # AppImage runtime on older targets
+    - mesa-vulkan-drivers     # Vulkan driver (RADV) for AMD/Intel GPUs
 
 appImage:
   # AppImage needs libfuse2 on some targets; documented in README.

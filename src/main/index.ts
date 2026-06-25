@@ -1,14 +1,22 @@
 import { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, nativeImage } from 'electron';
 import path from 'path';
+import fs from 'fs';
 import { Supervisor } from './supervisor';
 import { config } from './config';
 import { getSecureBackend, isSecureBackendSafe, setSecret, getSecret, deleteSecret } from './secure-storage';
 import { streamLlmResponse } from './llm-client';
+import { streamChat } from './llm-stream';
 import { buildManifest, missingModels, downloadModel } from './model-manager';
 import { IPC } from '../shared/ipc-channels';
 import { SidecarName } from '../shared/constants';
 
 app.commandLine.appendSwitch('enable-features', 'GlobalShortcutsPortal');
+
+// Allow the renderer to render above the display's vsync cap so the reactive
+// orb can hit 160+ FPS on high-refresh monitors. Without these, requestAnimation
+// Frame is locked to the refresh rate (often 60 Hz).
+app.commandLine.appendSwitch('disable-frame-rate-limit');
+app.commandLine.appendSwitch('disable-gpu-vsync');
 
 if (process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland') {
   app.commandLine.appendSwitch('ozone-platform-hint', 'wayland');
@@ -129,6 +137,23 @@ function setupIpcHandlers(): void {
     supervisor.sendToSidecar('tts', { type: 'stop' });
   });
 
+  // Onboarding "Test connection": one short non-streaming round-trip to confirm
+  // the endpoint + key work. Returns {ok} or {ok:false, error}.
+  ipcMain.handle(IPC.LLM_TEST, async (_e, opts: { endpoint: string; model: string; apiKey?: string }) => {
+    return await new Promise((resolve) => {
+      let settled = false;
+      const done = (r: { ok: boolean; error?: string }) => { if (!settled) { settled = true; resolve(r); } };
+      streamChat(
+        { endpoint: opts.endpoint, model: opts.model, apiKey: opts.apiKey, message: 'Say "ok".', timeoutMs: 12000 },
+        {
+          onToken: () => { /* first token is enough to prove it works */ done({ ok: true }); },
+          onDone: () => done({ ok: true }),
+          onError: (error) => done({ ok: false, error }),
+        },
+      );
+    });
+  });
+
   // Mic PCM from the renderer (getUserMedia, 16kHz mono s16le). Always feed the
   // always-on wake-word sidecar; also feed STT while an utterance is active.
   ipcMain.on(IPC.MIC_AUDIO, (_e, chunk: ArrayBuffer) => {
@@ -202,6 +227,21 @@ app.whenReady().then(async () => {
     // Headless boot test: confirm the app initialized, then quit cleanly.
     console.log('[ARIA_SMOKE] app ready, window+tray+supervisor initialized');
     setTimeout(async () => {
+      // Orb render benchmark (throttle-independent — times N renders).
+      if (process.env.ARIA_FPS && mainWindow) {
+        try {
+          const r = await mainWindow.webContents.executeJavaScript('AriaOrb.benchmark(400)');
+          console.log(`[ARIA_FPS] orb render ${r.avgMs}ms/frame -> sustains ${r.maxFps} FPS (n=${r.n})`);
+        } catch (e) { console.log('[ARIA_FPS] benchmark failed:', (e as Error).message); }
+      }
+      // Offscreen screenshot for UI verification (no visible window).
+      if (process.env.ARIA_SMOKE_SHOT && mainWindow) {
+        try {
+          const img = await mainWindow.webContents.capturePage();
+          require('fs').writeFileSync(process.env.ARIA_SMOKE_SHOT, img.toPNG());
+          console.log('[ARIA_SMOKE] screenshot saved:', process.env.ARIA_SMOKE_SHOT);
+        } catch (e) { console.log('[ARIA_SMOKE] screenshot failed:', (e as Error).message); }
+      }
       console.log('[ARIA_SMOKE] shutting down');
       await supervisor.stopAll();
       console.log('[ARIA_SMOKE] OK');
@@ -216,6 +256,14 @@ function applyConfigToEnv(): void {
   process.env.ARIA_TTS_ENGINE = (config.get('tts.engine') as string) || 'piper';
   process.env.ARIA_TTS_VOICE = (config.get('tts.voice') as string) || 'en_US-lessac-medium';
   process.env.ARIA_WAKEWORD_MODEL = (config.get('wakeword.phrase') as string) || 'hey_jarvis';
+
+  // Point the STT sidecar at the bundled whisper.cpp (binaries + libs) when the
+  // app is packaged, so it works without a local whisper.cpp install.
+  const whisperDir = path.join(process.resourcesPath || '', 'whisper');
+  if (fs.existsSync(whisperDir)) {
+    process.env.ARIA_WHISPER_BIN_DIR = path.join(whisperDir, 'bin');
+    process.env.ARIA_WHISPER_LIB_DIR = path.join(whisperDir, 'lib');
+  }
 }
 
 async function ensureModelsReady(): Promise<boolean> {
