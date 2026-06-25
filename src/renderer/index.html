@@ -395,14 +395,17 @@
 
       <section>
         <h3>Conversational LLM <span class="hint">(everyday chat)</span></h3>
+        <label>Provider
+          <select id="cfg-llm-provider"></select>
+        </label>
         <label>Endpoint URL
-          <input type="url" id="cfg-llm-endpoint" placeholder="https://api.openai.com/v1/chat/completions">
+          <input type="url" id="cfg-llm-endpoint" placeholder="https://api.deepseek.com/v1/chat/completions">
         </label>
         <label>Model
-          <input type="text" id="cfg-llm-model" placeholder="gpt-4o-mini">
+          <input type="text" id="cfg-llm-model" placeholder="deepseek-chat">
         </label>
         <label>API Key <span class="hint">(OS keyring)</span>
-          <input type="password" id="cfg-llm-key" placeholder="leave blank to keep existing">
+          <input type="password" id="cfg-llm-key" placeholder="paste your key">
         </label>
       </section>
 

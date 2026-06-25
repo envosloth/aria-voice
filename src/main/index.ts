@@ -244,6 +244,10 @@ app.whenReady().then(async () => {
       // Offscreen screenshot for UI verification (no visible window).
       if (process.env.ARIA_SMOKE_SHOT && mainWindow) {
         try {
+          if (process.env.ARIA_OPEN_SETTINGS) {
+            await mainWindow.webContents.executeJavaScript(`document.getElementById('settings-btn').click(); true;`);
+            await new Promise((r) => setTimeout(r, 500));
+          }
           if (process.env.ARIA_ORB_STATE) {
             const s = process.env.ARIA_ORB_STATE;
             const js = s === 'speaking'

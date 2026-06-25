@@ -312,6 +312,7 @@ const secureWarning = document.getElementById('secure-warning');
 
 const cfg = {
   routingMode: document.getElementById('cfg-routing-mode'),
+  llmProvider: document.getElementById('cfg-llm-provider'),
   llmEndpoint: document.getElementById('cfg-llm-endpoint'),
   llmModel: document.getElementById('cfg-llm-model'),
   llmKey: document.getElementById('cfg-llm-key'),
@@ -339,6 +340,21 @@ for (const h of window.AriaHarnesses.HARNESSES) {
   cfg.harness.appendChild(opt);
 }
 
+// Populate the conversational-LLM provider dropdown once.
+for (const p of window.AriaHarnesses.PROVIDERS) {
+  const opt = document.createElement('option');
+  opt.value = p.id;
+  opt.textContent = p.name;
+  cfg.llmProvider.appendChild(opt);
+}
+// Picking a provider fills its endpoint + default model (still editable).
+cfg.llmProvider.addEventListener('change', () => {
+  const p = window.AriaHarnesses.providerById(cfg.llmProvider.value);
+  if (!p) return;
+  if (p.endpoint) cfg.llmEndpoint.value = p.endpoint;
+  if (p.defaultModel) cfg.llmModel.value = p.defaultModel;
+});
+
 // Pick a harness preset -> prefill its endpoint/model + note (all editable).
 function applyHarnessSelection(id, opts) {
   const h = window.AriaHarnesses.byId(id) || window.AriaHarnesses.byId('custom');
@@ -354,10 +370,13 @@ async function loadSettings() {
   cfg.routingMode.value = (await aria.config.get('routing.mode')) || 'auto';
   cfg.llmEndpoint.value = (await aria.config.get('llm.endpoint')) || '';
   cfg.llmModel.value = (await aria.config.get('llm.model')) || '';
-  cfg.llmKey.value = '';
+  // Show saved keys so they don't look lost (password field keeps them masked).
+  cfg.llmKey.value = (await aria.secure.get('llm-api-key')) || '';
+  // Reflect the provider dropdown from the saved endpoint.
+  cfg.llmProvider.value = (window.AriaHarnesses.providerFromEndpoint(cfg.llmEndpoint.value) || {}).id || 'custom';
   cfg.harnessEndpoint.value = (await aria.config.get('harness.endpoint')) || '';
   cfg.harnessModel.value = (await aria.config.get('harness.model')) || '';
-  cfg.harnessKey.value = '';
+  cfg.harnessKey.value = (await aria.secure.get('harness-api-key')) || '';
   const savedHarness = (await aria.config.get('harness.id')) || '';
   const inferred = savedHarness || (window.AriaHarnesses.fromEndpoint(cfg.harnessEndpoint.value) || {}).id || 'custom';
   cfg.harness.value = inferred;
@@ -412,9 +431,11 @@ settingsSave.addEventListener('click', async () => {
   await aria.config.set('ui.theme', cfg.theme.value);
   applyTheme(cfg.theme.value);
 
-  // Write keys only if entered (blank keeps existing).
-  if (cfg.llmKey.value.trim()) await aria.secure.set('llm-api-key', cfg.llmKey.value.trim());
-  if (cfg.harnessKey.value.trim()) await aria.secure.set('harness-api-key', cfg.harnessKey.value.trim());
+  // Persist exactly what's in the key fields (they stay populated, not cleared).
+  const lk = cfg.llmKey.value.trim();
+  lk ? await aria.secure.set('llm-api-key', lk) : await aria.secure.delete('llm-api-key');
+  const hk = cfg.harnessKey.value.trim();
+  hk ? await aria.secure.set('harness-api-key', hk) : await aria.secure.delete('harness-api-key');
 
   savedMsg.textContent = 'Saved ✓';
   setTimeout(() => { savedMsg.textContent = ''; }, 2500);

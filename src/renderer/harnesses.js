@@ -62,7 +62,26 @@
     return match || byId('custom');
   }
 
-  const api = { HARNESSES, byId, fromEndpoint };
+  // Conversational-LLM provider presets (OpenAI-compatible). Picking one fills
+  // the endpoint + a default model so users don't have to know the URL.
+  const PROVIDERS = [
+    { id: 'deepseek', name: 'DeepSeek', endpoint: 'https://api.deepseek.com/v1/chat/completions', defaultModel: 'deepseek-chat', keyHint: 'sk-...' },
+    { id: 'openai', name: 'OpenAI', endpoint: 'https://api.openai.com/v1/chat/completions', defaultModel: 'gpt-4o-mini', keyHint: 'sk-...' },
+    { id: 'openrouter', name: 'OpenRouter', endpoint: 'https://openrouter.ai/api/v1/chat/completions', defaultModel: 'openai/gpt-4o-mini', keyHint: 'sk-or-...' },
+    { id: 'groq', name: 'Groq', endpoint: 'https://api.groq.com/openai/v1/chat/completions', defaultModel: 'llama-3.3-70b-versatile', keyHint: 'gsk_...' },
+    { id: 'together', name: 'Together AI', endpoint: 'https://api.together.xyz/v1/chat/completions', defaultModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', keyHint: '...' },
+    { id: 'mistral', name: 'Mistral', endpoint: 'https://api.mistral.ai/v1/chat/completions', defaultModel: 'mistral-small-latest', keyHint: '...' },
+    { id: 'ollama', name: 'Ollama (local)', endpoint: 'http://localhost:11434/v1/chat/completions', defaultModel: 'llama3.2', keyHint: '' },
+    { id: 'lmstudio', name: 'LM Studio (local)', endpoint: 'http://localhost:1234/v1/chat/completions', defaultModel: 'local-model', keyHint: '' },
+    { id: 'custom', name: 'Custom (enter URL)', endpoint: '', defaultModel: '', keyHint: '' },
+  ];
+  function providerById(id) { return PROVIDERS.find((p) => p.id === id) || null; }
+  function providerFromEndpoint(ep) {
+    if (!ep) return null;
+    return PROVIDERS.find((p) => p.endpoint && p.endpoint === ep) || providerById('custom');
+  }
+
+  const api = { HARNESSES, byId, fromEndpoint, PROVIDERS, providerById, providerFromEndpoint };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.AriaHarnesses = api;
 })(typeof self !== 'undefined' ? self : this);
