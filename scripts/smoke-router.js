@@ -27,6 +27,21 @@ check('only-llm', route('fix the code', { mode: 'auto', hasLlm: true, hasHarness
 check('mode-harness', route('hello', { mode: 'harness', hasLlm: true, hasHarness: true }), 'harness');
 check('mode-llm', route('fix the code', { mode: 'llm', hasLlm: true, hasHarness: true }), 'llm');
 check('none', route('hi', { mode: 'auto', hasLlm: false, hasHarness: false }), 'llm');
+// Real-time / tool intent -> harness (the "ask Alexa for weather" bug)
+check('weather-realtime', route('what is the weather for my location', both), 'harness');
+check('news', route('give me the latest news headlines', both), 'harness');
+check('lookup', route('look up the score of the game', both), 'harness');
+// Stickiness: short follow-up after a harness turn continues on the harness
+check('sticky-followup', route('Austin, Texas', { ...both, lastTarget: 'harness' }), 'harness');
+check('sticky-yes', route('yes go ahead', { ...both, lastTarget: 'harness' }), 'harness');
+// ...but an explicit "just chat" still escapes to the LLM
+check('sticky-escape', route('just chat for a sec', { ...both, lastTarget: 'harness' }), 'llm');
+// A long fresh question after a harness turn is NOT treated as a continuation
+check('no-sticky-long', route('what is the capital of France and tell me about its history please', { ...both, lastTarget: 'harness' }), 'llm');
+// No stickiness when the LLM handled the previous turn
+check('llm-no-sticky', route('Austin, Texas', { ...both, lastTarget: 'llm' }), 'llm');
+// A long answer to a harness question still goes to the harness (lastWasQuestion)
+check('answer-to-question', route('I am currently located in Austin, Texas in the United States', { ...both, lastTarget: 'harness', lastWasQuestion: true }), 'harness');
 
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

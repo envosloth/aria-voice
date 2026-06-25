@@ -86,11 +86,17 @@ async function main() {
   console.log(`[range-resume]     resumeStartByte=${resumeStart} (half=${PAYLOAD.length / 2}) finalOk=${finalOk} -> ${c4 ? 'PASS' : 'FAIL'}`);
   pass = pass && c4;
 
-  // Case 5: buildManifest shape
-  const man = mm.buildManifest('small', 'en_US-lessac-medium');
-  const c5 = man.length === 3 && man[0].file === 'ggml-small.bin' && man[1].file === 'en_US-lessac-medium.onnx' && man[2].file.endsWith('.onnx.json');
-  console.log(`[manifest]         files=${man.map(m => m.file).join(',')} -> ${c5 ? 'PASS' : 'FAIL'}`);
+  // Case 5: buildManifest shape — Kokoro (default) ships model + voices pack.
+  const man = mm.buildManifest('small', 'bm_george');
+  const c5 = man.length === 3 && man[0].file === 'ggml-small.bin' && man[1].file === 'kokoro-v1.0.onnx' && man[2].file === 'voices-v1.0.bin';
+  console.log(`[manifest-kokoro]  files=${man.map(m => m.file).join(',')} -> ${c5 ? 'PASS' : 'FAIL'}`);
   pass = pass && c5;
+
+  // Case 6: Piper fallback engine still yields per-voice .onnx + config.
+  const manP = mm.buildManifest('small', 'en_US-lessac-medium', 'piper');
+  const c6 = manP.length === 3 && manP[1].file === 'en_US-lessac-medium.onnx' && manP[2].file.endsWith('.onnx.json');
+  console.log(`[manifest-piper]   files=${manP.map(m => m.file).join(',')} -> ${c6 ? 'PASS' : 'FAIL'}`);
+  pass = pass && c6;
 
   server.close();
   fs.rmSync(TMP, { recursive: true, force: true });

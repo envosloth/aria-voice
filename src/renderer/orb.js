@@ -163,47 +163,61 @@
     ctx.arc(cx, cy, coreR, 0, TWO_PI);
     ctx.fill();
 
-    // Depth-shaded wireframe: front lines brighter/thicker than back.
-    if (react > 0.04) { ctx.shadowColor = `rgba(${cr},${cg},${cb},${react})`; ctx.shadowBlur = react * 16; }
-    else ctx.shadowBlur = 0;
+    // Depth-shaded wireframe, BATCHED by depth bucket: one stroke per bucket
+    // instead of ~1150 individual stroke() calls. This is the main perf win
+    // (draw calls dominate 2D-canvas cost). Front buckets are thicker/brighter;
+    // the alpha floor is high enough that lines passing behind the sphere stay
+    // clearly visible (fixes "back lines barely show"). Thicker + round caps
+    // give the mesh more body.
+    if (react > 0.04) { ctx.shadowColor = `rgba(${cr},${cg},${cb},${0.6 + react})`; ctx.shadowBlur = 8 + react * 18; }
+    else { ctx.shadowColor = `rgba(${cr},${cg},${cb},0.4)`; ctx.shadowBlur = 4; }
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
 
-    // Longitude lines (segment alpha by depth).
-    for (let j = 0; j < LON; j++) {
-      for (let i = 0; i < LAT; i++) {
-        const k = i * LON + j, k2 = k + LON;
-        const depth = ((pz[k] + pz[k2]) * 0.5 - minZ) / zRange; // 0 back .. 1 front
-        const a = 0.10 + depth * 0.45;
-        ctx.strokeStyle = `rgba(${cr},${cg},${cb},${a})`;
-        ctx.lineWidth = 0.7 + depth * 1.3;
-        ctx.beginPath();
-        ctx.moveTo(px[k], py[k]); ctx.lineTo(px[k2], py[k2]);
-        ctx.stroke();
-      }
-    }
-    // Latitude rings.
-    for (let i = 0; i <= LAT; i++) {
-      const base = i * LON;
+    const NB = 6;
+    for (let b = 0; b < NB; b++) {
+      const d0 = b / NB, d1 = (b + 1) / NB;
+      const dc = (d0 + d1) * 0.5;            // bucket center depth (0 back .. 1 front)
+      const last = b === NB - 1;
+      ctx.strokeStyle = `rgba(${cr},${cg},${cb},${0.20 + dc * 0.65})`; // floor 0.20
+      ctx.lineWidth = 1.3 + dc * 2.1;        // ~1.3 (back) .. ~3.3px (front)
+      ctx.beginPath();
+      // longitude segments
       for (let j = 0; j < LON; j++) {
-        const k = base + j, k2 = base + ((j + 1) % LON);
-        const depth = ((pz[k] + pz[k2]) * 0.5 - minZ) / zRange;
-        const a = 0.08 + depth * 0.38;
-        ctx.strokeStyle = `rgba(${cr},${cg},${cb},${a})`;
-        ctx.lineWidth = 0.7 + depth * 1.1;
-        ctx.beginPath();
-        ctx.moveTo(px[k], py[k]); ctx.lineTo(px[k2], py[k2]);
-        ctx.stroke();
+        for (let i = 0; i < LAT; i++) {
+          const k = i * LON + j, k2 = k + LON;
+          const depth = ((pz[k] + pz[k2]) * 0.5 - minZ) / zRange;
+          if (depth < d0 || (depth >= d1 && !last)) continue;
+          ctx.moveTo(px[k], py[k]); ctx.lineTo(px[k2], py[k2]);
+        }
       }
+      // latitude rings
+      for (let i = 0; i <= LAT; i++) {
+        const base = i * LON;
+        for (let j = 0; j < LON; j++) {
+          const k = base + j, k2 = base + ((j + 1) % LON);
+          const depth = ((pz[k] + pz[k2]) * 0.5 - minZ) / zRange;
+          if (depth < d0 || (depth >= d1 && !last)) continue;
+          ctx.moveTo(px[k], py[k]); ctx.lineTo(px[k2], py[k2]);
+        }
+      }
+      ctx.stroke();
     }
     ctx.shadowBlur = 0;
 
-    // Front vertex dots, brighter with depth + activity.
-    for (let k = 0; k < NPTS; k++) {
-      if (pz[k] < 0) continue;
-      const depth = (pz[k] - minZ) / zRange;
-      const r = (0.8 + react * 1.8 + depth * 0.8) * pp[k];
-      ctx.fillStyle = `rgba(${cr},${cg},${cb},${0.35 + depth * 0.5})`;
+    // Front vertex dots, batched into 3 depth buckets (one fill per bucket).
+    for (let b = 0; b < 3; b++) {
+      const d0 = b / 3, d1 = (b + 1) / 3, dc = (d0 + d1) * 0.5, last = b === 2;
+      ctx.fillStyle = `rgba(${cr},${cg},${cb},${0.45 + dc * 0.5})`;
       ctx.beginPath();
-      ctx.arc(px[k], py[k], r, 0, TWO_PI);
+      for (let k = 0; k < NPTS; k++) {
+        if (pz[k] < 0) continue;
+        const depth = (pz[k] - minZ) / zRange;
+        if (depth < d0 || (depth >= d1 && !last)) continue;
+        const rr = (1.0 + react * 1.8 + dc * 1.0) * pp[k];
+        ctx.moveTo(px[k] + rr, py[k]);
+        ctx.arc(px[k], py[k], rr, 0, TWO_PI);
+      }
       ctx.fill();
     }
 

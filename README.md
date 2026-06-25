@@ -1,18 +1,38 @@
 # ARIA
 
-A local-first, GPU-accelerated voice assistant for Linux. Speech-to-text and
-text-to-speech run locally; only the language model is remote (user-configured).
+A local-first, GPU-accelerated voice assistant. Speech-to-text and
+text-to-speech run locally; only the language model / agent is remote
+(user-configured). Open source under the [MIT License](LICENSE).
 
 - **STT**: whisper.cpp with the **Vulkan** backend (GPU, no ROCm) — warm
   `whisper-server` keeps the model loaded (~250 ms for a short utterance on an
   RX 9060 XT).
-- **TTS**: Piper (CPU/ONNX), sentence-chunked streaming, warm persistent voice
-  (~30–80 ms first chunk).
+- **TTS**: **Kokoro-82M** neural voices (CPU/ONNX), sentence-chunked streaming,
+  warm persistent model. Natural, expressive voices including a refined British
+  male "Jarvis" default. (Piper remains available as an optional light engine.)
 - **Wake word**: openWakeWord + Silero VAD (CPU, ~2 ms/frame).
-- **LLM**: any OpenAI-compatible streaming endpoint (remote), keys stored in the
-  OS keyring via Electron `safeStorage`.
+- **LLM + agent harness**: any OpenAI-compatible streaming endpoint. A coordinator
+  routes between a conversational LLM and an agent harness (Claude Code, Codex,
+  Hermes, …), sharing one conversation history across the handoff. Keys are
+  stored in the OS keyring via Electron `safeStorage`.
+- **Screen share**: share your desktop with the agent live — click the screen
+  button or say "share my screen". Frames are sent to the agent as vision input.
 
-Target platform: Ubuntu 26.04 / kernel 7.0 / GNOME 50 / AMD RDNA 4 (gfx1200).
+## Platform support
+
+| Platform | Status | Installer |
+|----------|--------|-----------|
+| Ubuntu / Debian / Mint / Pop!_OS | ✅ Supported & tested (Ubuntu 26.04, kernel 7.0, AMD RDNA 4 gfx1200) | `.deb`, `.AppImage` |
+| Fedora / RHEL / openSUSE | ⚙️ Built via CI | `.rpm`, `.AppImage` |
+| Windows 10/11 | ⚙️ Built via CI (whisper.cpp Vulkan/CPU) | `.exe` (NSIS), portable |
+| macOS (Apple Silicon / Intel) | ⚙️ Built via CI (whisper.cpp Metal) | `.dmg`, `.zip` |
+
+Native components (PyInstaller-frozen Python sidecars + compiled whisper.cpp)
+can't be cross-compiled, so each OS is built on its own runner — see
+[`.github/workflows/release.yml`](.github/workflows/release.yml). Push a `v*`
+tag to produce a release with installers for all platforms. Linux is the
+reference platform validated end-to-end; Windows/macOS builds are wired through
+CI and welcome validation/PRs.
 
 ## Architecture
 

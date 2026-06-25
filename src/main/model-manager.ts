@@ -27,34 +27,38 @@ export type ProgressCallback = (p: ModelProgress) => void;
 
 const HF_WHISPER = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main';
 const HF_PIPER = 'https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium';
+const KOKORO_BASE = 'https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0';
 
 export const MODELS_DIR =
   process.env.ARIA_MODELS_DIR || path.join(os.homedir(), '.local', 'share', 'aria', 'models');
 
-/** Build the manifest of models needed for the given STT model + TTS voice. */
-export function buildManifest(sttModel: string, ttsVoice: string): ModelSpec[] {
+/**
+ * Build the manifest of models needed for the given STT model + TTS engine/voice.
+ * Kokoro (default) ships one shared model + a voices pack covering every voice;
+ * Piper ships a separate .onnx per voice.
+ */
+export function buildManifest(sttModel: string, ttsVoice: string, ttsEngine = 'kokoro'): ModelSpec[] {
+  const stt: ModelSpec = {
+    id: `stt:${sttModel}`,
+    kind: 'stt',
+    file: `ggml-${sttModel}.bin`,
+    url: `${HF_WHISPER}/ggml-${sttModel}.bin`,
+    required: true,
+  };
+
+  if (ttsEngine === 'kokoro') {
+    return [
+      stt,
+      { id: 'tts:kokoro:model', kind: 'tts', file: 'kokoro-v1.0.onnx', url: `${KOKORO_BASE}/kokoro-v1.0.onnx`, required: true },
+      { id: 'tts:kokoro:voices', kind: 'tts', file: 'voices-v1.0.bin', url: `${KOKORO_BASE}/voices-v1.0.bin`, required: true },
+    ];
+  }
+
+  // Piper fallback engine.
   return [
-    {
-      id: `stt:${sttModel}`,
-      kind: 'stt',
-      file: `ggml-${sttModel}.bin`,
-      url: `${HF_WHISPER}/ggml-${sttModel}.bin`,
-      required: true,
-    },
-    {
-      id: `tts:${ttsVoice}`,
-      kind: 'tts',
-      file: `${ttsVoice}.onnx`,
-      url: `${HF_PIPER}/${ttsVoice}.onnx`,
-      required: true,
-    },
-    {
-      id: `tts:${ttsVoice}:config`,
-      kind: 'tts',
-      file: `${ttsVoice}.onnx.json`,
-      url: `${HF_PIPER}/${ttsVoice}.onnx.json`,
-      required: true,
-    },
+    stt,
+    { id: `tts:${ttsVoice}`, kind: 'tts', file: `${ttsVoice}.onnx`, url: `${HF_PIPER}/${ttsVoice}.onnx`, required: true },
+    { id: `tts:${ttsVoice}:config`, kind: 'tts', file: `${ttsVoice}.onnx.json`, url: `${HF_PIPER}/${ttsVoice}.onnx.json`, required: true },
   ];
 }
 

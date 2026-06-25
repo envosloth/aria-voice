@@ -1,0 +1,79 @@
+# Cross-platform release builds. Native pieces (PyInstaller-frozen Python
+# sidecars and the compiled whisper.cpp binaries) cannot be cross-compiled, so
+# each OS is built on its own runner. Push a tag like `v1.6.0` to produce a draft
+# GitHub Release with Linux (.deb/.rpm/.AppImage), Windows (.exe), and macOS
+# (.dmg) artifacts attached.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: win
+          - os: macos-latest
+            platform: mac
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install JS deps
+        run: npm ci
+
+      - name: Compile TypeScript + renderer
+        run: npm run build
+
+      # Freeze the three Python sidecars (STT, TTS/Kokoro, wake word) into
+      # onedir bundles for THIS OS. PyInstaller runs natively per platform.
+      - name: Freeze sidecars
+        run: npm run package:sidecars
+
+      # Build whisper.cpp for this OS (Vulkan where available, CPU fallback).
+      # See scripts/build-whispercpp.sh; Windows uses the CMake + VS toolchain.
+      - name: Build + stage whisper.cpp
+        run: |
+          bash scripts/build-whispercpp.sh || echo "::warning::whisper.cpp build failed on ${{ matrix.platform }} — STT may fall back to CPU/none"
+          bash scripts/stage-whisper.sh || true
+
+      - name: Package installers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --${{ matrix.platform }} --config electron-builder.yml --publish onTagOrDraft
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: aria-${{ matrix.platform }}
+          path: |
+            dist-installers/*.deb
+            dist-installers/*.rpm
+            dist-installers/*.AppImage
+            dist-installers/*.exe
+            dist-installers/*.dmg
+            dist-installers/*.zip
+          if-no-files-found: ignore

@@ -35,21 +35,62 @@ extraResources:
       - "**/*"
 
 linux:
+  icon: assets/icon.png
   target:
     - target: AppImage
       arch: [x64]
-    - target: deb
+    - target: deb        # Debian / Ubuntu / Mint / Pop!_OS
+      arch: [x64]
+    - target: rpm        # Fedora / RHEL / openSUSE
       arch: [x64]
   category: Utility
   synopsis: GPU-accelerated local voice assistant
   description: >
     ARIA is a local-first voice assistant with GPU-accelerated speech-to-text
-    (whisper.cpp/Vulkan), local text-to-speech (Piper), and wake-word detection
-    (openWakeWord), routing to a user-configured remote LLM.
+    (whisper.cpp/Vulkan), natural local text-to-speech (Kokoro-82M), and
+    wake-word detection (openWakeWord), routing to a user-configured LLM or
+    agent harness. Screen sharing lets the agent see your desktop.
   desktop:
     Name: ARIA
     Comment: Voice assistant
     Categories: Utility;
+
+# Fedora/openSUSE runtime deps (rpm package names differ from deb).
+rpm:
+  depends:
+    - libsecret
+    - gnome-keyring
+    - libnotify
+    - vulkan-loader
+
+# macOS: unsigned dmg + zip (open-source; users self-sign or right-click-open).
+# whisper.cpp on macOS uses the Metal backend (staged into build/whisper by CI).
+mac:
+  icon: assets/icon.png
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  hardenedRuntime: false
+  gatekeeperAssess: false
+
+# Windows: NSIS installer + portable. whisper.cpp uses the Vulkan/CPU backend.
+win:
+  icon: assets/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
 
 # .deb runtime dependencies. gnome-keyring/libsecret is REQUIRED for safeStorage
 # to encrypt API keys (else it silently falls back to plaintext obfuscation).

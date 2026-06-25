@@ -179,6 +179,28 @@
     #mic-btn:hover { background: var(--accent-active); }
     #mic-btn.listening { background: var(--accent-active); animation: pulse 1s infinite; }
 
+    #screen-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: 1px solid var(--border, rgba(255,255,255,0.12));
+      background: transparent;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s, color 0.2s, border-color 0.2s;
+      flex-shrink: 0;
+    }
+    #screen-btn:hover { color: var(--text); border-color: var(--accent); }
+    #screen-btn.active {
+      background: var(--accent);
+      color: var(--text);
+      border-color: var(--accent);
+      animation: pulse 1.6s infinite;
+    }
+
     .partial-text {
       font-style: italic;
       color: var(--text-muted);
@@ -446,8 +468,15 @@
       <section>
         <h3>Text-to-Speech</h3>
         <label>Voice
-          <input type="text" id="cfg-tts-voice" placeholder="en_US-lessac-medium">
+          <select id="cfg-tts-voice">
+            <option value="bm_george">Jarvis — British male (recommended)</option>
+            <option value="af_heart">Aria — warm female (US)</option>
+            <option value="af_bella">Bella — expressive female (US)</option>
+            <option value="am_michael">Michael — clear male (US)</option>
+            <option value="bf_emma">Emma — British female</option>
+          </select>
         </label>
+        <p class="hint">Kokoro-82M neural voices — natural, runs locally on CPU.</p>
       </section>
 
       <section>
@@ -561,6 +590,13 @@
   </main>
 
   <div class="input-area">
+    <button id="screen-btn" title="Share your screen with the agent (or say &quot;share my screen&quot;)">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="2" y="3" width="20" height="14" rx="2"/>
+        <line x1="8" y1="21" x2="16" y2="21"/>
+        <line x1="12" y1="17" x2="12" y2="21"/>
+      </svg>
+    </button>
     <input type="text" id="text-input" placeholder="Type a message or press the mic..." autocomplete="off">
     <button id="mic-btn" title="Hold to speak (or use global shortcut)">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

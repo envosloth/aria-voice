@@ -55,15 +55,102 @@ window.addEventListener('unhandledrejection', (e) => {
   showError(`Internal error: ${e.reason && e.reason.message ? e.reason.message : e.reason}`);
 });
 
+function assistantSay(text) {
+  addMessage('assistant', text);
+  try { aria.tts.play(text); orbState('speaking'); } catch (e) {}
+}
+
+// Single entry point for user turns (text box + voice). Handles screen-share
+// voice/text commands locally, and attaches the current desktop frame when
+// screen sharing is active so the agent can see what the user is doing.
+async function submitUserMessage(rawText) {
+  const text = (rawText || '').trim();
+  if (!text) return;
+  addMessage('user', text);
+  if (await handleScreenCommand(text)) return;
+  orbState('processing');
+  const image = isSharing() ? captureScreenFrame() : null;
+  aria.llm.send(text, image);
+}
+
 textInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && textInput.value.trim()) {
     const text = textInput.value.trim();
     textInput.value = '';
-    addMessage('user', text);
-    orbState('processing');
-    aria.llm.send(text);
+    submitUserMessage(text);
   }
 });
+
+// --- Screen share: feed the live desktop to the agent as vision context ---
+let screenStream = null, screenVideo = null, screenCanvas = null;
+const screenShareBtn = document.getElementById('screen-btn');
+
+function isSharing() { return !!screenStream; }
+
+async function startScreenShare() {
+  if (screenStream) return true;
+  try {
+    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false });
+    screenVideo = document.createElement('video');
+    screenVideo.srcObject = screenStream;
+    screenVideo.muted = true;
+    await screenVideo.play();
+    screenCanvas = document.createElement('canvas');
+    screenStream.getVideoTracks()[0].addEventListener('ended', () => {
+      stopScreenShare();
+      assistantSay('Screen sharing stopped.');
+    });
+    if (screenShareBtn) screenShareBtn.classList.add('active');
+    assistantSay('Screen sharing is on — I can see your screen now.');
+    return true;
+  } catch (err) {
+    screenStream = null;
+    showError(`Screen share unavailable: ${err.message}. You can still type or talk.`);
+    return false;
+  }
+}
+
+function stopScreenShare() {
+  if (screenStream) screenStream.getTracks().forEach((t) => t.stop());
+  screenStream = null; screenVideo = null;
+  if (screenShareBtn) screenShareBtn.classList.remove('active');
+}
+
+// Grab the current desktop frame as a downscaled JPEG data URL (small + fast).
+function captureScreenFrame() {
+  if (!screenStream || !screenVideo || !screenVideo.videoWidth) return null;
+  const maxW = 1280;
+  const scale = Math.min(1, maxW / screenVideo.videoWidth);
+  const cw = Math.round(screenVideo.videoWidth * scale);
+  const ch = Math.round(screenVideo.videoHeight * scale);
+  screenCanvas.width = cw; screenCanvas.height = ch;
+  screenCanvas.getContext('2d').drawImage(screenVideo, 0, 0, cw, ch);
+  return screenCanvas.toDataURL('image/jpeg', 0.6);
+}
+
+async function toggleScreenShare() {
+  if (isSharing()) { stopScreenShare(); assistantSay('Screen sharing stopped.'); }
+  else { await startScreenShare(); }
+}
+if (screenShareBtn) screenShareBtn.addEventListener('click', toggleScreenShare);
+
+// Natural-language control. OFF is checked first because "stop screen share"
+// also matches the ON pattern.
+const SCREEN_OFF_RE = /\b(stop|deactivate|disable|turn off|end)\b[^.!?]{0,24}\bscreen\b|\bstop sharing\b/i;
+const SCREEN_ON_RE = /\b(start|activate|enable|turn on|begin|share)\b[^.!?]{0,24}\bscreen\b|\bshare (my |the )?screen\b|\bscreen[- ]?shar/i;
+async function handleScreenCommand(text) {
+  if (SCREEN_OFF_RE.test(text)) {
+    if (isSharing()) { stopScreenShare(); assistantSay('Screen sharing stopped.'); }
+    else { assistantSay('Screen sharing is already off.'); }
+    return true;
+  }
+  if (SCREEN_ON_RE.test(text)) {
+    if (isSharing()) assistantSay('Screen sharing is already on.');
+    else await startScreenShare();
+    return true;
+  }
+  return false;
+}
 
 // --- Microphone capture ---
 // A single persistent getUserMedia stream feeds an AudioWorklet. Every frame is
@@ -150,9 +237,7 @@ startMicCapture();
 aria.stt.onResult((text) => {
   if (text.trim()) {
     partialEl.textContent = '';
-    addMessage('user', text);
-    orbState('processing'); // STT done, LLM thinking
-    aria.llm.send(text);
+    submitUserMessage(text); // handles screen-share commands + frame attachment
   } else {
     orbState('idle'); // nothing recognized
   }
@@ -173,43 +258,74 @@ window.addEventListener('keydown', (e) => {
 let pendingRoute = null;
 aria.llm.onRoute((info) => { pendingRoute = info; });
 
-aria.llm.onToken((token) => {
-  if (!currentAssistantMsg) {
-    currentAssistantMsg = addMessage('assistant', '');
-    if (pendingRoute) {
-      const badge = document.createElement('span');
-      badge.className = 'route-badge route-' + pendingRoute.target;
-      badge.textContent = pendingRoute.name;
-      currentAssistantMsg.prepend(badge);
-      pendingRoute = null;
-    }
+// Token streaming is batched: tokens accumulate in a buffer and the DOM is
+// updated at most once per animation frame (a single text-node write + one
+// scroll). Previously every token appended a node AND read scrollHeight, which
+// forces a synchronous reflow per token — that layout thrashing is what dragged
+// the UI to ~5 FPS while the agent was responding.
+let streamTextNode = null;
+let streamBuf = '';
+let streamFlushScheduled = false;
+
+function ensureAssistantMsg() {
+  if (currentAssistantMsg) return;
+  currentAssistantMsg = addMessage('assistant', '');
+  if (pendingRoute) {
+    const badge = document.createElement('span');
+    badge.className = 'route-badge route-' + pendingRoute.target;
+    badge.textContent = pendingRoute.name;
+    currentAssistantMsg.prepend(badge);
+    pendingRoute = null;
   }
-  currentAssistantMsg.appendChild(document.createTextNode(token));
-  conversationEl.scrollTop = conversationEl.scrollHeight;
+  streamTextNode = document.createTextNode('');
+  currentAssistantMsg.appendChild(streamTextNode);
+}
+
+function flushStream() {
+  streamFlushScheduled = false;
+  if (!streamBuf) return;
+  if (streamTextNode) streamTextNode.nodeValue += streamBuf;
+  streamBuf = '';
+  conversationEl.scrollTop = conversationEl.scrollHeight; // one reflow per frame
+}
+
+aria.llm.onToken((token) => {
+  ensureAssistantMsg();
+  streamBuf += token;
+  if (!streamFlushScheduled) {
+    streamFlushScheduled = true;
+    requestAnimationFrame(flushStream);
+  }
 });
 
 aria.llm.onDone((fullText) => {
+  flushStream(); // drain any tokens buffered since the last frame
   // Streaming already populated the message text (preserving the route badge);
   // only fill in if nothing streamed (e.g. non-streaming reply).
   if (currentAssistantMsg && !currentAssistantMsg.textContent.trim()) {
-    currentAssistantMsg.appendChild(document.createTextNode(fullText));
+    if (streamTextNode) streamTextNode.nodeValue = fullText;
+    else currentAssistantMsg.appendChild(document.createTextNode(fullText));
   }
   currentAssistantMsg = null;
+  streamTextNode = null;
   pendingRoute = null;
   orbState('speaking'); // agent is about to talk -> dynamic motion
   aria.tts.play(fullText);
 });
 
 // --- TTS PCM playback via Web Audio (gapless sentence-chunk scheduling) ---
-// Piper emits 22050 Hz, 16-bit mono PCM. We schedule each chunk back-to-back
-// so sentence chunks play seamlessly as they stream in.
-const TTS_SAMPLE_RATE = 22050;
+// 16-bit mono PCM streams in; each chunk announces its own sample rate over the
+// state channel (Kokoro = 24000 Hz, Piper = 22050 Hz). We let the AudioContext
+// run at the device's native rate and tag each AudioBuffer with the chunk's true
+// rate, so Web Audio resamples correctly regardless of engine. Chunks are
+// scheduled back-to-back so sentence chunks play seamlessly as they stream in.
+let ttsChunkRate = 24000; // updated per chunk from the 'chunk' state message
 let audioCtx = null;
 let nextPlayTime = 0;
 
 function getAudioCtx() {
   if (!audioCtx) {
-    audioCtx = new AudioContext({ sampleRate: TTS_SAMPLE_RATE });
+    audioCtx = new AudioContext();
     // Analyser between playback and output drives the reactive orb.
     ttsAnalyser = audioCtx.createAnalyser();
     ttsAnalyser.fftSize = 1024;
@@ -244,7 +360,7 @@ aria.tts.onAudio((pcmArrayBuffer) => {
     float32[i] = int16[i] / 32768;
   }
 
-  const buffer = ctx.createBuffer(1, float32.length, TTS_SAMPLE_RATE);
+  const buffer = ctx.createBuffer(1, float32.length, ttsChunkRate);
   buffer.getChannelData(0).set(float32);
 
   const source = ctx.createBufferSource();
@@ -258,6 +374,9 @@ aria.tts.onAudio((pcmArrayBuffer) => {
 });
 
 aria.tts.onState((state) => {
+  if (state && state.state === 'chunk' && state.sample_rate) {
+    ttsChunkRate = state.sample_rate; // tag upcoming audio buffers with true rate
+  }
   if (state && state.state === 'done') {
     // Return to idle once the remaining buffered audio finishes playing.
     const remainMs = audioCtx ? Math.max(0, (nextPlayTime - audioCtx.currentTime) * 1000) : 0;
@@ -267,6 +386,8 @@ aria.tts.onState((state) => {
 });
 
 aria.llm.onError((error) => {
+  streamBuf = '';
+  streamTextNode = null;
   currentAssistantMsg = null;
   orbState('idle');
   showError(`LLM error: ${error}. Text input remains available.`);
@@ -383,7 +504,7 @@ async function loadSettings() {
   applyHarnessSelection(inferred, { prefill: false });
   cfg.sttModel.value = (await aria.config.get('stt.model')) || 'small';
   cfg.sttBackend.value = (await aria.config.get('stt.backend')) || 'vulkan';
-  cfg.ttsVoice.value = (await aria.config.get('tts.voice')) || '';
+  cfg.ttsVoice.value = (await aria.config.get('tts.voice')) || 'bm_george';
   cfg.wwEnabled.checked = !!(await aria.config.get('wakeword.enabled'));
   cfg.wwPhrase.value = (await aria.config.get('wakeword.phrase')) || 'hey_jarvis';
   cfg.theme.value = (await aria.config.get('ui.theme')) || 'midnight';

@@ -8,11 +8,21 @@ export interface LlmCallbacks {
   onError: (error: string) => void;
 }
 
+// content is a string for normal turns, or an OpenAI-vision content array
+// (text + image_url parts) when a screen-share frame is attached.
+export type MessageContent = string | Array<Record<string, unknown>>;
+
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: MessageContent;
+}
+
 export interface ChatOptions {
   endpoint: string;
   model: string;
   apiKey?: string | null;
-  message: string;
+  message?: string;             // single-turn convenience
+  messages?: ChatMessage[];     // full conversation (takes precedence)
   timeoutMs?: number;
 }
 
@@ -21,12 +31,15 @@ export interface ChatOptions {
  * No Electron dependency — unit-testable against a mock HTTP server.
  */
 export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): void {
-  const { endpoint, model, apiKey, message, timeoutMs = 30000 } = opts;
+  const { endpoint, model, apiKey, message, messages, timeoutMs = 30000 } = opts;
 
   if (!endpoint) {
     callbacks.onError('No LLM endpoint configured. Go to Settings to add one.');
     return;
   }
+
+  const chatMessages: ChatMessage[] =
+    messages && messages.length ? messages : [{ role: 'user', content: message ?? '' }];
 
   let url: URL;
   try {
@@ -41,7 +54,7 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): void {
 
   const body = JSON.stringify({
     model,
-    messages: [{ role: 'user', content: message }],
+    messages: chatMessages,
     stream: true,
   });
 

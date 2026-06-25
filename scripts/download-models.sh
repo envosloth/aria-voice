@@ -44,9 +44,16 @@ fi
 download_with_resume "$WHISPER_BASE/${WHISPER_MODELS[$STT_MODEL]}" "$MODELS_DIR/${WHISPER_MODELS[$STT_MODEL]}"
 
 echo
-echo "[2/3] TTS: Piper voice 'en_US-lessac-medium'"
-download_with_resume "$PIPER_BASE/en_US-lessac-medium.onnx" "$MODELS_DIR/en_US-lessac-medium.onnx"
-download_with_resume "$PIPER_BASE/en_US-lessac-medium.onnx.json" "$MODELS_DIR/en_US-lessac-medium.onnx.json"
+echo "[2/3] TTS: Kokoro-82M neural voices (default engine)"
+KOKORO_BASE="https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
+download_with_resume "$KOKORO_BASE/kokoro-v1.0.onnx" "$MODELS_DIR/kokoro-v1.0.onnx"
+download_with_resume "$KOKORO_BASE/voices-v1.0.bin" "$MODELS_DIR/voices-v1.0.bin"
+# Piper voice kept as an optional lightweight fallback engine (ARIA_WITH_PIPER=1).
+if [ "${ARIA_WITH_PIPER:-0}" = "1" ]; then
+  echo "  (optional) Piper voice 'en_US-lessac-medium'"
+  download_with_resume "$PIPER_BASE/en_US-lessac-medium.onnx" "$MODELS_DIR/en_US-lessac-medium.onnx"
+  download_with_resume "$PIPER_BASE/en_US-lessac-medium.onnx.json" "$MODELS_DIR/en_US-lessac-medium.onnx.json"
+fi
 
 echo
 echo "[3/3] Wake word: openWakeWord default models"

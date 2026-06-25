@@ -47,8 +47,8 @@ const defaults: AppConfig = {
     prewarm: true,
   },
   tts: {
-    engine: 'piper',
-    voice: 'en_US-lessac-medium',
+    engine: 'kokoro',
+    voice: 'bm_george', // "Jarvis" — refined British male
   },
   wakeword: {
     enabled: true,

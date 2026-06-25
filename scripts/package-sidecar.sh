@@ -29,7 +29,18 @@ if [ "$NAME" = "wakeword" ]; then
   EXTRA_ARGS+=(--collect-data openwakeword)
 fi
 if [ "$NAME" = "tts" ]; then
-  EXTRA_ARGS+=(--collect-data piper --collect-binaries onnxruntime)
+  # onnxruntime native libs + Kokoro/espeak-ng/phonemizer data so the frozen
+  # TTS sidecar is self-contained (Kokoro is the default engine).
+  EXTRA_ARGS+=(--collect-binaries onnxruntime)
+  EXTRA_ARGS+=(--collect-all kokoro_onnx)
+  EXTRA_ARGS+=(--collect-all espeakng_loader)
+  EXTRA_ARGS+=(--collect-all phonemizer)
+  EXTRA_ARGS+=(--collect-data language_tags)
+  EXTRA_ARGS+=(--hidden-import numpy)
+  # Piper is an optional fallback engine; collect it only if installed.
+  if "$VENV/bin/python" -c "import piper" >/dev/null 2>&1; then
+    EXTRA_ARGS+=(--collect-data piper)
+  fi
 fi
 
 "$VENV/bin/pyinstaller" \

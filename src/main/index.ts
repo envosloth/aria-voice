@@ -120,13 +120,15 @@ function setupIpcHandlers(): void {
   ipcMain.handle(IPC.SECURE_STORE_SET, (_e, key: string, value: string) => setSecret(key, value));
   ipcMain.handle(IPC.SECURE_STORE_DELETE, (_e, key: string) => deleteSecret(key));
 
-  ipcMain.on(IPC.LLM_SEND, (_e, message: string) => {
+  ipcMain.on(IPC.LLM_SEND, (_e, payload: string | { message: string; image?: string | null }) => {
+    const message = typeof payload === 'string' ? payload : payload.message;
+    const image = typeof payload === 'string' ? null : (payload.image || null);
     coordinate(message, {
       onRoute: (info) => mainWindow?.webContents.send(IPC.LLM_ROUTE, info),
       onToken: (token) => mainWindow?.webContents.send(IPC.LLM_TOKEN, token),
       onDone: (text) => mainWindow?.webContents.send(IPC.LLM_DONE, text),
       onError: (err) => mainWindow?.webContents.send(IPC.LLM_ERROR, err),
-    });
+    }, { image });
   });
 
   ipcMain.on(IPC.TTS_PLAY, async (_e, text: string) => {
@@ -199,6 +201,21 @@ app.whenReady().then(async () => {
   });
 
   setupIpcHandlers();
+
+  // Screen share: auto-grant the primary display when the renderer calls
+  // getDisplayMedia() so there is no OS picker — ARIA shares the whole screen
+  // with the agent on demand (toggled by the user via button or voice command).
+  try {
+    const { session, desktopCapturer } = require('electron');
+    session.defaultSession.setDisplayMediaRequestHandler((_request: unknown, callback: (arg: unknown) => void) => {
+      desktopCapturer.getSources({ types: ['screen'] }).then((sources: unknown[]) => {
+        callback(sources.length ? { video: sources[0] } : undefined);
+      }).catch(() => callback(undefined));
+    }, { useSystemPicker: false });
+  } catch (e) {
+    console.error('[ARIA] display-media handler setup failed:', (e as Error).message);
+  }
+
   mainWindow = createWindow();
   try {
     createTray();
@@ -250,6 +267,10 @@ app.whenReady().then(async () => {
           }
           if (process.env.ARIA_ORB_STATE) {
             const s = process.env.ARIA_ORB_STATE;
+            // Dismiss onboarding/settings overlays so the orb is unobstructed.
+            await mainWindow.webContents.executeJavaScript(
+              `document.querySelectorAll('.overlay,#onboard-overlay,#settings-overlay').forEach(e=>e.classList.remove('visible')); true;`,
+            );
             const js = s === 'speaking'
               ? `AriaOrb.setState('speaking'); for(let i=0;i<200;i++){AriaOrb.setLevel(0.7);} true;`
               : `AriaOrb.setState('${s}'); true;`;
@@ -272,8 +293,8 @@ app.whenReady().then(async () => {
 function applyConfigToEnv(): void {
   process.env.ARIA_STT_MODEL = (config.get('stt.model') as string) || 'small';
   process.env.ARIA_STT_BACKEND = (config.get('stt.backend') as string) || 'vulkan';
-  process.env.ARIA_TTS_ENGINE = (config.get('tts.engine') as string) || 'piper';
-  process.env.ARIA_TTS_VOICE = (config.get('tts.voice') as string) || 'en_US-lessac-medium';
+  process.env.ARIA_TTS_ENGINE = (config.get('tts.engine') as string) || 'kokoro';
+  process.env.ARIA_TTS_VOICE = (config.get('tts.voice') as string) || 'bm_george';
   process.env.ARIA_WAKEWORD_MODEL = (config.get('wakeword.phrase') as string) || 'hey_jarvis';
 
   // Point the STT sidecar at the bundled whisper.cpp (binaries + libs) when the
@@ -288,7 +309,8 @@ function applyConfigToEnv(): void {
 async function ensureModelsReady(): Promise<boolean> {
   const sttModel = config.get('stt.model') as string;
   const ttsVoice = config.get('tts.voice') as string;
-  const manifest = buildManifest(sttModel, ttsVoice);
+  const ttsEngine = (config.get('tts.engine') as string) || 'kokoro';
+  const manifest = buildManifest(sttModel, ttsVoice, ttsEngine);
   const missing = missingModels(manifest);
 
   if (missing.length === 0) return true;
