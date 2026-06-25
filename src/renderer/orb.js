@@ -128,12 +128,14 @@
     ctx.fillStyle = gradCache;
     ctx.fillRect(0, 0, w, h);
 
-    // Project all points.
+    // Uniform radius: one scale for every point keeps it a true sphere, so the
+    // longitude/latitude grid intersections stay perfectly aligned (no lumpy
+    // per-vertex distortion). "Speaking" expands the whole sphere with the voice.
+    const rScale = 1 + breatheAmp * Math.sin(t * 1.3) + pulse + react * 0.16;
+    const r = baseR * rScale;
+
     let minZ = 1e9, maxZ = -1e9;
     for (let k = 0; k < NPTS; k++) {
-      const breathe = breatheAmp * Math.sin(t * 1.3 + phiArr[k] * 3) + pulse;
-      const reactive = react * 0.22 * Math.sin(t * 6 + seed[k] * 6 + thArr[k] * 4);
-      const r = baseR * (1 + breathe + reactive);
       const sp = sinPhi[k];
       const x = r * sp * cosTh[k];
       const y = r * cosPhi[k];
@@ -149,13 +151,16 @@
     }
     const zRange = (maxZ - minZ) || 1;
 
-    // Soft inner core glow for depth/richness.
-    const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, baseR * 0.9);
-    core.addColorStop(0, `rgba(${cr},${cg},${cb},${0.18 + react * 0.25})`);
+    // Bright glowing core — a hot center fading to the orb colour.
+    const coreR = baseR * (0.85 * rScale);
+    const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR);
+    const hot = (c) => Math.min(255, c + 70);
+    core.addColorStop(0, `rgba(${hot(cr)},${hot(cg)},${hot(cb)},${0.55 + react * 0.35})`);
+    core.addColorStop(0.35, `rgba(${cr},${cg},${cb},${0.30 + react * 0.25})`);
     core.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
     ctx.fillStyle = core;
     ctx.beginPath();
-    ctx.arc(cx, cy, baseR * 0.9, 0, TWO_PI);
+    ctx.arc(cx, cy, coreR, 0, TWO_PI);
     ctx.fill();
 
     // Depth-shaded wireframe: front lines brighter/thicker than back.
