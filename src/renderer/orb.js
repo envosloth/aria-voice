@@ -105,15 +105,24 @@
     const dt = lastFrameTime ? Math.min(3, (now - lastFrameTime) / 16.667) : 1;
     lastFrameTime = now;
 
+    // Frame-rate-independent easing: scale each per-60fps-frame factor by dt so
+    // an ease feels identical at 60 or 160 Hz. Plain per-frame easing decays more
+    // often at high refresh, which is what made the orb shimmer/shake. (Rotation
+    // already used dt; the colour/audio filters did not.)
+    const ease = (k) => 1 - Math.pow(1 - k, dt);
+
     // Ease colour toward the target state colour.
-    col[0] += (target[0] - col[0]) * 0.08;
-    col[1] += (target[1] - col[1]) * 0.08;
-    col[2] += (target[2] - col[2]) * 0.08;
+    const colK = ease(0.08);
+    col[0] += (target[0] - col[0]) * colK;
+    col[1] += (target[1] - col[1]) * colK;
+    col[2] += (target[2] - col[2]) * colK;
     const cr = col[0] | 0, cg = col[1] | 0, cb = col[2] | 0;
 
-    // Audio drives motion only in the speaking state.
-    audioSmooth += (audio - audioSmooth) * 0.15;
-    if (state === 'speaking') audio *= 0.94; else audioSmooth *= 0.9;
+    // Audio drives motion only in the speaking state. Smoothed a bit more (0.12)
+    // and dt-scaled so a spiky speech envelope pulses the orb smoothly rather
+    // than juddering; attack/decay are dt-scaled too for refresh independence.
+    audioSmooth += (audio - audioSmooth) * ease(0.12);
+    if (state === 'speaking') audio *= Math.pow(0.94, dt); else audioSmooth *= Math.pow(0.9, dt);
     const react = state === 'speaking' ? audioSmooth : 0;
 
     // Per-state calm motion (independent of audio).

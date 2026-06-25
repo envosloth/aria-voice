@@ -23,6 +23,13 @@ interface SidecarState {
   // True while a kill+restart is in flight, so the heartbeat/memory monitors
   // don't re-trigger and burn extra restart attempts for the same failure.
   recovering: boolean;
+  // Readiness latch: resolves when the sidecar emits 'ready' after (re)start.
+  // Callers gate the first control message on this so a 'synthesize'/'transcribe'
+  // never reaches the sidecar before its model has finished loading (the
+  // first-utterance "'NoneType' object has no attribute 'create'" race).
+  ready: boolean;
+  readyPromise: Promise<void>;
+  readyResolve: () => void;
 }
 
 type StatusCallback = (name: SidecarName, status: string, detail?: string) => void;
@@ -57,6 +64,11 @@ export class Supervisor {
       this.onStatus(name, 'circuit-open', `Exceeded ${MAX_RESTART_ATTEMPTS} restart attempts`);
       return;
     }
+
+    // Arm a fresh readiness latch for this (re)spawn — the model must reload
+    // before the sidecar is usable again, so any pending waitForReady() blocks
+    // until the new process emits 'ready'.
+    this.resetReadyLatch(state);
 
     const socketPath = path.join(SOCKET_DIR, `${name}.sock`);
     fs.mkdirSync(SOCKET_DIR, { recursive: true });
@@ -111,6 +123,34 @@ export class Supervisor {
     state.process = child;
     state.lastHeartbeat = Date.now();
     this.onStatus(name, 'started', `pid=${child.pid}`);
+  }
+
+  /**
+   * Restart a single sidecar to apply a config change (e.g. a new wake-word
+   * model) without restarting the whole app. The intentional kill is shielded
+   * from the exit handler's auto-restart, and the circuit breaker is cleared so
+   * a manual restart always gets a fresh attempt.
+   */
+  async restart(name: SidecarName): Promise<void> {
+    const state = this.sidecars.get(name);
+    if (state) {
+      state.recovering = true; // suppress the exit handler's crash-restart
+      await this.killSidecar(name, state);
+      state.recovering = false;
+      state.circuitOpen = false;
+      state.restartCount = 0;
+    }
+    await this.start(name);
+  }
+
+  /** Stop a single sidecar and leave it stopped (e.g. wake word disabled). */
+  async stop(name: SidecarName): Promise<void> {
+    const state = this.sidecars.get(name);
+    if (!state) return;
+    state.recovering = true;
+    await this.killSidecar(name, state);
+    state.recovering = false;
+    state.process = null;
   }
 
   async stopAll(): Promise<void> {
@@ -176,8 +216,13 @@ export class Supervisor {
         if (msg.type === 'status') {
           // Surface the sidecar's own status (ready/initialized/error/warning).
           // A 'ready' status clears the restart counter — the sidecar got
-          // far enough to be considered healthy.
-          if (msg.status === 'ready' && state) state.restartCount = 0;
+          // far enough to be considered healthy — and trips the readiness
+          // latch so gated callers (ensureSidecar) can send control messages.
+          if (msg.status === 'ready' && state) {
+            state.restartCount = 0;
+            state.ready = true;
+            state.readyResolve();
+          }
           this.onStatus(name, msg.status, msg.detail);
         } else {
           // Domain messages (stt_result, tts_chunk, wakeword_detected, ...)
@@ -322,9 +367,37 @@ export class Supervisor {
         lastHeartbeat: 0,
         circuitOpen: false,
         recovering: false,
+        ready: false,
+        readyPromise: Promise.resolve(),
+        readyResolve: () => {},
       };
+      this.resetReadyLatch(state);
       this.sidecars.set(name, state);
     }
     return state;
+  }
+
+  /** (Re)arm the readiness latch: a fresh unresolved promise + ready=false. */
+  private resetReadyLatch(state: SidecarState): void {
+    state.ready = false;
+    state.readyPromise = new Promise<void>((resolve) => {
+      state.readyResolve = resolve;
+    });
+  }
+
+  /**
+   * Resolve once the sidecar has emitted 'ready' (model loaded) for its current
+   * process, or after `timeoutMs` as a safety cap so a stuck load never hangs
+   * the caller forever. Returns immediately if already ready or circuit-open.
+   */
+  async waitForReady(name: SidecarName, timeoutMs = 20000): Promise<void> {
+    const state = this.sidecars.get(name);
+    if (!state || state.ready || state.circuitOpen) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      state.readyPromise,
+      new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs); }),
+    ]);
+    if (timer) clearTimeout(timer);
   }
 }

@@ -84,6 +84,20 @@ class TtsSidecar(BaseSidecar):
             available = set(getattr(self._kokoro, "voices", {}).keys())
         if available and self.voice_name not in available:
             self.voice_name = "bm_george" if "bm_george" in available else sorted(available)[0]
+        self._warmup_kokoro()
+
+    def _warmup_kokoro(self) -> None:
+        """Run one throwaway synthesis so the ONNX graph is hot before the first
+        real utterance. The cold first inference dominates first-audio latency
+        (~0.8s in the e2e budget); doing it here — during load, behind the
+        'ready' gate — moves that cost off the user's first request."""
+        try:
+            self._kokoro.create(
+                "Ready.", voice=self.voice_name, speed=self.speed,
+                lang=_lang_for_voice(self.voice_name),
+            )
+        except Exception:
+            pass  # warmup is best-effort; real synthesis will still work
 
     def _find_kokoro_files(self):
         names = ("kokoro-v1.0.onnx", "voices-v1.0.bin")
@@ -108,6 +122,12 @@ class TtsSidecar(BaseSidecar):
     def _load_piper(self) -> None:
         from piper import PiperVoice
         self._voice = PiperVoice.load(self.voice_model_path)
+        # Warm the graph (see _warmup_kokoro) so the first utterance is fast.
+        try:
+            for _ in self._voice.synthesize("Ready."):
+                pass
+        except Exception:
+            pass
 
     def _find_piper_voice(self) -> str:
         voice_file = f"{self.voice_name}.onnx"

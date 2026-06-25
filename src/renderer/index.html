@@ -485,11 +485,14 @@
           <input type="checkbox" id="cfg-ww-enabled"> Enable always-on wake word
         </label>
         <label>Phrase
-          <select id="cfg-ww-phrase">
-            <option value="hey_jarvis">hey jarvis</option>
-            <option value="hey_mycroft">hey mycroft</option>
-            <option value="alexa">alexa</option>
-          </select>
+          <input type="text" id="cfg-ww-phrase" placeholder="hey jarvis" list="ww-phrase-options" autocomplete="off">
+          <datalist id="ww-phrase-options">
+            <option value="hey jarvis"></option>
+            <option value="hey mycroft"></option>
+            <option value="alexa"></option>
+          </datalist>
+          <span class="hint">Built-in: hey jarvis, hey mycroft, alexa. A custom phrase
+          needs a trained openWakeWord model (.onnx) in your models/wakeword folder.</span>
         </label>
       </section>
 

@@ -121,6 +121,9 @@ textInput.addEventListener('keydown', (e) => {
 
 // --- Screen share: feed the live desktop to the agent as vision context ---
 let screenStream = null, screenTrack = null, screenGrabber = null, screenVideo = null;
+// Most-recent frame, refreshed in the background so a message send never blocks
+// on a capture (the "slow response in screen-share mode" fix).
+let screenFrameCache = null, screenFrameTimer = null;
 const screenCanvas = document.createElement('canvas');
 const screenShareBtn = document.getElementById('screen-btn');
 
@@ -148,6 +151,10 @@ async function startScreenShare() {
     }
     screenTrack.addEventListener('ended', () => { stopScreenShare(); assistantSay('Screen sharing stopped.'); });
     if (screenShareBtn) screenShareBtn.classList.add('active');
+    // Warm a frame now and keep it fresh in the background, off the send path.
+    screenFrameCache = null;
+    refreshScreenFrame();
+    screenFrameTimer = setInterval(refreshScreenFrame, 1500);
     assistantSay('Screen sharing is on — I can see your screen now.');
     return true;
   } catch (err) {
@@ -158,14 +165,18 @@ async function startScreenShare() {
 }
 
 function stopScreenShare() {
+  if (screenFrameTimer) { clearInterval(screenFrameTimer); screenFrameTimer = null; }
+  screenFrameCache = null;
   if (screenStream) screenStream.getTracks().forEach((t) => t.stop());
   screenStream = null; screenTrack = null; screenGrabber = null; screenVideo = null;
   if (screenShareBtn) screenShareBtn.classList.remove('active');
 }
 
 // Grab one desktop frame as a downscaled JPEG data URL (small + fast). Async:
-// ImageCapture.grabFrame() resolves an ImageBitmap we draw once.
-async function captureScreenFrame() {
+// ImageCapture.grabFrame() resolves an ImageBitmap we draw once. Downscaled to
+// 1024px @ 0.5 quality — enough for the agent to read the screen while keeping
+// the base64 payload (and the vision model's processing time) small.
+async function grabFrameDataUrl() {
   try {
     let srcW, srcH, drawable;
     if (screenGrabber) {
@@ -174,17 +185,39 @@ async function captureScreenFrame() {
     } else if (screenVideo && screenVideo.videoWidth) {
       srcW = screenVideo.videoWidth; srcH = screenVideo.videoHeight; drawable = screenVideo;
     } else { return null; }
-    const maxW = 1280;
+    const maxW = 1024;
     const scale = Math.min(1, maxW / srcW);
     const cw = Math.max(1, Math.round(srcW * scale));
     const ch = Math.max(1, Math.round(srcH * scale));
     screenCanvas.width = cw; screenCanvas.height = ch;
     screenCanvas.getContext('2d').drawImage(drawable, 0, 0, cw, ch);
     if (drawable.close) drawable.close(); // free the ImageBitmap
-    return screenCanvas.toDataURL('image/jpeg', 0.55);
+    return screenCanvas.toDataURL('image/jpeg', 0.5);
   } catch (e) {
     return null;
   }
+}
+
+// Background refresh: grab a frame and cache it. Best-effort — on failure the
+// cache keeps its previous value rather than going blank.
+async function refreshScreenFrame() {
+  if (!isSharing()) return;
+  const url = await grabFrameDataUrl();
+  if (url) screenFrameCache = url;
+}
+
+// Send-path accessor: return the most recent cached frame instantly so the
+// reply isn't blocked on a capture. Only if nothing is cached yet (a message
+// fired the instant sharing started) do we grab directly, with a short timeout
+// so a slow first capture can't stall the turn.
+async function captureScreenFrame() {
+  if (screenFrameCache) return screenFrameCache;
+  const url = await Promise.race([
+    grabFrameDataUrl(),
+    new Promise((r) => setTimeout(() => r(null), 600)),
+  ]);
+  if (url) screenFrameCache = url;
+  return url;
 }
 
 async function toggleScreenShare() {
@@ -348,6 +381,46 @@ function flushStream() {
   conversationEl.scrollTop = conversationEl.scrollHeight; // one reflow per frame
 }
 
+// --- Incremental TTS: speak each sentence as the LLM produces it ---------
+// Waiting for the whole reply (onDone) before synthesizing meant audio didn't
+// start until generation finished, then added the engine's first-chunk cost on
+// top — a large, "robotic"-feeling gap after the text appeared. Instead we feed
+// completed sentences to TTS as tokens stream in, so the voice starts within a
+// sentence of the first token and plays gaplessly (chunks schedule back-to-back
+// as long as stopPlayback() isn't called between them).
+let ttsStreamBuf = '';       // text accumulated from tokens, not yet spoken
+let ttsTurnSpeaking = false;  // have we begun speaking the current response?
+// A sentence ends at . ! ? (with any trailing quote/bracket) followed by
+// whitespace or end-of-buffer. Decimals ("3.5") and "U.S." won't match — they
+// have no following space — so they aren't split mid-number.
+const TTS_SENTENCE_END = /[.!?]+["')\]]*(?=\s|$)/g;
+
+function speakChunk(text) {
+  if (!text) return;
+  if (!ttsTurnSpeaking) {
+    stopPlayback(true);   // cut any prior/filler audio once, at turn start
+    orbState('speaking'); // agent is about to talk -> dynamic motion
+    ttsTurnSpeaking = true;
+  }
+  aria.tts.play(text);    // queues serially behind earlier sentences in the sidecar
+}
+
+// Pull every complete sentence out of the buffer and speak it; keep the trailing
+// partial sentence until more tokens (or onDone) complete it.
+function feedTtsStream(token) {
+  ttsStreamBuf += token;
+  let lastEnd = -1, m;
+  TTS_SENTENCE_END.lastIndex = 0;
+  while ((m = TTS_SENTENCE_END.exec(ttsStreamBuf)) !== null) lastEnd = TTS_SENTENCE_END.lastIndex;
+  if (lastEnd > 0) {
+    const ready = ttsStreamBuf.slice(0, lastEnd).trim();
+    ttsStreamBuf = ttsStreamBuf.slice(lastEnd);
+    speakChunk(ready);
+  }
+}
+
+function resetTtsStream() { ttsStreamBuf = ''; ttsTurnSpeaking = false; }
+
 aria.llm.onToken((token) => {
   cancelThinkingHold(); // reply has started — no "hold on" needed
   ensureAssistantMsg();
@@ -356,6 +429,7 @@ aria.llm.onToken((token) => {
     streamFlushScheduled = true;
     requestAnimationFrame(flushStream);
   }
+  feedTtsStream(token);
 });
 
 aria.llm.onDone((fullText) => {
@@ -370,9 +444,13 @@ aria.llm.onDone((fullText) => {
   currentAssistantMsg = null;
   streamTextNode = null;
   pendingRoute = null;
-  stopPlayback(true);    // interrupt any prior audio: never talk over ourselves
-  orbState('speaking');  // agent is about to talk -> dynamic motion
-  aria.tts.play(fullText);
+  // Speak the final partial sentence. If nothing was streamed (non-streaming
+  // reply), speak the whole text — orbState('speaking') is set inside speakChunk.
+  const rest = ttsStreamBuf.trim();
+  ttsStreamBuf = '';
+  if (rest) speakChunk(rest);
+  else if (!ttsTurnSpeaking && fullText && fullText.trim()) speakChunk(fullText.trim());
+  ttsTurnSpeaking = false; // next response starts a fresh turn
 });
 
 // --- TTS PCM playback via Web Audio (gapless sentence-chunk scheduling) ---
@@ -477,6 +555,7 @@ aria.llm.onError((error) => {
   streamBuf = '';
   streamTextNode = null;
   currentAssistantMsg = null;
+  resetTtsStream(); // drop any half-buffered sentence; turn is over
   orbState('idle');
   showError(`LLM error: ${error}. Text input remains available.`);
 });
@@ -636,7 +715,7 @@ settingsSave.addEventListener('click', async () => {
   await aria.config.set('stt.backend', cfg.sttBackend.value);
   await aria.config.set('tts.voice', cfg.ttsVoice.value.trim());
   await aria.config.set('wakeword.enabled', cfg.wwEnabled.checked);
-  await aria.config.set('wakeword.phrase', cfg.wwPhrase.value);
+  await aria.config.set('wakeword.phrase', cfg.wwPhrase.value.trim());
   await aria.config.set('ui.theme', cfg.theme.value);
   applyTheme(cfg.theme.value);
 

@@ -10,16 +10,25 @@ import { buildManifest, missingModels, downloadModel } from './model-manager';
 import { IPC } from '../shared/ipc-channels';
 import { SidecarName } from '../shared/constants';
 
-app.commandLine.appendSwitch('enable-features', 'GlobalShortcutsPortal');
+// Chromium feature flags must be set in ONE enable-features switch — calling
+// appendSwitch('enable-features', …) twice overwrites rather than merges.
+//   - GlobalShortcutsPortal: global hotkeys via the xdg-desktop portal.
+//   - WebRTCPipeWireCapturer: REQUIRED for getDisplayMedia()/desktopCapturer
+//     screen capture on Wayland (the xdg-desktop-portal ScreenCast path).
+//     Without it, screen share silently yields no usable source on Wayland —
+//     the "screen share doesn't work" symptom.
+const chromiumFeatures = ['GlobalShortcutsPortal'];
+const isWayland = !!(process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland');
+if (isWayland) {
+  chromiumFeatures.push('WebRTCPipeWireCapturer');
+  app.commandLine.appendSwitch('ozone-platform-hint', 'wayland');
+}
+app.commandLine.appendSwitch('enable-features', chromiumFeatures.join(','));
 
 // NOTE: we intentionally keep vsync ENABLED. Disabling it (to chase uncapped
 // FPS) made the orb tear/shake; the render is cheap (~0.2ms/frame) so vsync at
 // the display's native refresh (60/120/160 Hz) is already smooth and stable.
 // Orb motion is time-based (see orb.js) so it looks identical at any refresh.
-
-if (process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland') {
-  app.commandLine.appendSwitch('ozone-platform-hint', 'wayland');
-}
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -27,6 +36,18 @@ let supervisor: Supervisor;
 let isQuitting = false;
 
 const SMOKE = process.env.ARIA_SMOKE === '1';
+
+// Global safety net: ARIA runs in the tray and must survive transient faults
+// (a failed network call in the coordinator, a sidecar spawn that rejects, a
+// stray async error) rather than crashing the whole app — the "it crashed while
+// I was using it" symptom. Log loudly; don't exit. The sidecar supervisor still
+// owns its own crash/restart handling; this only catches errors that escape it.
+process.on('uncaughtException', (err) => {
+  console.error('[ARIA] uncaughtException (kept alive):', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[ARIA] unhandledRejection (kept alive):', reason);
+});
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -58,6 +79,16 @@ function createWindow(): BrowserWindow {
   // shortcut, or relaunching the app (single-instance lock restores it).
   win.on('close', (e) => {
     if (!isQuitting) { e.preventDefault(); win.hide(); }
+  });
+
+  // Renderer crash recovery: if the renderer process dies (GPU/canvas fault, a
+  // fatal JS error), reload the window instead of leaving a blank, dead app.
+  // 'clean-exit' is a normal teardown (e.g. quit) and is left alone.
+  win.webContents.on('render-process-gone', (_e, details) => {
+    console.error('[ARIA] renderer gone:', details.reason);
+    if (!isQuitting && details.reason !== 'clean-exit' && !win.isDestroyed()) {
+      win.reload();
+    }
   });
 
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
@@ -128,7 +159,17 @@ function registerInWindowShortcut(): void {
 
 function setupIpcHandlers(): void {
   ipcMain.handle(IPC.CONFIG_GET, (_e, key: string) => config.get(key));
-  ipcMain.handle(IPC.CONFIG_SET, (_e, key: string, value: unknown) => config.set(key, value));
+  ipcMain.handle(IPC.CONFIG_SET, (_e, key: string, value: unknown) => {
+    const changed = config.get(key) !== value;
+    config.set(key, value);
+    // Apply wake-word changes live so a phrase typed in Settings takes effect
+    // without restarting the app (the env is otherwise only read at sidecar
+    // spawn). Only on an actual change, and debounced so saving both the phrase
+    // and the enabled toggle reloads the sidecar once, not twice.
+    if (changed && (key === 'wakeword.phrase' || key === 'wakeword.enabled')) {
+      scheduleWakewordReload();
+    }
+  });
 
   ipcMain.handle(IPC.SECURE_BACKEND, () => ({
     backend: getSecureBackend(),
@@ -150,8 +191,12 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.on(IPC.TTS_PLAY, async (_e, text: string) => {
-    await ensureSidecar('tts');
-    supervisor.sendToSidecar('tts', { type: 'synthesize', text });
+    try {
+      await ensureSidecar('tts');
+      supervisor.sendToSidecar('tts', { type: 'synthesize', text });
+    } catch (e) {
+      console.error('[ARIA] TTS play failed:', (e as Error).message);
+    }
   });
 
   ipcMain.on(IPC.TTS_STOP, () => {
@@ -184,9 +229,13 @@ function setupIpcHandlers(): void {
   });
 
   ipcMain.on(IPC.STT_START, async () => {
-    await ensureSidecar('stt');
-    supervisor.sendToSidecar('stt', { type: 'reset' });
-    sttListening = true;
+    try {
+      await ensureSidecar('stt');
+      supervisor.sendToSidecar('stt', { type: 'reset' });
+      sttListening = true;
+    } catch (e) {
+      console.error('[ARIA] STT start failed:', (e as Error).message);
+    }
   });
 
   ipcMain.on(IPC.STT_END, () => {
@@ -268,6 +317,14 @@ app.whenReady().then(async () => {
     setTimeout(() => { void ensureSidecar('stt'); }, 2500);
   }
 
+  // Pre-warm TTS too (staggered after STT to avoid a load spike), so the first
+  // reply doesn't pay the model-load + ONNX cold-start cost mid-conversation —
+  // the dominant chunk of the text->audio delay. The sidecar runs a throwaway
+  // synthesis on load, so by 'ready' the graph is hot.
+  if (modelsOk && !SMOKE && config.get('tts.prewarm') !== false) {
+    setTimeout(() => { void ensureSidecar('tts'); }, 3500);
+  }
+
   if (SMOKE) {
     // Headless boot test: confirm the app initialized, then quit cleanly.
     console.log('[ARIA_SMOKE] app ready, window+tray+supervisor initialized');
@@ -339,6 +396,31 @@ function applyConfigToEnv(): void {
   }
 }
 
+// Coalesce rapid wake-word config changes (the save handler writes the phrase
+// and the enabled flag back to back) into a single sidecar reload.
+let wakewordReloadTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleWakewordReload(): void {
+  if (wakewordReloadTimer) clearTimeout(wakewordReloadTimer);
+  wakewordReloadTimer = setTimeout(() => {
+    wakewordReloadTimer = null;
+    void applyWakewordConfig();
+  }, 300);
+}
+
+// Apply a wake-word Settings change live: refresh the env the sidecar inherits,
+// then (re)start it with the new model — or stop it if the user disabled the
+// wake word — so a typed phrase takes effect without an app restart.
+async function applyWakewordConfig(): Promise<void> {
+  if (SMOKE || !supervisor) return;
+  process.env.ARIA_WAKEWORD_MODEL = (config.get('wakeword.phrase') as string) || 'hey_jarvis';
+  try {
+    if (config.get('wakeword.enabled')) await supervisor.restart('wakeword');
+    else await supervisor.stop('wakeword');
+  } catch (e) {
+    console.error('[ARIA] wakeword reload failed:', (e as Error).message);
+  }
+}
+
 async function ensureModelsReady(): Promise<boolean> {
   const sttModel = config.get('stt.model') as string;
   const ttsVoice = config.get('tts.voice') as string;
@@ -373,9 +455,15 @@ async function ensureModelsReady(): Promise<boolean> {
 const lazyStarted = new Set<SidecarName>();
 
 async function ensureSidecar(name: SidecarName): Promise<void> {
-  if (lazyStarted.has(name)) return;
-  lazyStarted.add(name);
-  await supervisor.start(name);
+  if (!lazyStarted.has(name)) {
+    lazyStarted.add(name);
+    await supervisor.start(name);
+  }
+  // Block until the sidecar has loaded its model and emitted 'ready'. Without
+  // this the first 'synthesize'/'transcribe' could reach the process before
+  // initialize() finished, hitting a not-yet-loaded model (the first-utterance
+  // "'NoneType' object has no attribute 'create'" race).
+  await supervisor.waitForReady(name);
 }
 
 function routeSidecarMessage(name: SidecarName, msg: Record<string, unknown>): void {
