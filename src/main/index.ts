@@ -12,11 +12,10 @@ import { SidecarName } from '../shared/constants';
 
 app.commandLine.appendSwitch('enable-features', 'GlobalShortcutsPortal');
 
-// Allow the renderer to render above the display's vsync cap so the reactive
-// orb can hit 160+ FPS on high-refresh monitors. Without these, requestAnimation
-// Frame is locked to the refresh rate (often 60 Hz).
-app.commandLine.appendSwitch('disable-frame-rate-limit');
-app.commandLine.appendSwitch('disable-gpu-vsync');
+// NOTE: we intentionally keep vsync ENABLED. Disabling it (to chase uncapped
+// FPS) made the orb tear/shake; the render is cheap (~0.2ms/frame) so vsync at
+// the display's native refresh (60/120/160 Hz) is already smooth and stable.
+// Orb motion is time-based (see orb.js) so it looks identical at any refresh.
 
 if (process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland') {
   app.commandLine.appendSwitch('ozone-platform-hint', 'wayland');
@@ -25,6 +24,7 @@ if (process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland') {
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let supervisor: Supervisor;
+let isQuitting = false;
 
 const SMOKE = process.env.ARIA_SMOKE === '1';
 
@@ -52,8 +52,23 @@ function createWindow(): BrowserWindow {
     });
   }
 
+  // Closing the window HIDES it (keeps ARIA running in the background — wake word
+  // stays active) instead of destroying it. The app only really quits from the
+  // tray "Quit" (which sets isQuitting). Reopen via the tray, the global
+  // shortcut, or relaunching the app (single-instance lock restores it).
+  win.on('close', (e) => {
+    if (!isQuitting) { e.preventDefault(); win.hide(); }
+  });
+
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   return win;
+}
+
+function showMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) { mainWindow = createWindow(); return; }
+  if (!mainWindow.isVisible()) mainWindow.show();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
 }
 
 function createTray(): void {
@@ -61,19 +76,22 @@ function createTray(): void {
   tray = new Tray(icon);
 
   const contextMenu = Menu.buildFromTemplate([
-    { label: 'Show ARIA', click: () => mainWindow?.show() },
+    { label: 'Show ARIA', click: () => showMainWindow() },
     { label: 'Start Listening', click: () => toggleListening() },
     { type: 'separator' },
-    { label: 'Quit', click: () => app.quit() },
+    { label: 'Quit', click: () => { isQuitting = true; app.quit(); } },
   ]);
 
   tray.setToolTip('ARIA Voice Assistant');
   tray.setContextMenu(contextMenu);
-  tray.on('click', () => mainWindow?.show());
+  tray.on('click', () => showMainWindow());
 }
 
+// Triggered by the global/in-window shortcut and the tray: bring ARIA forward and
+// start a hands-free listen (same path as the wake word, VAD auto-endpointed).
 function toggleListening(): void {
-  mainWindow?.webContents.send(IPC.WAKEWORD_STATE, 'toggle');
+  showMainWindow();
+  mainWindow?.webContents.send(IPC.WAKEWORD_DETECTED, 'shortcut');
 }
 
 function registerGlobalShortcut(): void {
@@ -234,9 +252,12 @@ app.whenReady().then(async () => {
   // sidecars. Downloads are resumable + checksummed; progress goes to the UI.
   const modelsOk = await ensureModelsReady();
 
-  // Always-on wake-word listener (its models ship bundled).
-  if (modelsOk && config.get('wakeword.enabled')) {
-    await supervisor.start('wakeword');
+  // Always-on wake-word listener. Its models ship bundled, so it must NOT be
+  // gated on STT/TTS model downloads — a missing/mismatched TTS voice file used
+  // to make modelsOk false and silently disable the wake word entirely.
+  if (config.get('wakeword.enabled')) {
+    try { await supervisor.start('wakeword'); }
+    catch (e) { console.error('[ARIA] wakeword start failed:', (e as Error).message); }
   }
 
   // Pre-warm STT shortly after startup (unless disabled) so the first wake word
@@ -380,6 +401,7 @@ function routeSidecarMessage(name: SidecarName, msg: Record<string, unknown>): v
 }
 
 app.on('before-quit', async (e) => {
+  isQuitting = true; // let the window's close handler actually close
   e.preventDefault();
   globalShortcut.unregisterAll();
   await supervisor.stopAll();
@@ -390,10 +412,15 @@ app.on('window-all-closed', () => {
   // Keep running in tray on Linux
 });
 
-app.on('activate', () => {
-  if (!mainWindow) mainWindow = createWindow();
-  else mainWindow.show();
-});
+app.on('activate', () => { showMainWindow(); });
+
+// Single-instance: relaunching ARIA (e.g. clicking its taskbar/launcher icon
+// while it runs in the background) restores the existing window instead of
+// starting a second copy.
+if (!SMOKE && !app.requestSingleInstanceLock()) {
+  app.exit(0);
+}
+app.on('second-instance', () => { showMainWindow(); });
 
 process.on('SIGTERM', async () => {
   await supervisor.stopAll();

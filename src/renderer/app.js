@@ -60,6 +60,11 @@ function assistantSay(text) {
   try { stopPlayback(true); aria.tts.play(text); orbState('speaking'); } catch (e) {}
 }
 
+// Speak without adding a transcript line (used for the "hold on" filler).
+function speakOnly(text) {
+  try { stopPlayback(true); aria.tts.play(text); orbState('speaking'); } catch (e) {}
+}
+
 // Single entry point for user turns (text box + voice). Handles screen-share
 // voice/text commands locally, and attaches the current desktop frame when
 // screen sharing is active so the agent can see what the user is doing.
@@ -71,6 +76,39 @@ async function submitUserMessage(rawText) {
   orbState('processing');
   const image = isSharing() ? await captureScreenFrame() : null;
   aria.llm.send(text, image);
+  armThinkingHold(text);
+}
+
+// If a reply is slow (agent tasks can take a while), speak a short, contextual
+// "hold on" so the user isn't left in silence. Cancelled as soon as the first
+// token arrives. Spoken only — not added to the transcript.
+let thinkingTimer = null;
+let awaitingFirstToken = false;
+
+function holdOnPhrase(text) {
+  const t = text.toLowerCase();
+  if (/\b(weather|forecast|temperature|rain)/.test(t)) return 'Let me check the weather for you — one moment.';
+  if (/\b(news|headline|stock|price|score)/.test(t)) return 'Let me pull that up for you, just a sec.';
+  if (/\b(search|look up|find|google|browse)/.test(t)) return 'Let me look that up for you.';
+  if (/\b(code|build|run|fix|debug|file|deploy|install|commit|refactor|test)/.test(t)) return 'Working on that now — give me a moment.';
+  if (/\bscreen\b|\bsee\b|\blook at\b/.test(t)) return 'Let me take a look — one moment.';
+  if (t.trim().endsWith('?')) return 'Good question — let me think about that for a second.';
+  return 'One moment, let me get that for you.';
+}
+
+function armThinkingHold(text) {
+  clearTimeout(thinkingTimer);
+  awaitingFirstToken = true;
+  const phrase = holdOnPhrase(text);
+  thinkingTimer = setTimeout(() => {
+    if (awaitingFirstToken) speakOnly(phrase);
+  }, 3800);
+}
+
+function cancelThinkingHold() {
+  awaitingFirstToken = false;
+  clearTimeout(thinkingTimer);
+  thinkingTimer = null;
 }
 
 textInput.addEventListener('keydown', (e) => {
@@ -311,6 +349,7 @@ function flushStream() {
 }
 
 aria.llm.onToken((token) => {
+  cancelThinkingHold(); // reply has started — no "hold on" needed
   ensureAssistantMsg();
   streamBuf += token;
   if (!streamFlushScheduled) {
@@ -320,6 +359,7 @@ aria.llm.onToken((token) => {
 });
 
 aria.llm.onDone((fullText) => {
+  cancelThinkingHold();
   flushStream(); // drain any tokens buffered since the last frame
   // Streaming already populated the message text (preserving the route badge);
   // only fill in if nothing streamed (e.g. non-streaming reply).
@@ -433,6 +473,7 @@ aria.tts.onState((state) => {
 });
 
 aria.llm.onError((error) => {
+  cancelThinkingHold();
   streamBuf = '';
   streamTextNode = null;
   currentAssistantMsg = null;

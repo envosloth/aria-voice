@@ -75,6 +75,7 @@
   const TILT = 0.42, SIN_TILT = Math.sin(TILT), COS_TILT = Math.cos(TILT);
   let gradBucket = -1, gradCache = null, gradColKey = '';
 
+  let lastW = -1, lastH = -1, lastDpr = -1;
   function resize() {
     const cw = canvas.clientWidth, ch = canvas.clientHeight;
     // Skip until the canvas has a real layout size — sizing the backing store to
@@ -82,6 +83,10 @@
     // until a window minimize/restore forced a correct resize.
     if (cw < 2 || ch < 2) return;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    // No-op if nothing actually changed, so a chatty ResizeObserver doesn't clear
+    // the canvas every tick (which would flicker).
+    if (cw === lastW && ch === lastH && dpr === lastDpr) return;
+    lastW = cw; lastH = ch; lastDpr = dpr;
     w = cw; h = ch;
     canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -92,8 +97,13 @@
 
   let measuring = false, mFrames = 0, mTime = 0, mLast = 0;
 
+  let lastFrameTime = 0;
   function render(now) {
     const t0 = measuring ? performance.now() : 0;
+    // Time-based step (normalized to a 60 FPS frame), clamped so a hitch or a
+    // 160 Hz refresh both animate at the SAME visual speed — no shake/jitter.
+    const dt = lastFrameTime ? Math.min(3, (now - lastFrameTime) / 16.667) : 1;
+    lastFrameTime = now;
 
     // Ease colour toward the target state colour.
     col[0] += (target[0] - col[0]) * 0.08;
@@ -112,7 +122,7 @@
     else if (state === 'processing') { spin = 0.022; breatheAmp = 0.03; pulse = 0.03 * Math.sin(t * 5); }
     else if (state === 'speaking') { spin = 0.006 + react * 0.04; breatheAmp = 0.025; }
 
-    t += spin + react * 0.02;
+    t += (spin + react * 0.02) * dt;
     const rot = t, cosR = Math.cos(rot), sinR = Math.sin(rot);
 
     ctx.clearRect(0, 0, w, h);
