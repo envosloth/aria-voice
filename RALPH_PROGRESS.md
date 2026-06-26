@@ -364,7 +364,46 @@ toggles, which (artificially) accumulated 'ended' listeners on the same track �
 non-issue in the real app since getDisplayMedia returns a fresh stream per share.
 
 ## Item 8: Direct LLM doesn't know it can delegate to tools / agent harness
-Status: not-started
+Status: done
+Findings: Comparing the two paths — the HARNESS path's model can use tools because
+the harness runs them server-side (ARIA just streams its `tool_calls` as UI chips).
+The DIRECT-LLM path sent `{model, messages, stream:true}` with NO tools array and no
+tool-result handling, so a plain chat model had no way to reach ARIA's live tools —
+it could only answer from its own knowledge. So the direct path was missing both the
+tool definition AND the tool-call execution loop.
+
+Fix (files touched):
+- `src/main/llm-stream.ts`: `ChatOptions.tools` (sent as `tools`+`tool_choice:auto`
+  when present); `ChatMessage` extended with the `tool`/`tool_calls`/`tool_call_id`
+  shapes; tool-call fragments accumulated across deltas; new `onToolCalls` callback
+  that fires INSTEAD of `onDone` when the model finishes by requesting tool calls
+  (opt-in per request, so the harness path is unaffected).
+- `src/main/coordinator.ts`: a single `delegate_to_agent` tool offered to a DIRECT
+  LLM **only when an agent harness is also configured** (gated; the harness path
+  never gets it). A system-prompt hint tells the model the capability exists. When
+  the model invokes it, ARIA runs the harness for the task, appends the assistant
+  tool_call + a `role:'tool'` result, and re-requests the LLM (no tools) so it speaks
+  the final answer in its own voice. Capability fallback: if the provider rejects
+  `tools` (`isToolsUnsupportedError`, broad 4xx+tool match), it retries the same
+  target once WITHOUT tools — so non-tool-calling models still answer.
+- Verification hook `ARIA_VERIFY_DELEGATE` + `scripts/smoke-delegate.js`
+  (`npm run smoke:delegate`).
+
+Verification:
+- `npm run smoke:delegate` (real app headless, mock direct-LLM + mock harness): 6/6
+  PASS. Run A (capable model): the `delegate_to_agent` tool IS sent to the direct
+  LLM, the model INVOKES it, the harness receives the task ("current weather in
+  Austin"), the tool result is carried back, and the final answer weaves it in
+  ("Right now in Austin it is 24°C and sunny.") — i.e. it used the tool instead of
+  guessing. Run B (model 400s on tools): ARIA retries WITHOUT tools and still returns
+  a plain answer (graceful fallback, no crash).
+- Regression: smoke:llm 5/5, smoke:local-llm, perf:llm-path, smoke:router all PASS;
+  headless boot OK; typecheck + build clean. The harness path is untouched
+  (onToolCalls is opt-in; harness requests don't pass it, so onDone fires as before).
+- Latency: tools add a small static array to the direct-LLM request body only when a
+  harness is configured; the delegate round-trip is opt-in (only when the model
+  chooses to delegate) and reuses the streaming path, so a normal direct answer is
+  unchanged.
 
 ---
 

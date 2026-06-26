@@ -498,6 +498,36 @@ app.whenReady().then(async () => {
       return;
     }
 
+    // Direct-LLM tool-delegation verification (Item 8): configure a (mock) direct
+    // LLM + agent harness, drive one tool-requiring message, and capture the final
+    // assistant text. Used by scripts/smoke-delegate.js.
+    if (process.env.ARIA_VERIFY_DELEGATE && mainWindow) {
+      const wc = mainWindow.webContents;
+      const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      if (process.env.ARIA_VERIFY_LLM_ENDPOINT) config.set('llm.endpoint', process.env.ARIA_VERIFY_LLM_ENDPOINT);
+      if (process.env.ARIA_VERIFY_HARNESS_ENDPOINT) config.set('harness.endpoint', process.env.ARIA_VERIFY_HARNESS_ENDPOINT);
+      config.set('llm.model', 'mock-llm');
+      config.set('harness.model', 'mock-harness');
+      config.set('routing.mode', 'llm'); // force the direct-LLM path
+      (async () => {
+        try {
+          await wc.executeJavaScript(
+            `(function(){document.querySelectorAll('.overlay,#onboard-overlay,#settings-overlay').forEach(function(e){e.classList.remove('visible');});` +
+            `var ti=document.getElementById('text-input');ti.value=${JSON.stringify(process.env.ARIA_VERIFY_DELEGATE_MSG || 'what is the weather in austin')};` +
+            `ti.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));})(); true;`,
+          );
+          await delay(2800); // tool_call -> harness -> final answer
+          const convo = await wc.executeJavaScript(`(function(){return JSON.stringify(Array.from(document.querySelectorAll('#conversation .message')).map(function(m){return {role:m.classList.contains('user')?'user':'assistant',text:(m.textContent||'').trim()};}));})()`);
+          console.log('[ARIA_VERIFY] delegate-convo=' + convo);
+        } catch (e) {
+          console.log('[ARIA_VERIFY] error: ' + (e as Error).message);
+        }
+        await supervisor.stopAll();
+        app.exit(0);
+      })();
+      return;
+    }
+
     // Hover-timestamp verification (Item 6): create two real message bubbles,
     // confirm each carries a data-time and the ::after timestamp is hidden by
     // default, then FORCE :hover on the 2nd bubble via the DevTools protocol and

@@ -2,6 +2,14 @@ import https from 'https';
 import http from 'http';
 import { URL } from 'url';
 
+// One fully-assembled tool call the model asked us to run (arguments may stream
+// across many deltas; these are accumulated before being surfaced).
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
 export interface LlmCallbacks {
   onToken: (token: string) => void;
   onDone: (fullText: string) => void;
@@ -10,6 +18,13 @@ export interface LlmCallbacks {
   // can show "what tools are being used" above the final answer. Optional — a
   // plain chat LLM never emits any.
   onTool?: (info: { name: string; args?: string }) => void;
+  // The model finished a turn by REQUESTING tool calls (OpenAI function calling)
+  // rather than answering. When provided AND the model emitted tool calls, this
+  // fires INSTEAD of onDone, handing the assembled calls to the caller to execute
+  // and continue the conversation. Used by the direct-LLM delegate-to-agent path;
+  // omitted for the harness path (the harness runs its own tools), where tool
+  // events just drive onTool chips and onDone fires normally.
+  onToolCalls?: (calls: ToolCall[]) => void;
 }
 
 // Pull tool/function names out of one parsed SSE JSON object. Supports the
@@ -48,8 +63,12 @@ function extractTools(obj: unknown): { name: string; args?: string; key: string 
 export type MessageContent = string | Array<Record<string, unknown>>;
 
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: 'system' | 'user' | 'assistant' | 'tool';
   content: MessageContent;
+  // Present on an assistant turn that requested tool calls, and echoed back so
+  // the model can match its tool result. OpenAI function-calling shape.
+  tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
+  tool_call_id?: string; // present on a role:'tool' result message
 }
 
 export interface ChatOptions {
@@ -58,6 +77,7 @@ export interface ChatOptions {
   apiKey?: string | null;
   message?: string;             // single-turn convenience
   messages?: ChatMessage[];     // full conversation (takes precedence)
+  tools?: unknown[];            // OpenAI tool/function definitions (optional)
   timeoutMs?: number;
 }
 
@@ -75,7 +95,7 @@ export interface ChatHandle {
  * further callbacks — used for barge-in (interrupt mid-reply).
  */
 export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHandle {
-  const { endpoint, model, apiKey, message, messages, timeoutMs = 30000 } = opts;
+  const { endpoint, model, apiKey, message, messages, tools, timeoutMs = 30000 } = opts;
 
   // Once cancelled we destroy the socket AND swallow any late callbacks, so an
   // aborted reply never reaches the renderer (no stray tokens after barge-in).
@@ -92,7 +112,12 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
     onDone: (f) => { if (!cancelled) callbacks.onDone(f); },
     onError: (e) => { if (!cancelled) callbacks.onError(e); },
     onTool: (info) => { if (!cancelled) callbacks.onTool?.(info); },
+    onToolCalls: (calls) => { if (!cancelled) callbacks.onToolCalls?.(calls); },
   };
+  // Accumulate streamed tool calls (id/name arrive once, arguments fragment
+  // across many deltas) keyed by their stream index, for callers that execute
+  // them (the direct-LLM delegate path).
+  const toolAcc = new Map<number, ToolCall>();
   // A tool's name streams once but its argument fragments arrive across many
   // deltas — track keys so each distinct tool call is reported to the UI once.
   const seenTools = new Set<string>();
@@ -134,6 +159,7 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
     model,
     messages: chatMessages,
     stream: true,
+    ...(tools && tools.length ? { tools, tool_choice: 'auto' } : {}),
   });
 
   req = transport.request(
@@ -189,6 +215,20 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
                 cb.onTool?.({ name: tool.name, args: tool.args });
               }
             }
+            // Accumulate any tool-call fragments (for the delegate path). id +
+            // name arrive in the first delta of a call; argument text streams
+            // across later deltas — concatenate by stream index.
+            const tcs = parsed.choices?.[0]?.delta?.tool_calls;
+            if (Array.isArray(tcs)) {
+              for (const tc of tcs) {
+                const idx = typeof tc.index === 'number' ? tc.index : 0;
+                const cur = toolAcc.get(idx) || { id: '', name: '', arguments: '' };
+                if (tc.id) cur.id = tc.id;
+                if (tc.function?.name) cur.name = tc.function.name;
+                if (tc.function?.arguments) cur.arguments += tc.function.arguments;
+                toolAcc.set(idx, cur);
+              }
+            }
             const delta = parsed.choices?.[0]?.delta?.content;
             if (delta) {
               fullText += delta;
@@ -201,7 +241,15 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
       });
 
       res.on('end', () => {
-        cb.onDone(fullText);
+        // If the model finished by requesting tool calls and the caller wants to
+        // execute them, hand them over INSTEAD of ending the turn. Otherwise end
+        // normally (the harness path, or a plain text answer).
+        const calls = Array.from(toolAcc.values()).filter((c) => c.name);
+        if (calls.length && callbacks.onToolCalls) {
+          cb.onToolCalls?.(calls);
+        } else {
+          cb.onDone(fullText);
+        }
       });
     },
   );
