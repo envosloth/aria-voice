@@ -230,7 +230,7 @@ class SttSidecar(BaseSidecar):
         return shutil.which(name) or ""
 
     def _find_model(self) -> str:
-        model_name = os.environ.get("ARIA_STT_MODEL", "small")
+        model_name = os.environ.get("ARIA_STT_MODEL", "base.en")
         model_file = f"ggml-{model_name}.bin"
         search_paths = [
             os.path.join(os.path.dirname(__file__), "..", "..", "models", model_file),

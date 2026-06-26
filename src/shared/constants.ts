@@ -26,12 +26,18 @@ export const RSS_LIMITS_MB: Record<SidecarName, number> = {
 export const MEMORY_CHECK_INTERVAL_MS = 30000;
 
 export const STT_MODELS = {
-  'base.en': { size: '74M', description: 'Fast, English-only' },
-  'small': { size: '244M', description: 'Balanced accuracy/speed (default)' },
+  'base.en': { size: '74M', description: 'Fast, English-only (default)' },
+  'small': { size: '244M', description: 'Balanced accuracy/speed' },
   'medium': { size: '769M', description: 'Higher accuracy, slower' },
 } as const;
 
-export const DEFAULT_STT_MODEL = 'small' as const;
+// Default STT model. base.en is ~2.2x faster to transcribe than `small` on the
+// Vulkan GPU path (~370ms vs ~810ms for a short utterance, measured on the
+// RX 9060 XT) with equivalent accuracy on common English voice commands — it
+// degrades only on rare foreign proper nouns, where `small`/`medium` (opt-in via
+// Settings) do better. Latency on the voice path (mission target ≤500ms) wins for
+// the default; accuracy-sensitive users can switch up.
+export const DEFAULT_STT_MODEL = 'base.en' as const;
 
 export const AUDIO_SAMPLE_RATE = 16000;
 export const AUDIO_CHANNELS = 1;
