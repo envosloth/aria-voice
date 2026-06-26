@@ -133,6 +133,7 @@
       border-radius: 12px;
       font-size: 14px;
       line-height: 1.5;
+      position: relative;
     }
     .message.user {
       align-self: flex-end;
@@ -142,6 +143,24 @@
       align-self: flex-start;
       background: var(--surface);
     }
+    /* Timestamp: hidden by default, revealed only while hovering THIS message
+       (scoped via .message:hover — hovering one bubble never reveals others).
+       Shown in the empty gutter beside the bubble so it never overlaps text.
+       Fed from data-time via a pseudo-element so it stays out of textContent. */
+    .message::after {
+      content: attr(data-time);
+      position: absolute;
+      bottom: 4px;
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 0.12s ease;
+      pointer-events: none;
+    }
+    .message.user::after { right: 100%; margin-right: 8px; }
+    .message.assistant::after { left: 100%; margin-left: 8px; }
+    .message:hover::after { opacity: 1; }
 
     .input-area {
       display: flex;

@@ -69,6 +69,10 @@ function addMessage(role, text) {
   const div = document.createElement('div');
   div.className = `message ${role}`;
   div.textContent = text;
+  // Timestamp for this message, shown only on hover (CSS ::after from data-time,
+  // so it's not part of textContent and doesn't disturb the streaming/onDone
+  // text checks). HH:MM in the user's locale.
+  div.dataset.time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   conversationEl.appendChild(div);
   conversationEl.scrollTop = conversationEl.scrollHeight;
   return div;

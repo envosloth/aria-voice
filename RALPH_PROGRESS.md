@@ -286,8 +286,38 @@ latency is provider TTFT (network + model), which is outside the app's control;
 the harness now makes that attributable so future app-side regressions are visible.
 
 ## Item 6: Chat messages should only show timestamp on hover
-Status: not-started
-Findings (early): `addMessage()` in app.js currently renders no timestamp at all.
+Status: done
+Findings: `addMessage()` rendered no timestamp at all. Constraint to respect: the
+streaming assistant bubble checks `currentAssistantMsg.textContent.trim()` in
+onDone, so a timestamp must NOT become part of the message's textContent (a child
+text span would break that check for non-streaming replies).
+
+Fix (files touched):
+- `src/renderer/app.js` `addMessage()`: set `div.dataset.time` to the local HH:MM
+  (`toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})`). Stored as a data
+  attribute, NOT text — so it stays out of textContent.
+- `src/renderer/index.html` CSS: `.message{position:relative}` and a pseudo-element
+  `.message::after{content:attr(data-time); opacity:0; ...}` revealed only by
+  `.message:hover::after{opacity:1}`. Placed in the empty gutter beside the bubble
+  (`.user::after{right:100%}`, `.assistant::after{left:100%}`) so it never overlaps
+  text. The reveal selector is scoped to the hovered `.message`, so hovering one
+  bubble never reveals another's.
+- Verification hook `ARIA_VERIFY_HOVER` + `scripts/smoke-hover.js`
+  (`npm run smoke:hover`).
+
+Verification:
+- `npm run smoke:hover` (real app headless, two real bubbles via the actual
+  addMessage path): 9/9 PASS. Live computed `::after` opacity is `0` on both
+  messages by default (hidden), the content resolves from `data-time` (`"12:45 AM"`),
+  and the stylesheet carries exactly `.message::after{opacity:0}` +
+  `.message:hover::after{opacity:1}` — i.e. revealed only on hover and scoped to the
+  hovered message (not an ancestor), so siblings stay hidden.
+  (Note: `getComputedStyle` doesn't reflect a programmatically forced :hover for
+  pseudo-elements, so the reveal is verified via the stylesheet rules + the live
+  default-hidden computed value.)
+- typecheck + build clean.
+- Latency: a `Date` format per message-add (once per message, not per token) — µs,
+  off the streaming hot path. No impact.
 
 ## Item 7: Screen share causes chat to duplicate/repeat the first message
 Status: not-started

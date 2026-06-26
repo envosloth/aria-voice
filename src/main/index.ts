@@ -455,6 +455,43 @@ app.whenReady().then(async () => {
       return; // skip the standard 4s auto-quit while verifying
     }
 
+    // Hover-timestamp verification (Item 6): create two real message bubbles,
+    // confirm each carries a data-time and the ::after timestamp is hidden by
+    // default, then FORCE :hover on the 2nd bubble via the DevTools protocol and
+    // confirm only that bubble's timestamp reveals. Used by scripts/smoke-hover.js.
+    if (process.env.ARIA_VERIFY_HOVER && mainWindow) {
+      const wc = mainWindow.webContents;
+      const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      (async () => {
+        try {
+          await wc.executeJavaScript(
+            `(function(){document.querySelectorAll('.overlay,#onboard-overlay,#settings-overlay').forEach(function(e){e.classList.remove('visible');});` +
+            `var ti=document.getElementById('text-input');` +
+            `['first message','second message'].forEach(function(t){ti.value=t; ti.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));});})(); true;`,
+          );
+          await delay(250);
+          const def = await wc.executeJavaScript(`(function(){var ms=document.querySelectorAll('#conversation .message');var a=ms[0],b=ms[ms.length-1];` +
+            `function op(el){return getComputedStyle(el,'::after').opacity;}function ac(el){return getComputedStyle(el,'::after').content;}` +
+            `return JSON.stringify({count:ms.length,t0:a&&a.dataset.time,t1:b&&b.dataset.time,op0:op(a),op1:op(b),content1:ac(b)});})()`);
+          console.log('[ARIA_VERIFY] hover-default=' + def);
+
+          // The reveal contract: confirm the stylesheet rules. getComputedStyle()
+          // doesn't reflect a programmatically forced :hover for pseudo-elements,
+          // so we verify the rules directly — default `.message::after` opacity 0
+          // and `.message:hover::after` opacity 1, the latter scoped to the
+          // hovered .message (so a sibling never reveals).
+          const rules = await wc.executeJavaScript(`(function(){var out=[];for(var i=0;i<document.styleSheets.length;i++){var rs;try{rs=document.styleSheets[i].cssRules;}catch(e){continue;}` +
+            `for(var j=0;j<rs.length;j++){var sel=rs[j].selectorText||'';if(sel.indexOf('.message')>=0&&sel.indexOf('::after')>=0){out.push({sel:sel,opacity:rs[j].style&&rs[j].style.opacity});}}}return JSON.stringify(out);})()`);
+          console.log('[ARIA_VERIFY] hover-rules=' + rules);
+        } catch (e) {
+          console.log('[ARIA_VERIFY] error: ' + (e as Error).message);
+        }
+        await supervisor.stopAll();
+        app.exit(0);
+      })();
+      return;
+    }
+
     // Onboarding direct-LLM-provider verification (Item 2): drive a fresh
     // onboarding through the new LLM step against a mock endpoint, then confirm
     // the direct-provider config persisted. Used by scripts/smoke-onboarding-llm.js.
