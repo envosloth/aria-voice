@@ -13,6 +13,8 @@ Tracking for the Ralph loop task in `RALPH_TASK.md`. One section per item.
   (non-blocking, never awaited). Measured app-side overhead ~3ms (see Item 0 baseline).
 - Latency < 500ms: text path user-visible time-to-first-text measured at 53ms (fast
   provider) / 361ms (350ms-TTFT provider) — app adds ~3ms; rest is provider TTFT.
+- Item 1 live-settings reload is on the Settings-save path only (debounced), not the
+  interaction hot path — no latency regression.
 
 ---
 
@@ -95,7 +97,49 @@ Verification:
 ---
 
 ## Item 1: Settings changes require app restart to take effect
-Status: not-started
+Status: done
+Findings (which settings were live vs. restart-required, by code path):
+- ALREADY live (read fresh per use): `routing.mode`, `llm.endpoint`, `llm.model`,
+  `harness.endpoint`, `harness.model` — all read via `config.get(...)` inside
+  `coordinator.coordinate()`/`resolve()` on every turn. API keys
+  (`llm-api-key`/`harness-api-key`) fetched via `getSecret()` per request.
+  `ui.theme` applied immediately in the renderer (`applyTheme` in the save
+  handler). `wakeword.phrase`/`wakeword.enabled` already had a live reload.
+- RESTART-REQUIRED (the actual bug): `tts.voice`, `stt.model`, `stt.backend`.
+  These are consumed by the TTS/STT sidecars, which read `ARIA_TTS_VOICE` /
+  `ARIA_STT_MODEL` / `ARIA_STT_BACKEND` from the environment ONLY at spawn
+  (`sidecars/tts/main.py:38`, `sidecars/stt/main.py:233,38`). `applyConfigToEnv()`
+  set those env vars once at boot, so a Settings change never reached a
+  running sidecar.
+
+Fix (root cause, files touched — `src/main/index.ts`):
+- Extended the `CONFIG_SET` handler's live-apply (previously wakeword-only) to
+  `tts.voice`/`tts.engine` -> `scheduleSidecarReload('tts')` and
+  `stt.model`/`stt.backend` -> `scheduleSidecarReload('stt')`.
+- New `scheduleSidecarReload(name)` (debounced 300ms, per sidecar, so saving
+  several related fields reloads once) + `applySidecarConfig(name)`: refreshes ALL
+  `ARIA_*` env from current config via `applyConfigToEnv()`, then restarts the
+  sidecar — but ONLY if it has actually been started (a not-yet-lazy-started
+  sidecar just reads the fresh env on first spawn). For STT it first runs
+  `ensureModelsReady()` so a newly-selected model is downloaded before reload.
+- No "Restart required" UI is needed: every field in the Settings panel now
+  applies live (chose option (a) for all of them).
+- Verification hook: an `ARIA_VERIFY_SETTINGS` SMOKE path that starts TTS and
+  changes `tts.voice` through the real config IPC, used by the new
+  `scripts/smoke-settings-live.js` (`npm run smoke:settings`).
+
+Verification:
+- `npm run smoke:settings` (real app, isolated --user-data-dir): PASS —
+  `TTS voices observed (one running process): ["bm_george","af_sarah"]`,
+  i.e. the voice changed live in the SAME process, no app restart. The user's
+  real config is untouched (isolated user-data-dir).
+- Other fields confirmed live by code path (above): routing/llm/harness/keys read
+  per-turn, theme applied in-renderer, wakeword pre-existing live reload.
+- `npm run typecheck` clean; `npm run build` clean; standard `smoke:boot` still
+  reaches `[ARIA_SMOKE] OK` (SMOKE-block edits didn't regress boot).
+- Latency: the change is on the Settings-save path only (debounced background
+  reload), NOT the interaction hot path — Item 0 marks unaffected. STT/TTS reload
+  cost is paid off the user's next turn (sidecar re-warms in the background).
 
 ## Item 2: Setup guide is missing direct LLM provider configuration
 Status: not-started

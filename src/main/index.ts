@@ -178,12 +178,19 @@ function setupIpcHandlers(): void {
   ipcMain.handle(IPC.CONFIG_SET, (_e, key: string, value: unknown) => {
     const changed = config.get(key) !== value;
     config.set(key, value);
-    // Apply wake-word changes live so a phrase typed in Settings takes effect
-    // without restarting the app (the env is otherwise only read at sidecar
-    // spawn). Only on an actual change, and debounced so saving both the phrase
-    // and the enabled toggle reloads the sidecar once, not twice.
-    if (changed && (key === 'wakeword.phrase' || key === 'wakeword.enabled')) {
+    if (!changed) return;
+    // Apply settings live so a change in the Settings panel takes effect without
+    // restarting the app. Settings consumed per-request (llm.*/harness.*/
+    // routing.mode, API keys) and the renderer-applied ones (ui.theme) are
+    // already live; the ones below are only read by a sidecar at spawn, so the
+    // sidecar's env is refreshed and it is restarted. All paths are debounced so
+    // saving several related fields at once reloads each sidecar just once.
+    if (key === 'wakeword.phrase' || key === 'wakeword.enabled') {
       scheduleWakewordReload();
+    } else if (key === 'tts.voice' || key === 'tts.engine') {
+      scheduleSidecarReload('tts');
+    } else if (key === 'stt.model' || key === 'stt.backend') {
+      scheduleSidecarReload('stt');
     }
   });
 
@@ -386,6 +393,31 @@ app.whenReady().then(async () => {
         ).catch(() => {});
       }, 1200);
     }
+
+    // Live-settings verification (Item 1): start TTS, then change tts.voice
+    // through the REAL config IPC path and let the sidecar reload pick it up.
+    // The external verifier (scripts/smoke-settings-live.js) watches for a SECOND
+    // 'initialized' status carrying the new voice. Uses an isolated --user-data-dir
+    // so it never clobbers the user's config.
+    if (process.env.ARIA_VERIFY_SETTINGS && mainWindow) {
+      (async () => {
+        try {
+          console.log('[ARIA_VERIFY] starting tts sidecar (initial voice from config)…');
+          await ensureSidecar('tts');
+          const newVoice = process.env.ARIA_VERIFY_VOICE || 'af_sarah';
+          console.log(`[ARIA_VERIFY] tts ready; setting tts.voice=${newVoice} via config IPC`);
+          await mainWindow!.webContents.executeJavaScript(
+            `aria.config.set('tts.voice', ${JSON.stringify(newVoice)}); true;`,
+          );
+        } catch (e) {
+          console.log('[ARIA_VERIFY] error:', (e as Error).message);
+        }
+      })();
+      // Safety net: quit if the external verifier didn't kill us first.
+      setTimeout(() => { void supervisor.stopAll().then(() => app.exit(0)); }, 20000);
+      return; // skip the standard 4s auto-quit while verifying
+    }
+
     setTimeout(async () => {
       // Orb render benchmark (throttle-independent — times N renders).
       if (process.env.ARIA_FPS && mainWindow) {
@@ -509,6 +541,39 @@ async function applyWakewordConfig(): Promise<void> {
     else await supervisor.stop('wakeword');
   } catch (e) {
     console.error('[ARIA] wakeword reload failed:', (e as Error).message);
+  }
+}
+
+// Coalesce rapid Settings changes that affect a sidecar (e.g. stt.model and
+// stt.backend saved back to back) into a single reload of that sidecar.
+const sidecarReloadTimers: Partial<Record<SidecarName, ReturnType<typeof setTimeout>>> = {};
+function scheduleSidecarReload(name: SidecarName): void {
+  const existing = sidecarReloadTimers[name];
+  if (existing) clearTimeout(existing);
+  sidecarReloadTimers[name] = setTimeout(() => {
+    delete sidecarReloadTimers[name];
+    void applySidecarConfig(name);
+  }, 300);
+}
+
+// Apply a TTS/STT Settings change live. The sidecars read their model/voice/
+// backend from the environment only at spawn, so we refresh the env from the
+// current config and restart the sidecar — but only if it has actually been
+// started. A not-yet-lazy-started sidecar needs nothing: it will read the fresh
+// env when it first spawns. A new STT model is downloaded first (the sidecar
+// can't load a missing ggml file).
+async function applySidecarConfig(name: SidecarName): Promise<void> {
+  if (!supervisor) return;
+  applyConfigToEnv(); // refresh ALL ARIA_* env vars from the current config
+  if (!lazyStarted.has(name)) return; // not running yet -> fresh env used on first spawn
+  try {
+    if (name === 'stt') {
+      const ok = await ensureModelsReady(); // download the newly-selected model if absent
+      if (!ok) return;
+    }
+    await supervisor.restart(name);
+  } catch (e) {
+    console.error(`[ARIA] ${name} reload failed:`, (e as Error).message);
   }
 }
 
