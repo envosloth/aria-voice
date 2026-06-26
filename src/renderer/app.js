@@ -6,6 +6,24 @@
 'use strict';
 const { aria } = window;
 
+// Latency harness (see perf.js / src/main/perf.ts). Safe no-op stub if perf.js
+// didn't load, so instrumenting the hot path never risks a ReferenceError.
+const perf = window.AriaPerf || { newTurn: () => '', mark: () => {}, isEnabled: () => false };
+// Correlation id for the in-flight turn, shared with main over IPC. Voice turns
+// keep their id from audio_start through TTS playback so STT/LLM/TTS stages line
+// up in one timeline.
+let currentTurnId = null;
+let currentVoiceTurnId = null;
+// Per-turn "first occurrence" guards so each stage is marked once per turn.
+let firstTokenRenderMarked = false;
+let ttsFirstRequestMarked = false;
+let ttsFirstAudioMarked = false;
+function resetTurnMarkers() {
+  firstTokenRenderMarked = false;
+  ttsFirstRequestMarked = false;
+  ttsFirstAudioMarked = false;
+}
+
 // Apply a theme by id; refresh the orb so it picks up the new accent.
 function applyTheme(id) {
   document.documentElement.dataset.theme = id || 'midnight';
@@ -85,14 +103,21 @@ function speakOnly(text) {
 // Single entry point for user turns (text box + voice). Handles screen-share
 // voice/text commands locally, and attaches the current desktop frame when
 // screen sharing is active so the agent can see what the user is doing.
-async function submitUserMessage(rawText) {
+async function submitUserMessage(rawText, existingTurnId) {
   const text = (rawText || '').trim();
   if (!text) return;
+  // A voice turn passes its existing id so STT->LLM->TTS stay one timeline; a
+  // typed turn starts a fresh one.
+  const turnId = existingTurnId || perf.newTurn('text');
+  currentTurnId = turnId;
+  resetTurnMarkers();
+  perf.mark(turnId, 'user_input', { chars: text.length });
   addMessage('user', text);
   if (await handleScreenCommand(text)) return;
   orbState('processing');
   const image = shouldAttachScreen(text) ? await captureScreenFrame() : null;
-  aria.llm.send(text, image);
+  perf.mark(turnId, 'dispatch', image ? { image: 1 } : undefined);
+  aria.llm.send(text, image, turnId);
   armThinkingHold(text);
 }
 
@@ -363,10 +388,15 @@ function bargeIn() {
 
 function beginUtterance(opts) {
   bargeIn(); // interrupt whatever ARIA is currently saying/generating
+  const turnId = perf.newTurn('voice');
+  currentTurnId = turnId;
+  currentVoiceTurnId = turnId;
+  resetTurnMarkers();
+  perf.mark(turnId, 'audio_start');
   listening = true;
   micBtn.classList.add('listening');
   orbState('listening');
-  aria.stt.start();
+  aria.stt.start(turnId);
   // VAD endpointing only for hands-free (wake-word) turns; push-to-talk ends on
   // button release.
   vadActive = !!(opts && opts.vad);
@@ -383,6 +413,7 @@ function endUtterance() {
   clearTimeout(vadSafetyTimer);
   micBtn.classList.remove('listening');
   orbState('processing'); // STT + LLM working
+  perf.mark(currentVoiceTurnId, 'audio_end');
   aria.stt.end();
 }
 
@@ -396,7 +427,11 @@ startMicCapture();
 aria.stt.onResult((text) => {
   if (text.trim()) {
     partialEl.textContent = '';
-    submitUserMessage(text); // handles screen-share commands + frame attachment
+    perf.mark(currentVoiceTurnId, 'stt_result_render', { chars: text.trim().length });
+    // Chain the recognized text onto the SAME voice turn so audio_start..tts_*
+    // are one timeline; clear it so a later typed turn starts fresh.
+    submitUserMessage(text, currentVoiceTurnId); // handles screen-share commands + frame attachment
+    currentVoiceTurnId = null;
   } else {
     orbState('idle'); // nothing recognized
   }
@@ -527,6 +562,7 @@ function speakChunk(text) {
     orbState('speaking'); // agent is about to talk -> dynamic motion
     ttsTurnSpeaking = true;
   }
+  if (!ttsFirstRequestMarked) { ttsFirstRequestMarked = true; perf.mark(currentTurnId, 'tts_first_request'); }
   ttsPlay(text);          // queues serially behind earlier sentences in the sidecar
 }
 
@@ -580,6 +616,7 @@ function resetTtsStream() { ttsStreamBuf = ''; ttsTurnSpeaking = false; }
 aria.llm.onTool((info) => { try { addToolChip(info); } catch (e) {} });
 
 aria.llm.onToken((token) => {
+  if (!firstTokenRenderMarked) { firstTokenRenderMarked = true; perf.mark(currentTurnId, 'first_token_render'); }
   cancelThinkingHold(); // reply has started — no "hold on" needed
   ensureAssistantMsg();
   streamBuf += token;
@@ -591,6 +628,7 @@ aria.llm.onToken((token) => {
 });
 
 aria.llm.onDone((fullText) => {
+  perf.mark(currentTurnId, 'turn_complete', { chars: (fullText || '').length });
   cancelThinkingHold();
   flushStream(); // drain any tokens buffered since the last frame
   // Streaming already populated the message text (preserving the route badge);
@@ -725,6 +763,7 @@ aria.tts.onAudio((pcmArrayBuffer) => {
     // Small lead so the very first chunk isn't clipped while the graph spins up.
     if (nextPlayTime < now + 0.03) nextPlayTime = now + 0.03;
     source.start(nextPlayTime);
+    if (!ttsFirstAudioMarked) { ttsFirstAudioMarked = true; perf.mark(currentTurnId, 'tts_first_audio'); }
     nextPlayTime += buffer.duration;
     ttsSources.push(source);
     source.onended = () => {

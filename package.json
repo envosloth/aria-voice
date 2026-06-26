@@ -4,7 +4,7 @@
   "description": "GPU-accelerated voice assistant with local STT/TTS and remote LLM",
   "main": "dist/main/index.js",
   "scripts": {
-    "build": "tsc && npm run build:preload && cp src/renderer/index.html src/renderer/app.js src/renderer/audio-utils.js src/renderer/mic-worklet.js src/renderer/harnesses.js src/renderer/orb.js dist/renderer/",
+    "build": "tsc && npm run build:preload && cp src/renderer/index.html src/renderer/app.js src/renderer/audio-utils.js src/renderer/mic-worklet.js src/renderer/harnesses.js src/renderer/orb.js src/renderer/perf.js dist/renderer/",
     "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js",
     "start": "npm run build && electron dist/main/index.js",
     "dev": "npm run build && electron --inspect dist/main/index.js",
@@ -25,7 +25,9 @@
     "package:sidecars": "for s in stt tts wakeword; do bash scripts/package-sidecar.sh $s; done",
     "package:whisper": "bash scripts/stage-whisper.sh",
     "dist": "npm run build && npm run package:sidecars && npm run package:whisper && electron-builder --config electron-builder.yml",
-    "smoke:router": "npm run build && node scripts/smoke-router.js"
+    "smoke:router": "npm run build && node scripts/smoke-router.js",
+    "perf:baseline": "npm run build && node scripts/perf-baseline.js",
+    "perf:live": "npm run build && node scripts/perf-live.js"
   },
   "author": "ARIA Project <aria@localhost>",
   "homepage": "https://github.com/aria-voice/aria",

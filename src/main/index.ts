@@ -7,6 +7,7 @@ import { getSecureBackend, isSecureBackendSafe, setSecret, getSecret, deleteSecr
 import { streamChat } from './llm-stream';
 import { coordinate, cancelCoordination } from './coordinator';
 import { buildManifest, missingModels, downloadModel } from './model-manager';
+import { perfEnabled, setPerfEnabled, perfMark, perfMarkExternal } from './perf';
 import { IPC } from '../shared/ipc-channels';
 import { SidecarName } from '../shared/constants';
 
@@ -194,16 +195,25 @@ function setupIpcHandlers(): void {
   ipcMain.handle(IPC.SECURE_STORE_SET, (_e, key: string, value: string) => setSecret(key, value));
   ipcMain.handle(IPC.SECURE_STORE_DELETE, (_e, key: string) => deleteSecret(key));
 
-  ipcMain.on(IPC.LLM_SEND, (_e, payload: string | { message: string; image?: string | null }) => {
+  ipcMain.on(IPC.LLM_SEND, (_e, payload: string | { message: string; image?: string | null; turnId?: string }) => {
     const message = typeof payload === 'string' ? payload : payload.message;
     const image = typeof payload === 'string' ? null : (payload.image || null);
+    const turnId = typeof payload === 'string' ? '' : (payload.turnId || '');
+    perfMark(turnId, 'main_recv', image ? { image: 1 } : undefined);
     coordinate(message, {
       onRoute: (info) => mainWindow?.webContents.send(IPC.LLM_ROUTE, info),
       onToken: (token) => mainWindow?.webContents.send(IPC.LLM_TOKEN, token),
       onTool: (info) => mainWindow?.webContents.send(IPC.LLM_TOOL, info),
       onDone: (text) => mainWindow?.webContents.send(IPC.LLM_DONE, text),
       onError: (err) => mainWindow?.webContents.send(IPC.LLM_ERROR, err),
-    }, { image });
+    }, { image, turnId });
+  });
+
+  // Latency instrumentation (see perf.ts): the renderer asks once whether marks
+  // are enabled, then fire-and-forgets stage marks that we log in one timeline.
+  ipcMain.handle(IPC.PERF_ENABLED, () => perfEnabled());
+  ipcMain.on(IPC.PERF_MARK, (_e, m: { turn: string; stage: string; t?: number; extra?: Record<string, unknown> }) => {
+    perfMarkExternal(m);
   });
 
   // Barge-in: the renderer heard the wake word (or push-to-talk) while a reply
@@ -248,7 +258,9 @@ function setupIpcHandlers(): void {
     if (sttListening) supervisor.sendPcm('stt', buf);
   });
 
-  ipcMain.on(IPC.STT_START, async () => {
+  ipcMain.on(IPC.STT_START, async (_e, turnId?: string) => {
+    sttTurnId = turnId || '';
+    perfMark(sttTurnId, 'stt_start');
     try {
       await ensureSidecar('stt');
       supervisor.sendToSidecar('stt', { type: 'reset' });
@@ -260,11 +272,15 @@ function setupIpcHandlers(): void {
 
   ipcMain.on(IPC.STT_END, () => {
     sttListening = false;
+    perfMark(sttTurnId, 'stt_transcribe_req');
     supervisor.sendToSidecar('stt', { type: 'transcribe' });
   });
 }
 
 let sttListening = false;
+// Turn id of the in-flight voice utterance (from the renderer), so the STT
+// stage marks join the same timeline as that turn's later LLM/TTS marks.
+let sttTurnId = '';
 
 app.whenReady().then(async () => {
   supervisor = new Supervisor(
@@ -286,6 +302,11 @@ app.whenReady().then(async () => {
       mainWindow?.webContents.send(IPC.TTS_AUDIO, data);
     }
   });
+
+  // Latency instrumentation: honor either the env var (already read in perf.ts)
+  // or the persisted config flag, so it can be turned on without an env change.
+  if (config.get('debug.perf') === true) setPerfEnabled(true);
+  if (perfEnabled()) console.log('[ARIA_PERF] instrumentation ENABLED');
 
   setupIpcHandlers();
 
@@ -348,6 +369,23 @@ app.whenReady().then(async () => {
   if (SMOKE) {
     // Headless boot test: confirm the app initialized, then quit cleanly.
     console.log('[ARIA_SMOKE] app ready, window+tray+supervisor initialized');
+
+    // Live latency baseline: when ARIA_PERF_LIVE points at a (mock) endpoint,
+    // drive ONE real text turn through the genuine UI path (text box -> Enter ->
+    // submitUserMessage -> IPC -> coordinate -> streamChat) so the full
+    // cross-process [ARIA_PERF] timeline is emitted. Used by scripts/perf-live.js.
+    if (process.env.ARIA_PERF_LIVE && mainWindow) {
+      config.set('llm.endpoint', process.env.ARIA_PERF_LIVE);
+      config.set('routing.mode', 'llm');
+      setTimeout(() => {
+        mainWindow?.webContents.executeJavaScript(
+          `(function(){var ti=document.getElementById('text-input');` +
+          `document.querySelectorAll('.overlay,#onboard-overlay,#settings-overlay').forEach(function(e){e.classList.remove('visible');});` +
+          `ti.value=${JSON.stringify(process.env.ARIA_PERF_LIVE_MSG || 'what time is it')};` +
+          `ti.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));})(); true;`,
+        ).catch(() => {});
+      }, 1200);
+    }
     setTimeout(async () => {
       // Orb render benchmark (throttle-independent — times N renders).
       if (process.env.ARIA_FPS && mainWindow) {
@@ -523,6 +561,7 @@ function routeSidecarMessage(name: SidecarName, msg: Record<string, unknown>): v
   const type = msg.type as string;
   switch (type) {
     case 'stt_result':
+      perfMark(sttTurnId, 'stt_result', { chars: typeof msg.text === 'string' ? msg.text.length : 0 });
       mainWindow?.webContents.send(IPC.STT_RESULT, msg.text);
       break;
     case 'stt_partial':

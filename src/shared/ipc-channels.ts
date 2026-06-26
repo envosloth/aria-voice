@@ -38,4 +38,7 @@ export const IPC = {
   SECURE_STORE_SET: 'secure:set',
   SECURE_STORE_DELETE: 'secure:delete',
   SECURE_BACKEND: 'secure:backend',
+
+  PERF_ENABLED: 'perf:enabled',  // renderer -> main: is latency instrumentation on?
+  PERF_MARK: 'perf:mark',        // renderer -> main: a latency stage mark to log
 } as const;

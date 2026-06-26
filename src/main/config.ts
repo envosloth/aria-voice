@@ -39,6 +39,11 @@ interface AppConfig {
     theme: 'system' | 'light' | 'dark';
     onboarded: boolean;
   };
+  debug: {
+    // When true, emit [ARIA_PERF] latency stage marks (see perf.ts). Off by
+    // default — zero overhead when disabled. Also force-enableable via ARIA_PERF=1.
+    perf: boolean;
+  };
 }
 
 const defaults: AppConfig = {
@@ -82,6 +87,9 @@ const defaults: AppConfig = {
     globalShortcut: 'Super+Shift+A',
     theme: 'system',
     onboarded: false,
+  },
+  debug: {
+    perf: false,
   },
 };
 

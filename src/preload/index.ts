@@ -19,7 +19,7 @@ const api = {
   },
 
   stt: {
-    start: () => ipcRenderer.send(IPC.STT_START),
+    start: (turnId?: string) => ipcRenderer.send(IPC.STT_START, turnId || ''),
     end: () => ipcRenderer.send(IPC.STT_END),
     onResult: (cb: (text: string) => void) =>
       ipcRenderer.on(IPC.STT_RESULT, (_e, text) => cb(text)),
@@ -50,8 +50,8 @@ const api = {
   },
 
   llm: {
-    send: (message: string, image?: string | null) =>
-      ipcRenderer.send(IPC.LLM_SEND, { message, image: image || null }),
+    send: (message: string, image?: string | null, turnId?: string) =>
+      ipcRenderer.send(IPC.LLM_SEND, { message, image: image || null, turnId: turnId || '' }),
     cancel: () => ipcRenderer.send(IPC.LLM_CANCEL),
     test: (opts: { endpoint: string; model: string; apiKey?: string }) =>
       ipcRenderer.invoke(IPC.LLM_TEST, opts),
@@ -65,6 +65,15 @@ const api = {
       ipcRenderer.on(IPC.LLM_ERROR, (_e, error) => cb(error)),
     onRoute: (cb: (info: { target: string; name: string }) => void) =>
       ipcRenderer.on(IPC.LLM_ROUTE, (_e, info) => cb(info)),
+  },
+
+  // Latency instrumentation bridge (see src/main/perf.ts). `enabled()` is queried
+  // once at startup; `mark()` is fire-and-forget (ipcRenderer.send never blocks
+  // the renderer) so instrumenting the hot path can't add latency to it.
+  perf: {
+    enabled: () => ipcRenderer.invoke(IPC.PERF_ENABLED),
+    mark: (turnId: string, stage: string, extra?: Record<string, unknown>) =>
+      ipcRenderer.send(IPC.PERF_MARK, { turn: turnId, stage, t: Date.now(), extra }),
   },
 
   sidecar: {

@@ -2,6 +2,7 @@ import { config } from './config';
 import { getSecret } from './secure-storage';
 import { streamChat, LlmCallbacks, ChatMessage, ChatHandle } from './llm-stream';
 import { route, Target } from './router';
+import { perfMark } from './perf';
 
 export interface CoordinatorCallbacks extends LlmCallbacks {
   onRoute?: (info: { target: Target; name: string }) => void;
@@ -84,6 +85,7 @@ function isVisionUnsupportedError(msg: string): boolean {
  */
 export interface CoordinateOptions {
   image?: string | null; // a data: URL screen-share frame, attached to this turn
+  turnId?: string;        // latency-harness correlation id (see perf.ts)
 }
 
 export async function coordinate(
@@ -91,6 +93,7 @@ export async function coordinate(
   cb: CoordinatorCallbacks,
   opts: CoordinateOptions = {},
 ): Promise<void> {
+  const turnId = opts.turnId || '';
   const llmEndpoint = config.get('llm.endpoint') as string;
   const harnessEndpoint = config.get('harness.endpoint') as string;
   const mode = (config.get('routing.mode') as 'auto' | 'llm' | 'harness') || 'auto';
@@ -149,8 +152,13 @@ export async function coordinate(
       }
     }
 
+    perfMark(turnId, 'llm_request', { target, model });
+    let sawFirstToken = false;
     activeHandle = streamChat({ endpoint, model, apiKey, messages }, {
-      onToken: cb.onToken,
+      onToken: (token) => {
+        if (!sawFirstToken) { sawFirstToken = true; perfMark(turnId, 'first_token'); }
+        cb.onToken(token);
+      },
       onTool: cb.onTool,
       onDone: (fullText) => {
         // Remember which target answered (drives stickiness next turn) and append
@@ -158,6 +166,7 @@ export async function coordinate(
         lastTarget = target;
         if (fullText && fullText.trim()) history.push({ role: 'assistant', content: fullText });
         if (history.length > MAX_TURNS) history = history.slice(-MAX_TURNS);
+        perfMark(turnId, 'llm_done', { chars: (fullText || '').length });
         cb.onDone(fullText);
       },
       onError: (err) => {
