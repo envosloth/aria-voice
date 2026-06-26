@@ -418,6 +418,46 @@ app.whenReady().then(async () => {
       return; // skip the standard 4s auto-quit while verifying
     }
 
+    // Onboarding direct-LLM-provider verification (Item 2): drive a fresh
+    // onboarding through the new LLM step against a mock endpoint, then confirm
+    // the direct-provider config persisted. Used by scripts/smoke-onboarding-llm.js.
+    if (process.env.ARIA_VERIFY_ONBOARD && mainWindow) {
+      const ep = process.env.ARIA_VERIFY_LLM_ENDPOINT || '';
+      (async () => {
+        const wc = mainWindow!.webContents;
+        try {
+          const hasStep = await wc.executeJavaScript(`!!document.getElementById('onb-llm-endpoint')`);
+          console.log('[ARIA_VERIFY] onboarding-has-direct-llm-step=' + hasStep);
+          await wc.executeJavaScript(
+            `(function(){document.getElementById('onb-llm-endpoint').value=${JSON.stringify(ep)};` +
+            `document.getElementById('onb-llm-model').value='mock-model';` +
+            `document.getElementById('onb-llm-key').value='sk-verify-123';` +
+            `document.getElementById('onb-llm-test').click();})(); true;`,
+          );
+          await new Promise((r) => setTimeout(r, 1500));
+          const testResult = await wc.executeJavaScript(`document.getElementById('onb-llm-test-result').textContent`);
+          console.log('[ARIA_VERIFY] llm-test-result=' + JSON.stringify(testResult));
+          await wc.executeJavaScript(
+            `(function(){var n=document.getElementById('onb-next');for(var i=0;i<6;i++)n.click();})(); true;`,
+          );
+          await new Promise((r) => setTimeout(r, 600));
+          const ep2 = await wc.executeJavaScript(`aria.config.get('llm.endpoint')`);
+          const model2 = await wc.executeJavaScript(`aria.config.get('llm.model')`);
+          const key2 = await wc.executeJavaScript(`aria.secure.get('llm-api-key')`);
+          const onboarded = await wc.executeJavaScript(`aria.config.get('ui.onboarded')`);
+          console.log('[ARIA_VERIFY] persisted-llm-endpoint=' + ep2);
+          console.log('[ARIA_VERIFY] persisted-llm-model=' + model2);
+          console.log('[ARIA_VERIFY] persisted-llm-key=' + (key2 ? 'set' : 'empty'));
+          console.log('[ARIA_VERIFY] onboarded=' + onboarded);
+        } catch (e) {
+          console.log('[ARIA_VERIFY] error: ' + (e as Error).message);
+        }
+        await supervisor.stopAll();
+        app.exit(0);
+      })();
+      return;
+    }
+
     setTimeout(async () => {
       // Orb render benchmark (throttle-independent — times N renders).
       if (process.env.ARIA_FPS && mainWindow) {

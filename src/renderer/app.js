@@ -993,12 +993,18 @@ const onb = {
   key: document.getElementById('onb-key'),
   test: document.getElementById('onb-test'),
   testResult: document.getElementById('onb-test-result'),
+  llmProvider: document.getElementById('onb-llm-provider'),
+  llmEndpoint: document.getElementById('onb-llm-endpoint'),
+  llmModel: document.getElementById('onb-llm-model'),
+  llmKey: document.getElementById('onb-llm-key'),
+  llmTest: document.getElementById('onb-llm-test'),
+  llmTestResult: document.getElementById('onb-llm-test-result'),
   mic: document.getElementById('onb-mic'),
   micResult: document.getElementById('onb-mic-result'),
   wake: document.getElementById('onb-wake'),
 };
 let onbStep = 0;
-const ONB_LAST = 4;
+const ONB_LAST = 5;
 
 // Build step dots + provider dropdown
 onb.steps.forEach(() => {
@@ -1011,6 +1017,39 @@ for (const h of window.AriaHarnesses.HARNESSES) {
   o.value = h.id; o.textContent = h.name;
   onb.harness.appendChild(o);
 }
+
+// Direct conversational-LLM provider step: same preset list as Settings. Picking
+// a provider pre-fills its endpoint + default model (both stay editable).
+for (const p of window.AriaHarnesses.PROVIDERS) {
+  const o = document.createElement('option');
+  o.value = p.id; o.textContent = p.name;
+  onb.llmProvider.appendChild(o);
+}
+function onbApplyLlmProvider() {
+  const p = window.AriaHarnesses.providerById(onb.llmProvider.value);
+  if (!p) return;
+  // Local providers ignore the key; hint that it's optional for them.
+  onb.llmKey.placeholder = p.keyHint || 'optional';
+  if (p.endpoint) onb.llmEndpoint.value = p.endpoint;
+  if (p.defaultModel) onb.llmModel.value = p.defaultModel;
+}
+onb.llmProvider.addEventListener('change', onbApplyLlmProvider);
+
+// Test the direct-LLM connection: one short round-trip via the same LLM_TEST
+// path the harness step uses, but with the LLM endpoint/model/key.
+onb.llmTest.addEventListener('click', async () => {
+  const endpoint = onb.llmEndpoint.value.trim();
+  if (!endpoint) { onb.llmTestResult.textContent = 'Enter an endpoint first'; onb.llmTestResult.className = 'err-msg'; return; }
+  onb.llmTest.disabled = true;
+  onb.llmTestResult.textContent = 'Testing…';
+  onb.llmTestResult.className = '';
+  if (onb.llmKey.value.trim()) await aria.secure.set('llm-api-key', onb.llmKey.value.trim());
+  const apiKey = await aria.secure.get('llm-api-key');
+  const r = await aria.llm.test({ endpoint, model: onb.llmModel.value.trim(), apiKey });
+  if (r.ok) { onb.llmTestResult.textContent = '✓ Connected'; onb.llmTestResult.className = 'ok-msg'; }
+  else { onb.llmTestResult.textContent = '✕ ' + (r.error || 'failed'); onb.llmTestResult.className = 'err-msg'; }
+  onb.llmTest.disabled = false;
+});
 
 function onbSelectedHarness() {
   return window.AriaHarnesses.byId(onb.harness.value) || window.AriaHarnesses.byId('custom');
@@ -1072,12 +1111,22 @@ onb.mic.addEventListener('click', async () => {
 });
 
 async function onbFinish() {
-  // Onboarding configures the agent harness (the primary target). A separate
-  // conversational LLM is optional, set later in Settings.
-  await aria.config.set('harness.id', onb.harness.value);
-  await aria.config.set('harness.endpoint', onbResolveEndpoint());
-  await aria.config.set('harness.model', onb.model.value.trim());
-  if (onb.key.value.trim()) await aria.secure.set('harness-api-key', onb.key.value.trim());
+  // Onboarding configures the agent harness (tool-using tasks) and/or a direct
+  // conversational LLM provider — either or both. Only persist a target whose
+  // endpoint was actually filled in, so skipping one doesn't overwrite the other.
+  const harnessEp = onbResolveEndpoint();
+  if (harnessEp) {
+    await aria.config.set('harness.id', onb.harness.value);
+    await aria.config.set('harness.endpoint', harnessEp);
+    await aria.config.set('harness.model', onb.model.value.trim());
+    if (onb.key.value.trim()) await aria.secure.set('harness-api-key', onb.key.value.trim());
+  }
+  const llmEp = onb.llmEndpoint.value.trim();
+  if (llmEp) {
+    await aria.config.set('llm.endpoint', llmEp);
+    await aria.config.set('llm.model', onb.llmModel.value.trim());
+    if (onb.llmKey.value.trim()) await aria.secure.set('llm-api-key', onb.llmKey.value.trim());
+  }
   await aria.config.set('ui.onboarded', true);
   onb.overlay.classList.remove('visible');
 }
@@ -1095,6 +1144,9 @@ onb.skip.addEventListener('click', async () => {
   onb.wake.textContent = '"' + phrase.replace(/_/g, ' ') + '"';
   if (!onboarded) {
     onbApplyHarness();
+    // Default the LLM provider to "custom" so the step starts empty (and stays
+    // optional — a blank endpoint is skipped on finish). Picking a preset fills it.
+    onb.llmProvider.value = 'custom';
     onbStep = 0;
     onbRender();
     onb.overlay.classList.add('visible');

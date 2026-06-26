@@ -142,7 +142,41 @@ Verification:
   cost is paid off the user's next turn (sidecar re-warms in the background).
 
 ## Item 2: Setup guide is missing direct LLM provider configuration
-Status: not-started
+Status: done
+Findings: The first-run onboarding (`onboard-overlay` in index.html + `onb` logic
+in app.js) had 5 steps (welcome, agent harness, harness API key, mic, done) and
+`onbFinish` only persisted the agent HARNESS (`harness.*` + `harness-api-key`). A
+direct conversational LLM provider (`llm.endpoint`/`llm.model`/`llm-api-key`) could
+only be set later in Settings — exactly the gap reported.
+
+Fix (files touched):
+- `src/renderer/index.html`: inserted a new onboarding step (data-step=3) "Add a
+  language model" — provider `<select>`, endpoint, model, password key, and a
+  "Test connection" button + result span. Renumbered mic->4, done->5.
+- `src/renderer/app.js`:
+  - registered the new fields on `onb`; bumped `ONB_LAST` 4->5.
+  - populated the provider dropdown from the shared `PROVIDERS` presets (same list
+    Settings uses); picking a preset pre-fills endpoint + default model (editable).
+  - added a Test-connection handler using the existing `aria.llm.test` path with
+    the LLM endpoint/model/key.
+  - `onbFinish` now persists harness AND/OR direct-LLM config, each only when its
+    endpoint is filled (so configuring one doesn't wipe the other). The LLM step
+    defaults to the "custom" (empty) preset on first run, so it's truly optional —
+    a blank endpoint is skipped.
+- Verification hook `ARIA_VERIFY_ONBOARD` in `src/main/index.ts` +
+  `scripts/smoke-onboarding-llm.js` (`npm run smoke:onboarding`).
+
+Verification:
+- `npm run smoke:onboarding` (fresh app, isolated --user-data-dir, mock endpoint):
+  all 6 checks PASS — onboarding HAS the direct-LLM step; Test connection returns
+  "✓ Connected" against the mock; and after finishing, `llm.endpoint`/`llm.model`/
+  `llm-api-key` are all persisted and `ui.onboarded=true` — i.e. a fresh run-through
+  reaches a working direct-provider config without opening Settings.
+- `npm run typecheck` clean; `npm run build` clean.
+- Latency: onboarding is first-run UI, off the interaction hot path — no impact.
+
+Found but not in scope (now in scope for Item 3): the provider preset list lacks a
+vLLM entry; Ollama/LM Studio presets exist and are now reachable from setup.
 
 ## Item 3: No support for fully local LLM providers (Ollama, LM Studio, vLLM)
 Status: not-started

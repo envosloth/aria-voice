@@ -578,8 +578,30 @@
         <span id="onb-test-result"></span>
       </div>
 
-      <!-- Step 3: Microphone -->
+      <!-- Step 3: Direct LLM provider (conversational model) -->
       <div class="onboard-step" data-step="3" hidden>
+        <h2>Add a language model <span style="color:var(--text-muted);font-size:14px;">(recommended)</span></h2>
+        <p>Connect a conversational LLM directly with your own API key — or a local
+        server like Ollama or LM Studio. This answers everyday questions; the agent
+        harness handles tool-using tasks. Set one or both; leave blank to skip.</p>
+        <label>Provider
+          <select id="onb-llm-provider"></select>
+        </label>
+        <label>Endpoint URL
+          <input type="url" id="onb-llm-endpoint" placeholder="https://api.provider.com/v1/chat/completions">
+        </label>
+        <label>Model
+          <input type="text" id="onb-llm-model" placeholder="model name">
+        </label>
+        <label>API Key <span style="color:var(--text-muted);font-size:13px;">(optional for local servers)</span>
+          <input type="password" id="onb-llm-key" placeholder="sk-...">
+        </label>
+        <button id="onb-llm-test" class="onboard-secondary">Test connection</button>
+        <span id="onb-llm-test-result"></span>
+      </div>
+
+      <!-- Step 4: Microphone -->
+      <div class="onboard-step" data-step="4" hidden>
         <h2>Microphone access</h2>
         <p>ARIA listens for a wake word and your voice. Grant microphone access
         so it can hear you. You can always type instead.</p>
@@ -587,8 +609,8 @@
         <span id="onb-mic-result"></span>
       </div>
 
-      <!-- Step 4: Done -->
-      <div class="onboard-step" data-step="4" hidden>
+      <!-- Step 5: Done -->
+      <div class="onboard-step" data-step="5" hidden>
         <div class="onboard-logo">✅</div>
         <h2>You're all set</h2>
         <p>Say <b id="onb-wake">"hey jarvis"</b> or press the mic button to talk.
