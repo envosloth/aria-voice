@@ -4,9 +4,16 @@
 > Those files are now historical; this file is canonical going forward.
 
 ## Current Status (overwrite each iteration)
-Run #: 1 | Iteration #: 3 | Last benchmark: TTS first-chunk -350 to -490ms on clause-leading replies | Last change: split first sentence at first clause boundary | Verified?: yes
-Biggest bottleneck: TTS first-chunk floor for COMMA-LESS single sentences (~600-800ms kokoro, inherent) + run-to-run variance; the clause-split cannot shorten a comma-less opener
-Next target: PLATEAU CHECK — remaining local-latency levers are higher-risk/lower-yield. Lean toward stopping (§12) and running the §13 ship gate. Candidates left: real-provider latency baseline (needs a live provider); TTS engine/quant alternatives (need audio QA, can't verify by ear here).
+Run #: 1 | Iteration #: 3 (+ ship gate) | Status: RUN COMPLETE — priority items cleared, §13 ship gate PASSED, v2.0.1 installers built & smoke-tested | Verified?: yes
+Last benchmark: STT 953→~450ms (e2e) | TTS first-chunk -350 to -490ms on clause-leading replies | direct-LLM tools 1→0 (invariant restored)
+Biggest remaining bottleneck (for NEXT run): TTS first-chunk floor for COMMA-LESS single sentences (~600-800ms kokoro, inherent) + run-to-run jitter — see BACKLOG.
+Next target (NEXT run): TTS comma-less floor (needs audio QA) OR real-provider latency baseline (needs a live provider). Both blocked on resources unavailable this run.
+
+## Ship artifacts (Run 1, v2.0.1 — local build, NOT released)
+- dist-installers/ARIA-2.0.1-x86_64.AppImage (259 MB)
+- dist-installers/aria_2.0.1_amd64.deb (211 MB)
+- Frozen sidecars: build/sidecars/{stt,tts,wakeword} (re-frozen 17:04 with iter-2/3 changes)
+- NOT pushed / NOT tagged / NOT released (per harness: only on explicit user request).
 
 ## Pre-loop baseline (from Item 0 harness, prior loop)
 - App-side pre-network overhead: ~3ms, TTFT-independent (user_input → llm_request).
@@ -28,13 +35,21 @@ Harness commands: `npm run perf:baseline`, `npm run perf:live [ttftMs]`, `npm ru
 
 ## History (append-only, newest first)
 
+### Run 1 Ship Gate (§13) — 2026-06-26
+Stopped after iter 3: priority items cleared (KNOWN ISSUE routing fix + top two TTFA bottlenecks STT/TTS), remaining backlog items lower-yield/higher-risk or blocked on unavailable resources (live provider, audio QA). Not a plateau-by-failure — all 3 iters were measurable wins; stopped per §12 "all priority items clear → proceed to §13".
+1. Full regression suite: `npm run smoke:all` PASS — 10/10 green (lifecycle, tts, stt, resilience, pdeathsig, memory, llm, router, models, audio, e2e). NOTE: smoke:e2e is jitter-sensitive at the kokoro LOCAL budget (1300ms); it passed this run and passes most runs post-STT-fix, but can flake on a TTS first-chunk spike — functional pipeline (transcription+reply+audio) is correct every run; only the latency-budget assertion is jittery. Logged in BACKLOG.
+2. Production build: `npm run dist` (version bumped 2.0.0→2.0.1) → electron-builder produced ARIA-2.0.1-x86_64.AppImage + aria_2.0.1_amd64.deb in dist-installers/. Sidecars re-frozen via PyInstaller (stt/tts/wakeword) with the iter-2/3 changes; whisper staged.
+3. Packaged smoke-test: (a) FROZEN sidecars (ARIA_SIDECAR_DIR=build/sidecars) — smoke:e2e PASS (STT 403ms confirms base.en is in the frozen binary; full STT→routing→TTS round-trip), smoke:tts PASS (clause-split). (b) AppImage headless boot (APPIMAGE_EXTRACT_AND_RUN=1 ARIA_SMOKE=1) — exit 0, `app ready, window+tray+supervisor initialized`, wakeword `initialized`+`ready` (hey_jarvis model), `[ARIA_SMOKE] OK`, NO genuine startup errors (only documented benign CUDA/dbus/jarvis-fallback warnings).
+4. No P1 packaged-build failures.
+Net run result: routing invariant restored (correctness); voice critical path materially faster — STT −451ms (953→502, frozen 403ms) and first-audio −350..490ms on clause-leading replies; v2.0.1 installers verified.
+
 ### Iter 3 — 2026-06-26
 Bottleneck: TTS first-chunk latency (kokoro). Measured (§4): kokoro synth is ~0.26x realtime, scales linearly with text length; the first audio chunk waits for the ENTIRE first sentence (~600ms warm for a 7-word sentence, spiking to ~825ms under load). Ruled out: cold-start (3 consecutive ~825ms; warmup already exists via _warmup_kokoro "Ready."), idle-threadpool-spindown (idle gap gave 592-797ms, no clean correlation — it's inherent CPU jitter), ONNX thread tuning (kokoro_onnx creates InferenceSession with default threads, no clean hook). Only lever: emit a shorter first unit.
 Change: `sidecars/tts/main.py` — new `_chunks_for()` splits the FIRST sentence at its first clause boundary (comma/semicolon/colon/dash — natural pauses kokoro already renders as pauses, so prosody-safe), only when the first sentence is ≥20 chars and both head (≥4) and tail (≥6) are substantial. Only the first sentence is split (into ≤2 parts); the rest stay whole for smooth prosody + to avoid create() overhead on fragments.
 Before/After (measured through the real sidecar, time-to-first-tts_chunk): "Sure, it is currently sunny in Austin today." 845→358ms (-487ms); "According to the latest forecast, ..." 992→643ms (-349ms); "Well, ..." ~690→~296ms (-394ms). Comma-less sentences UNCHANGED: "I heard you say the test numbers." stays 1 chunk (zero regression).
 Gate: pass. smoke:tts PASS (byte-accounting exact, 3 chunks — short opener "Hello from ARIA." <20 chars stays whole), smoke:e2e PASS this run (comma-less reply unaffected; STT 401ms + TTS 763ms = 1164 < 1300), smoke:routing-invariant PASS. No build needed (Python sidecar).
 Honest scope note: this improves real-world TTFA for clause-leading replies (very common: "Sure,", "Well,", "According to ...,") but does NOT change the comma-less e2e benchmark sentence, so it does not resolve the e2e budget flakiness (that's kokoro's inherent single-sentence floor + jitter, logged in BACKLOG). It targets the mission metric (speech→first audio), not the benchmark.
-Outcome: kept. Commit: <pending>.
+Outcome: kept. Commit: e5f0b2a.
 
 ### Iter 2 — 2026-06-26
 Bottleneck: STT latency. e2e LOCAL budget OVER; measured the STT sidecar (whisper-server, Vulkan, RX 9060 XT) at ~810ms warm inference for a short utterance (953ms in e2e incl. 100ms flush + overhead). Verified it is NOT cold-start (3 consecutive transcribes all ~825ms) and NOT CPU fallback (Vulkan0 backend confirmed in server log). Whisper encodes a fixed 30s window, so cost is model-size-bound.
