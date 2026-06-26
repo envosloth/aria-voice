@@ -10,10 +10,15 @@ export type Target = 'llm' | 'harness';
 const EXPLICIT_HARNESS = /\b(use|using|ask|via|with|through)\s+(the\s+)?(agent|harness|coder?|codex|claude\s*code)\b|^\s*(agent|harness)[,:]/i;
 const EXPLICIT_LLM = /\b(just\s+(chat|talk|answer)|no\s+(agent|harness|code)|don'?t\s+use\s+the\s+(agent|harness))\b/i;
 
-// Agentic-intent keywords (coding / files / system) AND real-time/tool intent
-// (live data the harness can fetch via tools, which a plain LLM cannot). The
-// real-time group fixes the "give me the weather -> go ask Alexa" failure: such
-// queries need tools, so they belong on the harness.
+// Agentic-intent keywords (coding / files / system) AND tool/real-time intent
+// (live data or device actions the harness can do via tools, which a plain chat
+// LLM cannot). Matched anywhere in the message. Deliberately broad: for a voice
+// assistant, when a request plausibly needs a tool we prefer the tool-capable
+// harness over the chat LLM — the old narrow list is what let clear tool
+// requests ("what time is it", "set a timer", "will it rain tomorrow") fall
+// through to the direct LLM. Ambiguous VERBS (open/play/send/…) live in ACTION
+// below (start-anchored) so conversational filler ("in order to", "note that")
+// doesn't trip them.
 const AGENTIC = new RegExp(
   '\\b(' + [
     // coding / files / system
@@ -21,19 +26,53 @@ const AGENTIC = new RegExp(
     'implement', 'implementation', 'function', 'class', 'method', 'variable',
     'file', 'files', 'directory', 'folder', 'repo', 'repository', 'commit', 'branch',
     'pull request', 'merge', 'diff', 'git',
-    'run', 'execute', 'build', 'compile', 'deploy', 'install', 'script', 'command',
+    'run', 'execute', 'build', 'compile', 'deploy', 'install', 'uninstall', 'script', 'command',
     'terminal', 'shell', 'test', 'tests', 'lint', 'package', 'dependency',
     'api', 'endpoint', 'database', 'query', 'sql', 'server', 'docker',
     'edit', 'rename', 'delete', 'create a', 'write a', 'add a',
-    // real-time / tools (needs live data or actions a plain LLM cannot do)
-    'weather', 'forecast', 'temperature', 'humidity', 'raining',
-    'news', 'headlines', 'stock', 'crypto', 'price of', 'exchange rate',
-    'score', 'scores', 'search for', 'look up', 'lookup', 'google',
-    'browse', 'website', 'email', 'calendar', 'schedule a', 'remind me',
-    'open the', 'screen', 'screenshot', 'what.s on my',
+    // weather / environment (live)
+    'weather', 'forecast', 'temperature', 'humidity', 'raining', 'rain', 'snow',
+    'sunny', 'cloudy', 'windy', 'storm', 'umbrella', 'sunrise', 'sunset',
+    'uv index', 'air quality', 'pollen',
+    // time / date (live)
+    'what time', 'time is it', 'what day', 'what.s the date', 'todays date',
+    "today's date", 'date today', 'current time',
+    // news / finance / sports (live)
+    'news', 'headlines', 'stock', 'stocks', 'shares', 'market', 'crypto',
+    'bitcoin', 'ethereum', 'price of', 'how much is', 'exchange rate', 'currency',
+    'score', 'scores', 'who won', 'standings',
+    // search / web / research
+    'search', 'search for', 'look up', 'lookup', 'google', 'bing', 'wikipedia',
+    'browse', 'website', 'on the internet',
+    // navigation / places (live)
+    'directions', 'navigate', 'route to', 'nearest', 'nearby', 'near me',
+    'traffic', 'how far', 'how long to get',
+    // device / system actions
+    'volume', 'brightness', 'mute', 'flashlight', 'wifi', 'bluetooth',
+    'battery', 'screenshot', 'screen', 'what.s on my',
+    // comms / productivity
+    'email', 'inbox', 'whatsapp', 'slack', 'calendar', 'meeting', 'appointment',
+    'schedule a', 'remind me', 'reminder', 'set a timer', 'set an alarm',
+    'alarm', 'timer', 'shopping list', 'add to my',
+    // conversions / utilities / commerce
+    'convert', 'how many', 'translate', 'translation', 'calculate',
+    'book a', 'place an order', 'reserve a',
   ].join('|') + ')\\b',
   'i',
 );
+
+// Strong real-time signals: when present, the answer depends on the live world,
+// so it needs tools -> harness. Kept tight (no bare "today"/"tonight") so casual
+// pleasantries like "how are you today" aren't misrouted.
+const REALTIME =
+  /\b(right now|currently|the latest|up[- ]?to[- ]?date|near me|nearby|around here|this (week|weekend|month|year)|what time|what'?s the time|what day|what'?s the date)\b/i;
+
+// Imperative device/tool actions at the START of the message -> harness. Limited
+// to verbs that imply DOING something (not "tell/explain/describe/what/how",
+// which are conversational), and start-anchored so they don't match mid-sentence
+// filler.
+const ACTION =
+  /^\s*(open|launch|play|pause|resume|skip|mute|unmute|turn|set|send|call|text|email|remind|schedule|book|order|buy|reserve|navigate|download|install|update|upgrade|enable|disable|check|find|search|look up|show me|get me|pull up|bring up|take a)\b/i;
 
 export interface RouteConfig {
   mode: 'auto' | 'llm' | 'harness';
@@ -68,7 +107,7 @@ export function route(message: string, cfg: RouteConfig): Target {
   const text = message || '';
   if (EXPLICIT_LLM.test(text)) return 'llm';
   if (EXPLICIT_HARNESS.test(text)) return 'harness';
-  if (AGENTIC.test(text)) return 'harness';
+  if (AGENTIC.test(text) || REALTIME.test(text) || ACTION.test(text)) return 'harness';
   // Stickiness: if the agent harness handled the previous turn, keep this turn on
   // the harness when it's a continuation — either a short follow-up OR an answer
   // to a question the harness just asked (e.g. it asked "where are you?" and the

@@ -43,5 +43,32 @@ check('llm-no-sticky', route('Austin, Texas', { ...both, lastTarget: 'llm' }), '
 // A long answer to a harness question still goes to the harness (lastWasQuestion)
 check('answer-to-question', route('I am currently located in Austin, Texas in the United States', { ...both, lastTarget: 'harness', lastWasQuestion: true }), 'harness');
 
+// --- Expanded tool-intent recall (the "handed to the LLM when a tool was clearly
+// needed" complaint). These all need a tool/live data -> harness. ---
+check('what-time', route('what time is it', both), 'harness');
+check('todays-date', route("what's today's date", both), 'harness');
+check('rain-tomorrow', route('will it rain tomorrow', both), 'harness');
+check('set-timer', route('set a timer for 10 minutes', both), 'harness');
+check('set-alarm', route('set an alarm for 7am', both), 'harness');
+check('play-music', route('play some jazz', both), 'harness');
+check('open-app', route('open spotify', both), 'harness');
+check('remind', route('remind me to call mom at noon', both), 'harness');
+check('bitcoin-now', route('how much is bitcoin right now', both), 'harness');
+check('directions', route('directions to the airport', both), 'harness');
+check('latest', route("what's the latest on the election", both), 'harness');
+check('translate', route('translate good morning into Spanish', both), 'harness');
+check('convert', route('convert 10 miles to kilometers', both), 'harness');
+check('send-text', route('send a text to Alex', both), 'harness');
+check('calendar', route("what's on my calendar today", both), 'harness');
+check('nearby', route('find a coffee shop near me', both), 'harness');
+
+// --- Still conversational -> llm (must NOT over-route to the harness). ---
+check('joke', route('tell me a joke', both), 'llm');
+check('capital', route('what is the capital of France', both), 'llm');
+check('how-today', route('how are you today', both), 'llm');
+check('opinion', route('what do you think about jazz music', both), 'llm');
+check('explain', route('explain how photosynthesis works', both), 'llm');
+check('in-order-to', route('in order to learn, what should I read about history', both), 'llm');
+
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

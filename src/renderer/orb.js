@@ -178,15 +178,19 @@
     let ppMin = 1e9, ppMax = -1e9;
     for (let k = 0; k < NPTS; k++) {
       const sp = sinPhi[k];
-      // Speaking-only surface ripple: two low-frequency travelling waves over the
-      // sphere give an organic, non-jittery deformation that tracks the voice.
-      // dAmp is 0 outside speaking, so idle/listening/thinking stay perfectly
-      // smooth true spheres.
+      // Speaking-only surface swell: a few LOW-frequency waves in (latitude,
+      // longitude) that drift slowly over time. Because they're smooth functions
+      // of position (no per-vertex randomness), neighbouring vertices move
+      // together — the orb rolls and bulges like a soft blob instead of spiking
+      // into points. dAmp is 0 outside speaking, so other states stay perfectly
+      // round spheres.
       let rk = r;
       if (dAmp > 0.0005) {
-        const wob = Math.sin(phiArr[k] * 3.0 + t * 3.1 + seed[k] * 6.2)
-                  + Math.sin(thArr[k] * 2.0 - t * 2.3 + seed[k] * 2.7);
-        rk = r * (1 + dAmp * wob * 0.5);
+        const ph = phiArr[k], th = thArr[k];
+        const wob = Math.sin(th * 2 + t * 1.6) * sp         // equatorial roll, eased to 0 at the poles
+                  + Math.sin(ph * 2 - t * 1.2)               // pole-to-pole undulation
+                  + 0.6 * Math.sin(th + ph * 2 + t * 0.8);   // slow diagonal swell
+        rk = r * (1 + dAmp * wob * 0.4);
       }
       const x = rk * sp * cosTh[k];
       const y = rk * cosPhi[k];
@@ -266,7 +270,7 @@
         const front = (pp[k] - ppMin) / ppRange;
         if (front < 0.5) continue;          // near hemisphere only
         if (front < d0 || (front >= d1 && !last)) continue;
-        const rr = (1.0 + react * 1.8 + dc * 1.0) * pp[k];
+        const rr = (1.0 + react * 0.9 + dc * 1.0) * pp[k];
         ctx.moveTo(px[k] + rr, py[k]);
         ctx.arc(px[k], py[k], rr, 0, TWO_PI);
       }
