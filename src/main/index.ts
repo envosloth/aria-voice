@@ -435,6 +435,8 @@ function applyConfigToEnv(): void {
   process.env.ARIA_TTS_ENGINE = (config.get('tts.engine') as string) || 'kokoro';
   process.env.ARIA_TTS_VOICE = (config.get('tts.voice') as string) || 'bm_george';
   process.env.ARIA_WAKEWORD_MODEL = (config.get('wakeword.phrase') as string) || 'hey_jarvis';
+  const wwThreshold = config.get('wakeword.threshold');
+  if (typeof wwThreshold === 'number') process.env.ARIA_WAKEWORD_THRESHOLD = String(wwThreshold);
 
   // Point the STT sidecar at the bundled whisper.cpp (binaries + libs) when the
   // app is packaged, so it works without a local whisper.cpp install.
@@ -462,6 +464,8 @@ function scheduleWakewordReload(): void {
 async function applyWakewordConfig(): Promise<void> {
   if (SMOKE || !supervisor) return;
   process.env.ARIA_WAKEWORD_MODEL = (config.get('wakeword.phrase') as string) || 'hey_jarvis';
+  const wwThreshold = config.get('wakeword.threshold');
+  if (typeof wwThreshold === 'number') process.env.ARIA_WAKEWORD_THRESHOLD = String(wwThreshold);
   try {
     if (config.get('wakeword.enabled')) await supervisor.restart('wakeword');
     else await supervisor.stop('wakeword');

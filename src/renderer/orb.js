@@ -294,17 +294,31 @@
     }
   }
 
-  // Frame-rate cap per state. idle + speaking run uncapped (native refresh, so
-  // the constant rotation is buttery smooth); listening/processing cap at ~60
-  // FPS — still smooth, but leaves some GPU headroom for whisper's Vulkan STT
-  // while it runs. (The old ~30 FPS cap is what made the rotation look choppy.)
-  const STATE_MIN_MS = { idle: 0, listening: 16, processing: 16, speaking: 0 };
+  // Frame-rate cap per state. Every state is capped now: running the heavy mesh
+  // render UNCAPPED at the display's native refresh (144/165/240 Hz) pegged a CPU
+  // core at 80-100% and could crash the app — and a slow constant rotation looks
+  // identical at 30 FPS because the spin is dt-scaled (same angular speed, just
+  // fewer frames). speaking gets a higher cap so the voice-driven surface ripple
+  // stays smooth. The rotation no longer needs native refresh to look right.
+  const STATE_MIN_MS = { idle: 33, listening: 33, processing: 33, speaking: 22 };
+  // When the window isn't focused (ARIA living in the background, common for a
+  // voice assistant) drop to ~5 FPS regardless of state — nobody's watching the
+  // orb, so there's no reason to burn CPU repainting it. document.hidden already
+  // makes rAF stop, but a VISIBLE-but-unfocused window keeps animating at full
+  // rate; this is what catches that case.
+  const BLUR_MIN_MS = 200;
+  let windowFocused = (typeof document === 'undefined') || document.hasFocus();
   let lastRenderAt = 0;
 
   let fpsVisible = false, fpsCount = 0, fpsLast = 0, fpsValue = 0;
   let renderWarned = false;
   function loop(now) {
-    const minMs = STATE_MIN_MS[state] || 0;
+    // Throttle to ~5 FPS in the background, EXCEPT while speaking — the
+    // voice-driven ripple is the signature visual and speaking is short-lived, so
+    // keep it smooth even if the window isn't focused. Idle/listening/processing
+    // in the background (the always-on drain) drop to 5 FPS.
+    const blurred = !windowFocused && state !== 'speaking';
+    const minMs = blurred ? BLUR_MIN_MS : (STATE_MIN_MS[state] || 33);
     if (now - lastRenderAt >= minMs) {
       lastRenderAt = now;
       // A single bad frame (e.g. a transient state during a resize) must never
@@ -342,8 +356,14 @@
     }
     // Re-resize when the window is shown again or regains focus / changes DPR
     // (e.g. dragged to another monitor) so the backing store never goes stale.
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) resize(); });
-    window.addEventListener('focus', resize);
+    document.addEventListener('visibilitychange', () => {
+      windowFocused = !document.hidden && document.hasFocus();
+      if (!document.hidden) resize();
+    });
+    // Track focus so the loop can throttle to ~5 FPS in the background. Resize on
+    // focus regain too (DPR/monitor may have changed while hidden).
+    window.addEventListener('focus', () => { windowFocused = true; resize(); });
+    window.addEventListener('blur', () => { windowFocused = false; });
     window.addEventListener('pageshow', resize);
     // Settle initial sizing across a couple of frames in case layout isn't final.
     requestAnimationFrame(resize);

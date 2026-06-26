@@ -91,7 +91,7 @@ async function submitUserMessage(rawText) {
   addMessage('user', text);
   if (await handleScreenCommand(text)) return;
   orbState('processing');
-  const image = isSharing() ? await captureScreenFrame() : null;
+  const image = shouldAttachScreen(text) ? await captureScreenFrame() : null;
   aria.llm.send(text, image);
   armThinkingHold(text);
 }
@@ -191,8 +191,9 @@ function stopScreenShare() {
 
 // Grab one desktop frame as a downscaled JPEG data URL (small + fast). Async:
 // ImageCapture.grabFrame() resolves an ImageBitmap we draw once. Downscaled to
-// 1024px @ 0.5 quality — enough for the agent to read the screen while keeping
-// the base64 payload (and the vision model's processing time) small.
+// 768px @ 0.45 quality — still readable for the agent, but ~half the pixels of
+// the old 1024px frame, which roughly halves the vision model's token/processing
+// cost (the main lever on the "10+ seconds in screen-share mode" latency).
 async function grabFrameDataUrl() {
   try {
     let srcW, srcH, drawable;
@@ -202,14 +203,14 @@ async function grabFrameDataUrl() {
     } else if (screenVideo && screenVideo.videoWidth) {
       srcW = screenVideo.videoWidth; srcH = screenVideo.videoHeight; drawable = screenVideo;
     } else { return null; }
-    const maxW = 1024;
+    const maxW = 768;
     const scale = Math.min(1, maxW / srcW);
     const cw = Math.max(1, Math.round(srcW * scale));
     const ch = Math.max(1, Math.round(srcH * scale));
     screenCanvas.width = cw; screenCanvas.height = ch;
     screenCanvas.getContext('2d').drawImage(drawable, 0, 0, cw, ch);
     if (drawable.close) drawable.close(); // free the ImageBitmap
-    return screenCanvas.toDataURL('image/jpeg', 0.5);
+    return screenCanvas.toDataURL('image/jpeg', 0.45);
   } catch (e) {
     return null;
   }
@@ -235,6 +236,24 @@ async function captureScreenFrame() {
   ]);
   if (url) screenFrameCache = url;
   return url;
+}
+
+// While sharing, the desktop frame is attached so ARIA can see the screen — but
+// some asks are plainly non-visual (weather, time, news, timers). Sending a
+// screenshot with those forces the slow vision/agent path for no reason, which
+// is what made EVERY turn take ~10s while sharing. Skip the frame for those;
+// anything that might reference the screen still gets it.
+//   - a strong visual reference always attaches (even over a non-visual keyword),
+//   - a clearly non-visual ask skips,
+//   - everything else defaults to attaching (sharing means "look at my screen").
+const SCREEN_STRONG_RE = /\b(?:on (?:my|the) (?:screen|display|monitor)|what'?s on|screen|display|monitor|highlighted|selected|look at (?:this|that|the)|read (?:this|that|the)|see (?:this|that)|this (?:page|window|tab|error|code|screen|image|chart|graph))\b/i;
+const SCREEN_NONVISUAL_RE = /\b(?:weather|forecast|temperature|umbrella|what time|time is it|what'?s the time|what day|what'?s the date|the news|headlines|stock price|set (?:a|an) (?:timer|alarm)|remind me|reminder|tell me a joke|how do you spell|define|translate)\b/i;
+function shouldAttachScreen(text) {
+  if (!isSharing()) return false;
+  const t = (text || '').toLowerCase();
+  if (SCREEN_STRONG_RE.test(t)) return true;     // explicit screen reference -> attach
+  if (SCREEN_NONVISUAL_RE.test(t)) return false; // clearly non-visual -> stay on fast path
+  return true;                                   // default while sharing: attach
 }
 
 async function toggleScreenShare() {
@@ -643,9 +662,13 @@ function stopPlayback(cancelSidecar) {
 let ttsAnalyser = null;
 const _analyserBuf = new Float32Array(1024);
 
-// Continuously sample the TTS analyser and feed the orb. Cheap; runs via rAF.
+// Sample the TTS analyser and feed the orb WHILE audio is playing. Gated on
+// active sources: the analyser is created once and never torn down, so without
+// this guard the 1024-sample RMS ran every frame at the display's native refresh
+// forever — a second always-on CPU drain next to the orb. When nothing is
+// playing this is now just a cheap reschedule.
 function pollTtsLevel() {
-  if (ttsAnalyser && window.AriaOrb) {
+  if (ttsSources.length && ttsAnalyser && window.AriaOrb) {
     ttsAnalyser.getFloatTimeDomainData(_analyserBuf);
     let sum = 0;
     for (let i = 0; i < _analyserBuf.length; i++) sum += _analyserBuf[i] * _analyserBuf[i];

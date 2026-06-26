@@ -26,12 +26,24 @@ class WakewordSidecar(BaseSidecar):
     def __init__(self):
         super().__init__("wakeword")
         self.model = None
-        self.threshold = float(os.environ.get("ARIA_WAKEWORD_THRESHOLD", "0.5"))
+        # 0.4 (was 0.5) — more sensitive so a normally-spoken wake word isn't
+        # missed. False positives are bounded by the post-detection cooldown
+        # below and openWakeWord's own per-frame confidence.
+        self.threshold = float(os.environ.get("ARIA_WAKEWORD_THRESHOLD", "0.4"))
         # Used when the typed phrase is only a SUB-phrase of the closest bundled
         # model (e.g. "jarvis" vs the "hey jarvis" model). The model is trained
         # on the full phrase, so we lower the bar to let the shorter spoken
         # phrase trigger it.
-        self.partial_threshold = float(os.environ.get("ARIA_WAKEWORD_PARTIAL_THRESHOLD", "0.35"))
+        self.partial_threshold = float(os.environ.get("ARIA_WAKEWORD_PARTIAL_THRESHOLD", "0.3"))
+        # Silero VAD gate. openWakeWord suppresses a detection whose VAD speech
+        # score is below this — at the old 0.5 it swallowed quietly/quickly spoken
+        # wake words (the main "unreliable" complaint). Lowered so real speech
+        # isn't gated out; the wake-word model itself still does the discriminating.
+        self.vad_threshold = float(os.environ.get("ARIA_WAKEWORD_VAD_THRESHOLD", "0.2"))
+        # After a detection, ignore further detections for this long so one spoken
+        # wake word can't double-fire as its score lingers above threshold.
+        self.cooldown_s = float(os.environ.get("ARIA_WAKEWORD_COOLDOWN", "1.5"))
+        self._last_detect = 0.0
         self._np = None
         self._buffer = bytearray()
 
@@ -48,7 +60,7 @@ class WakewordSidecar(BaseSidecar):
         self.model = Model(
             wakeword_model_paths=model_paths,
             enable_speex_noise_suppression=False,
-            vad_threshold=0.5,
+            vad_threshold=self.vad_threshold,
         )
         names = ", ".join(os.path.basename(p) for p in model_paths)
         self._emit_status("initialized", f"threshold={self.threshold} models=[{names}]")
@@ -65,15 +77,20 @@ class WakewordSidecar(BaseSidecar):
             audio = np.frombuffer(frame, dtype=np.int16)
             prediction = self.model.predict(audio)
 
+            now = time.time()
+            if now - self._last_detect < self.cooldown_s:
+                continue  # still cooling down from the last trigger — don't re-fire
             for model_name, score in prediction.items():
                 if score >= self.threshold:
+                    self._last_detect = now
                     self.emit({
                         "type": "wakeword_detected",
                         "phrase": model_name,
                         "score": float(score),
-                        "ts": time.time(),
+                        "ts": now,
                     })
                     self.model.reset()
+                    break
 
     @staticmethod
     def _normalize(name: str) -> str:

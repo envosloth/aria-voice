@@ -14,6 +14,7 @@ interface AppConfig {
   wakeword: {
     enabled: boolean;
     phrase: string;
+    threshold: number;
   };
   llm: {
     // Regular conversational LLM.
@@ -56,6 +57,10 @@ const defaults: AppConfig = {
     // A custom "hey aria" model must be trained and dropped into the
     // wakeword models dir to override this default.
     phrase: 'hey_jarvis',
+    // Detection sensitivity (0..1). Lower = more sensitive (fewer misses, more
+    // false triggers). 0.4 is a reliable default; the sidecar also relaxes the
+    // VAD gate and debounces with a cooldown.
+    threshold: 0.4,
   },
   llm: {
     endpoint: '',
