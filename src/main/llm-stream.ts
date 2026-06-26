@@ -113,12 +113,18 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
     return handle;
   }
 
-  // If only a base URL was entered (host:port with no API path), assume the
-  // conventional OpenAI route so "http://127.0.0.1:8642" works the same as the
-  // full "http://127.0.0.1:8642/v1/chat/completions". Without this a POST to "/"
-  // 404s, which (not being a connection error) silently fell back to the LLM.
-  if (url.pathname === '/' || url.pathname === '') {
-    url.pathname = '/v1/chat/completions';
+  // Normalize a base URL to the OpenAI chat route so users can paste whatever
+  // their local server documents — the full "…/v1/chat/completions", just the
+  // host ("http://127.0.0.1:8642"), or the "…/v1" base that Ollama/LM Studio/
+  // vLLM advertise. Without this a POST to "/" or "/v1" 404s, which (not being a
+  // connection error) silently fell back to the other target.
+  const basePath = url.pathname.replace(/\/+$/, ''); // drop trailing slash(es)
+  if (basePath === '') {
+    url.pathname = '/v1/chat/completions';            // host only
+  } else if (/\/v\d+$/.test(basePath)) {
+    url.pathname = basePath + '/chat/completions';    // "…/v1" base
+  } else {
+    url.pathname = basePath;                          // full/custom path, left as-is
   }
 
   const isHttps = url.protocol === 'https:';

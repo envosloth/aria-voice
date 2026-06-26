@@ -72,8 +72,12 @@
     { id: 'groq', name: 'Groq', endpoint: 'https://api.groq.com/openai/v1/chat/completions', defaultModel: 'llama-3.3-70b-versatile', keyHint: 'gsk_...' },
     { id: 'together', name: 'Together AI', endpoint: 'https://api.together.xyz/v1/chat/completions', defaultModel: 'meta-llama/Llama-3.3-70B-Instruct-Turbo', keyHint: '...' },
     { id: 'mistral', name: 'Mistral', endpoint: 'https://api.mistral.ai/v1/chat/completions', defaultModel: 'mistral-small-latest', keyHint: '...' },
-    { id: 'ollama', name: 'Ollama (local)', endpoint: 'http://localhost:11434/v1/chat/completions', defaultModel: 'llama3.2', keyHint: '' },
-    { id: 'lmstudio', name: 'LM Studio (local)', endpoint: 'http://localhost:1234/v1/chat/completions', defaultModel: 'local-model', keyHint: '' },
+    // Fully-local, OpenAI-compatible servers. No API key required (local servers
+    // ignore it); leave the key blank. `local: true` marks them so the UI can
+    // show the key as optional and skip remote-only hints.
+    { id: 'ollama', name: 'Ollama (local)', endpoint: 'http://localhost:11434/v1/chat/completions', defaultModel: 'llama3.2', keyHint: '', local: true },
+    { id: 'lmstudio', name: 'LM Studio (local)', endpoint: 'http://localhost:1234/v1/chat/completions', defaultModel: 'local-model', keyHint: '', local: true },
+    { id: 'vllm', name: 'vLLM (local)', endpoint: 'http://localhost:8000/v1/chat/completions', defaultModel: '', keyHint: '', local: true },
     { id: 'custom', name: 'Custom (enter URL)', endpoint: '', defaultModel: '', keyHint: '' },
   ];
   function providerById(id) { return PROVIDERS.find((p) => p.id === id) || null; }

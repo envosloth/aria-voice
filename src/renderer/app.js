@@ -1028,10 +1028,10 @@ for (const p of window.AriaHarnesses.PROVIDERS) {
 function onbApplyLlmProvider() {
   const p = window.AriaHarnesses.providerById(onb.llmProvider.value);
   if (!p) return;
-  // Local providers ignore the key; hint that it's optional for them.
-  onb.llmKey.placeholder = p.keyHint || 'optional';
-  if (p.endpoint) onb.llmEndpoint.value = p.endpoint;
-  if (p.defaultModel) onb.llmModel.value = p.defaultModel;
+  // Local servers (Ollama/LM Studio/vLLM) ignore the key — say so explicitly.
+  onb.llmKey.placeholder = p.local ? 'not required for local servers' : (p.keyHint || 'optional');
+  onb.llmEndpoint.value = p.endpoint || '';
+  onb.llmModel.value = p.defaultModel || '';
 }
 onb.llmProvider.addEventListener('change', onbApplyLlmProvider);
 

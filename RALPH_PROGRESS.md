@@ -179,11 +179,40 @@ Found but not in scope (now in scope for Item 3): the provider preset list lacks
 vLLM entry; Ollama/LM Studio presets exist and are now reachable from setup.
 
 ## Item 3: No support for fully local LLM providers (Ollama, LM Studio, vLLM)
-Status: not-started
-Findings (early, from Item 0 reconnaissance): `src/renderer/harnesses.js` PROVIDERS
-already lists Ollama (11434) and LM Studio (1234) but NOT vLLM; and onboarding
-(`onbFinish`) only configures the harness, not the conversational LLM provider —
-so these presets aren't reachable from setup. Revisit under Items 2/3.
+Status: done
+Findings: The "direct provider" abstraction is an OpenAI-compatible SSE client
+(`src/main/llm-stream.ts` `streamChat`) driven by the `PROVIDERS` presets in
+`src/renderer/harnesses.js`. Ollama (11434) + LM Studio (1234) presets existed but
+(a) there was NO vLLM preset, and (b) `streamChat` only normalized a bare host
+("/" or "") to `/v1/chat/completions` — a user pasting the documented base
+`http://localhost:11434/v1` would POST to `/v1` and 404. Local providers already
+work without a key (no Authorization header is sent when `apiKey` is empty), and
+Item 2 already made these presets reachable from setup.
+
+Fix (files touched):
+- `src/renderer/harnesses.js`: added a `vllm` preset
+  (`http://localhost:8000/v1/chat/completions`, vLLM's default serve port) and a
+  `local: true` flag on ollama/lmstudio/vllm.
+- `src/main/llm-stream.ts`: broadened base-URL normalization — bare host, AND a
+  trailing "…/vN" base, both normalize to "…/chat/completions"; a full/custom path
+  is left untouched. So all of `http://host`, `http://host/v1`, and
+  `http://host/v1/chat/completions` work.
+- `src/renderer/app.js`: onboarding LLM key placeholder shows "not required for
+  local servers" when a local preset is picked.
+
+Verification:
+- No real local server was available in this env (no ollama binary / LM Studio /
+  vLLM responding — probed). Verified with `npm run smoke:local-llm` against a mock
+  implementing the same OpenAI-compatible /v1/chat/completions SSE contract, driving
+  the REAL `streamChat`: 8/8 PASS — presets present+local+reverse-lookup; base URL
+  ".../v1" AND bare host both normalize to /v1/chat/completions and round-trip
+  "Hello, world!"; and NO Authorization header is sent when the key is omitted
+  (proves "no API key required"). The script also best-effort hits a real Ollama on
+  11434 if one is running.
+- Regression: `npm run smoke:llm` still 5/5 PASS (full path + connection-failure
+  cases unaffected by the normalization change). typecheck + build clean.
+- Latency: streamChat URL parsing is a one-time per-request string op (µs), already
+  on the path; no measurable change.
 
 ## Item 4: Remove "File, Edit, View, Window" menu bar items
 Status: not-started
