@@ -26,16 +26,41 @@ export interface ChatOptions {
   timeoutMs?: number;
 }
 
+// Handle returned by streamChat so a caller can abort an in-flight request
+// (e.g. the user barges in with the wake word and we must stop generating).
+export interface ChatHandle {
+  cancel: () => void;
+}
+
 /**
  * Pure SSE chat streamer for OpenAI-compatible /chat/completions endpoints.
  * No Electron dependency — unit-testable against a mock HTTP server.
+ *
+ * Returns a ChatHandle whose cancel() aborts the request and silences any
+ * further callbacks — used for barge-in (interrupt mid-reply).
  */
-export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): void {
+export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHandle {
   const { endpoint, model, apiKey, message, messages, timeoutMs = 30000 } = opts;
 
+  // Once cancelled we destroy the socket AND swallow any late callbacks, so an
+  // aborted reply never reaches the renderer (no stray tokens after barge-in).
+  let cancelled = false;
+  let req: http.ClientRequest | null = null;
+  const handle: ChatHandle = {
+    cancel: () => {
+      cancelled = true;
+      if (req) { try { req.destroy(); } catch { /* already gone */ } }
+    },
+  };
+  const cb: LlmCallbacks = {
+    onToken: (t) => { if (!cancelled) callbacks.onToken(t); },
+    onDone: (f) => { if (!cancelled) callbacks.onDone(f); },
+    onError: (e) => { if (!cancelled) callbacks.onError(e); },
+  };
+
   if (!endpoint) {
-    callbacks.onError('No LLM endpoint configured. Go to Settings to add one.');
-    return;
+    cb.onError('No LLM endpoint configured. Go to Settings to add one.');
+    return handle;
   }
 
   const chatMessages: ChatMessage[] =
@@ -45,8 +70,8 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): void {
   try {
     url = new URL(endpoint);
   } catch {
-    callbacks.onError(`Invalid LLM endpoint URL: ${endpoint}`);
-    return;
+    cb.onError(`Invalid LLM endpoint URL: ${endpoint}`);
+    return handle;
   }
 
   // If only a base URL was entered (host:port with no API path), assume the
@@ -66,7 +91,7 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): void {
     stream: true,
   });
 
-  const req = transport.request(
+  req = transport.request(
     {
       hostname: url.hostname,
       port: url.port || (isHttps ? 443 : 80),
@@ -83,7 +108,7 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): void {
         let errBody = '';
         res.on('data', (chunk) => { errBody += chunk; });
         res.on('end', () => {
-          callbacks.onError(`LLM returned ${res.statusCode}: ${errBody.slice(0, 200)}`);
+          cb.onError(`LLM returned ${res.statusCode}: ${errBody.slice(0, 200)}`);
         });
         return;
       }
@@ -92,6 +117,7 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): void {
       let buffer = '';
 
       res.on('data', (chunk: Buffer) => {
+        if (cancelled) return;
         buffer += chunk.toString();
         const lines = buffer.split('\n');
         buffer = lines.pop() ?? '';
@@ -107,7 +133,7 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): void {
             const delta = parsed.choices?.[0]?.delta?.content;
             if (delta) {
               fullText += delta;
-              callbacks.onToken(delta);
+              cb.onToken(delta);
             }
           } catch {
             // skip malformed SSE lines
@@ -116,20 +142,23 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): void {
       });
 
       res.on('end', () => {
-        callbacks.onDone(fullText);
+        cb.onDone(fullText);
       });
     },
   );
 
   req.on('error', (err) => {
-    callbacks.onError(`LLM connection failed: ${err.message}. Check endpoint and network.`);
+    // A cancel() destroy() also surfaces here as ECONNRESET/aborted — cb guards
+    // it so a deliberate barge-in isn't reported to the user as a failure.
+    cb.onError(`LLM connection failed: ${err.message}. Check endpoint and network.`);
   });
 
   req.setTimeout(timeoutMs, () => {
-    req.destroy();
-    callbacks.onError(`LLM request timed out after ${Math.round(timeoutMs / 1000)}s.`);
+    req!.destroy();
+    cb.onError(`LLM request timed out after ${Math.round(timeoutMs / 1000)}s.`);
   });
 
   req.write(body);
   req.end();
+  return handle;
 }

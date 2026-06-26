@@ -30,6 +30,23 @@ const statusDots = {
 let listening = false;
 let currentAssistantMsg = null;
 
+// When true, incoming TTS PCM is dropped on arrival. Set by stopPlayback() so
+// the tail of an interrupted reply (already in flight from the sidecar) never
+// reaches the speakers after a barge-in. Re-armed by ttsPlay() the instant we
+// intentionally ask for new speech.
+let ttsMuted = false;
+
+// Single funnel for every "speak this text" request. Strips markdown, links,
+// code, emoji and stray symbols so the voice never reads "asterisk" or spells
+// out a URL (the on-screen transcript keeps the original text). Marks audio as
+// wanted again so the onAudio gate lets the freshly-synthesized PCM through.
+function ttsPlay(text) {
+  const speakable = window.AriaAudio.sanitizeForSpeech(text);
+  if (!speakable) return; // nothing worth speaking (e.g. a chunk that was just a URL)
+  ttsMuted = false;
+  try { aria.tts.play(speakable); } catch (e) {}
+}
+
 function addMessage(role, text) {
   const div = document.createElement('div');
   div.className = `message ${role}`;
@@ -57,12 +74,12 @@ window.addEventListener('unhandledrejection', (e) => {
 
 function assistantSay(text) {
   addMessage('assistant', text);
-  try { stopPlayback(true); aria.tts.play(text); orbState('speaking'); } catch (e) {}
+  try { stopPlayback(true); ttsPlay(text); orbState('speaking'); } catch (e) {}
 }
 
 // Speak without adding a transcript line (used for the "hold on" filler).
 function speakOnly(text) {
-  try { stopPlayback(true); aria.tts.play(text); orbState('speaking'); } catch (e) {}
+  try { stopPlayback(true); ttsPlay(text); orbState('speaking'); } catch (e) {}
 }
 
 // Single entry point for user turns (text box + voice). Handles screen-share
@@ -263,10 +280,19 @@ async function startMicCapture() {
     const worklet = new AudioWorkletNode(ctx, 'mic-capture');
 
     worklet.port.onmessage = (e) => {
-      const { samples, rate } = e.data;
-      const pcm = window.AriaAudio.micFrameToPcm16k(samples, rate);
-      aria.mic.sendAudio(pcm);
-      if (vadActive) updateVad(samples);
+      // A bad frame (e.g. an unusual device sample rate that the downsampler
+      // rejects) must not throw out of the audio callback and wedge mic capture.
+      try {
+        const { samples, rate } = e.data;
+        const pcm = window.AriaAudio.micFrameToPcm16k(samples, rate);
+        aria.mic.sendAudio(pcm);
+        if (vadActive) updateVad(samples);
+      } catch (err) {
+        if (!startMicCapture._warned) {
+          console.error('[ARIA] mic frame dropped:', err && err.message);
+          startMicCapture._warned = true;
+        }
+      }
     };
 
     source.connect(worklet);
@@ -295,7 +321,27 @@ function updateVad(samples) {
 // Drive the orb's visual state through the conversation pipeline.
 function orbState(s) { if (window.AriaOrb) window.AriaOrb.setState(s); }
 
+// Barge-in: the user started talking to ARIA (wake word, global/in-window
+// shortcut, or push-to-talk) while it was still thinking or speaking. Stop the
+// voice, abort the in-flight reply on the main side, and discard any
+// half-streamed text so the correction starts a clean turn. This is what lets
+// you cut ARIA off mid-answer with "hey jarvis…" to redirect it.
+function bargeIn() {
+  cancelThinkingHold();
+  try { aria.llm.cancel(); } catch (e) {}   // stop generating server-side
+  stopPlayback(true);                        // halt audio + cancel TTS synthesis
+  resetTtsStream();                          // drop any half-buffered sentence
+  // Finalize any in-progress streaming assistant bubble so the next reply opens
+  // a fresh message instead of appending to the interrupted one.
+  try { flushStream(); } catch (e) {}
+  streamBuf = '';
+  streamTextNode = null;
+  currentAssistantMsg = null;
+  pendingRoute = null;
+}
+
 function beginUtterance(opts) {
+  bargeIn(); // interrupt whatever ARIA is currently saying/generating
   listening = true;
   micBtn.classList.add('listening');
   orbState('listening');
@@ -394,6 +440,21 @@ let ttsTurnSpeaking = false;  // have we begun speaking the current response?
 // whitespace or end-of-buffer. Decimals ("3.5") and "U.S." won't match — they
 // have no following space — so they aren't split mid-number.
 const TTS_SENTENCE_END = /[.!?]+["')\]]*(?=\s|$)/g;
+// A clause boundary: , ; : followed by whitespace. Used only to get the FIRST
+// chunk of a reply out fast (see below); "1,000" / "12:30" won't match (no
+// following space).
+const TTS_CLAUSE_END = /[,;:]["')\]]*(?=\s)/g;
+// The biggest lever on perceived latency is time-to-first-audio. Waiting for a
+// whole sentence meant a long opening sentence ("The weather in San Francisco
+// today is …, with …, and ….") held back all audio until it fully streamed AND
+// synthesized — the "it waits for the text output" feeling, worst on long
+// replies. So chunk #1 is eager: speak at the first clause boundary (or a hard
+// word-boundary cap) once there's enough to sound natural. Later chunks prefer
+// full sentences for prosody, but are still capped so one runaway sentence
+// can't stall playback (or force Kokoro to synth a single huge blocking chunk).
+const TTS_FIRST_MIN = 18;   // don't speak a fragment shorter than this
+const TTS_FIRST_MAX = 90;   // ...but don't wait past this for chunk #1
+const TTS_LATER_MAX = 220;  // hard cap for subsequent chunks
 
 function speakChunk(text) {
   if (!text) return;
@@ -402,20 +463,50 @@ function speakChunk(text) {
     orbState('speaking'); // agent is about to talk -> dynamic motion
     ttsTurnSpeaking = true;
   }
-  aria.tts.play(text);    // queues serially behind earlier sentences in the sidecar
+  ttsPlay(text);          // queues serially behind earlier sentences in the sidecar
 }
 
-// Pull every complete sentence out of the buffer and speak it; keep the trailing
-// partial sentence until more tokens (or onDone) complete it.
+// Where to cut the next speakable chunk out of `buf`, or -1 to keep buffering.
+// `isFirst` makes chunk #1 eager so audio starts within a beat.
+function nextTtsCut(buf, isFirst) {
+  TTS_SENTENCE_END.lastIndex = 0;
+  const sm = TTS_SENTENCE_END.exec(buf);
+  const sentenceEnd = sm ? TTS_SENTENCE_END.lastIndex : -1;
+
+  if (isFirst) {
+    TTS_CLAUSE_END.lastIndex = 0;
+    let m;
+    while ((m = TTS_CLAUSE_END.exec(buf)) !== null) {
+      const idx = TTS_CLAUSE_END.lastIndex;
+      if (idx >= TTS_FIRST_MIN) return sentenceEnd > 0 ? Math.min(idx, sentenceEnd) : idx;
+    }
+    if (sentenceEnd > 0) return sentenceEnd;
+    if (buf.length >= TTS_FIRST_MAX) {
+      const sp = buf.lastIndexOf(' ', TTS_FIRST_MAX);
+      if (sp >= TTS_FIRST_MIN) return sp + 1;
+    }
+    return -1;
+  }
+
+  if (sentenceEnd > 0) return sentenceEnd;
+  if (buf.length >= TTS_LATER_MAX) {
+    const sp = buf.lastIndexOf(' ', TTS_LATER_MAX);
+    if (sp >= 40) return sp + 1;
+  }
+  return -1;
+}
+
+// Pull every ready chunk out of the buffer and speak it; keep the trailing
+// partial until more tokens (or onDone) complete it. Only the very first chunk
+// of a turn is eager (isFirst flips false once speakChunk sets ttsTurnSpeaking).
 function feedTtsStream(token) {
   ttsStreamBuf += token;
-  let lastEnd = -1, m;
-  TTS_SENTENCE_END.lastIndex = 0;
-  while ((m = TTS_SENTENCE_END.exec(ttsStreamBuf)) !== null) lastEnd = TTS_SENTENCE_END.lastIndex;
-  if (lastEnd > 0) {
-    const ready = ttsStreamBuf.slice(0, lastEnd).trim();
-    ttsStreamBuf = ttsStreamBuf.slice(lastEnd);
-    speakChunk(ready);
+  for (;;) {
+    const cut = nextTtsCut(ttsStreamBuf, !ttsTurnSpeaking);
+    if (cut <= 0) break;
+    const ready = ttsStreamBuf.slice(0, cut).trim();
+    ttsStreamBuf = ttsStreamBuf.slice(cut);
+    if (ready) speakChunk(ready);
   }
 }
 
@@ -467,13 +558,20 @@ let idleTimer = null;
 
 function getAudioCtx() {
   if (!audioCtx) {
-    audioCtx = new AudioContext();
-    // Analyser between playback and output drives the reactive orb.
-    ttsAnalyser = audioCtx.createAnalyser();
-    ttsAnalyser.fftSize = 1024;
-    ttsAnalyser.smoothingTimeConstant = 0.6;
-    ttsAnalyser.connect(audioCtx.destination);
-    pollTtsLevel();
+    try {
+      audioCtx = new AudioContext();
+      // Analyser between playback and output drives the reactive orb.
+      ttsAnalyser = audioCtx.createAnalyser();
+      ttsAnalyser.fftSize = 1024;
+      ttsAnalyser.smoothingTimeConstant = 0.6;
+      ttsAnalyser.connect(audioCtx.destination);
+      pollTtsLevel();
+    } catch (e) {
+      // Audio output unavailable — keep the app alive; speech just won't play.
+      audioCtx = null;
+      showError('Audio output unavailable — replies will still appear as text.');
+      return null;
+    }
   }
   if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
   return audioCtx;
@@ -485,6 +583,10 @@ function stopPlayback(cancelSidecar) {
   for (const s of ttsSources) { try { s.onended = null; s.stop(); } catch (e) {} }
   ttsSources = [];
   nextPlayTime = 0;
+  // Drop any PCM still in flight from the interrupted utterance until the next
+  // intentional ttsPlay() re-arms playback — otherwise the sidecar's already-
+  // emitted tail would leak out after we've "stopped".
+  ttsMuted = true;
   if (cancelSidecar) { try { aria.tts.stop(); } catch (e) {} }
 }
 
@@ -504,31 +606,62 @@ function pollTtsLevel() {
   requestAnimationFrame(pollTtsLevel);
 }
 
+// Trailing odd byte carried from a PCM segment that didn't end on a sample
+// boundary (see below), prepended to the next segment.
+let pcmCarryByte = -1;
+
 aria.tts.onAudio((pcmArrayBuffer) => {
-  const ctx = getAudioCtx();
-  const int16 = new Int16Array(pcmArrayBuffer);
-  const float32 = new Float32Array(int16.length);
-  for (let i = 0; i < int16.length; i++) {
-    float32[i] = int16[i] / 32768;
+  if (ttsMuted) return; // interrupted: discard the stale tail of a stopped reply
+  try {
+    // The PCM stream arrives in arbitrarily-sized UDS segments that are NOT
+    // aligned to the 2-byte sample boundary. Building an Int16Array over an
+    // odd-length buffer throws ("byte length must be a multiple of 2") — an
+    // intermittent renderer crash. Carry any trailing odd byte into the next
+    // segment so every sample is reconstructed intact.
+    let bytes = new Uint8Array(pcmArrayBuffer);
+    if (pcmCarryByte >= 0) {
+      const merged = new Uint8Array(bytes.length + 1);
+      merged[0] = pcmCarryByte;
+      merged.set(bytes, 1);
+      bytes = merged;
+      pcmCarryByte = -1;
+    }
+    if (bytes.length % 2 === 1) {
+      pcmCarryByte = bytes[bytes.length - 1];
+      bytes = bytes.subarray(0, bytes.length - 1);
+    }
+    if (bytes.length === 0) return;
+
+    const ctx = getAudioCtx();
+    if (!ctx) return; // audio unavailable (e.g. AudioContext construction failed)
+    // bytes starts at offset 0 with even length, so the Int16 view is aligned.
+    const int16 = new Int16Array(bytes.buffer, 0, bytes.length >> 1);
+    const float32 = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) {
+      float32[i] = int16[i] / 32768;
+    }
+
+    const buffer = ctx.createBuffer(1, float32.length, ttsChunkRate);
+    buffer.getChannelData(0).set(float32);
+
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ttsAnalyser);
+
+    const now = ctx.currentTime;
+    // Small lead so the very first chunk isn't clipped while the graph spins up.
+    if (nextPlayTime < now + 0.03) nextPlayTime = now + 0.03;
+    source.start(nextPlayTime);
+    nextPlayTime += buffer.duration;
+    ttsSources.push(source);
+    source.onended = () => {
+      const i = ttsSources.indexOf(source);
+      if (i >= 0) ttsSources.splice(i, 1);
+    };
+  } catch (e) {
+    // One bad audio segment must never kill the renderer — drop it and continue.
+    console.error('[ARIA] tts audio chunk dropped:', e && e.message);
   }
-
-  const buffer = ctx.createBuffer(1, float32.length, ttsChunkRate);
-  buffer.getChannelData(0).set(float32);
-
-  const source = ctx.createBufferSource();
-  source.buffer = buffer;
-  source.connect(ttsAnalyser);
-
-  const now = ctx.currentTime;
-  // Small lead so the very first chunk isn't clipped while the graph spins up.
-  if (nextPlayTime < now + 0.03) nextPlayTime = now + 0.03;
-  source.start(nextPlayTime);
-  nextPlayTime += buffer.duration;
-  ttsSources.push(source);
-  source.onended = () => {
-    const i = ttsSources.indexOf(source);
-    if (i >= 0) ttsSources.splice(i, 1);
-  };
 });
 
 aria.tts.onState((state) => {

@@ -86,8 +86,59 @@
     this.hasSpeech = function () { return sawSpeech; };
   }
 
+  // Clean a piece of assistant text so it reads naturally aloud. LLM replies are
+  // full of things that sound like gibberish when spoken verbatim: markdown
+  // emphasis (*, _, `, #), bullet/heading marks, raw URLs (read out
+  // character-by-character), code blocks, table pipes, and emoji. We strip the
+  // markup but KEEP the words, turn links/emails into a short spoken placeholder,
+  // and drop code blocks. The on-screen transcript still shows the raw text —
+  // this only affects what TTS receives. Returns '' if nothing speakable is left.
+  function sanitizeForSpeech(text) {
+    if (!text) return '';
+    let s = String(text);
+
+    // Fenced + indented code blocks: don't read code aloud at all.
+    s = s.replace(/```[\s\S]*?```/g, ' ');
+    s = s.replace(/~~~[\s\S]*?~~~/g, ' ');
+    // Inline code / bold / italic / strikethrough: keep the words, drop the marks.
+    s = s.replace(/`([^`]+)`/g, '$1');
+
+    // Markdown links/images: speak the visible text, not the URL. ![alt](url) ->
+    // alt; [text](url) -> text.
+    s = s.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1');
+    s = s.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
+
+    // Bare URLs / emails -> short spoken placeholders (reading the raw string is
+    // noise). Order matters: URLs before the generic symbol strip.
+    s = s.replace(/\bhttps?:\/\/[^\s)]+/gi, ' link ');
+    s = s.replace(/\bwww\.[^\s)]+/gi, ' link ');
+    s = s.replace(/\b[^\s@()]+@[^\s@()]+\.[^\s@()]+\b/g, ' email address ');
+
+    // List bullets / numbered markers / blockquote marks at line starts.
+    s = s.replace(/^[ \t]*[-*+•]\s+/gm, ' ');
+    s = s.replace(/^[ \t]*\d+[.)]\s+/gm, ' ');
+    s = s.replace(/^[ \t]*#{1,6}\s+/gm, ' '); // ATX headings
+    s = s.replace(/^[ \t]*>+\s?/gm, ' ');     // blockquotes
+
+    // Emoji + misc pictographs/dingbats/arrows: spoken inconsistently, so drop.
+    s = s.replace(
+      /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{2300}-\u{23FF}️‍]/gu,
+      ' ',
+    );
+
+    // Remaining structural / decorative symbols that don't read well. KEEP normal
+    // sentence punctuation (. , ! ? ; : ' " - ( ) /) for natural prosody.
+    s = s.replace(/[*_~`#>|^=<>{}\[\]\\]/g, ' ');
+
+    // Collapse whitespace and tidy spacing before punctuation.
+    s = s.replace(/\s+([,.!?;:])/g, '$1');
+    s = s.replace(/\s+/g, ' ').trim();
+    return s;
+  }
+
   const api = {
     TARGET_RATE, downsampleTo16k, floatToInt16, micFrameToPcm16k, rms, VadEndpointer,
+    sanitizeForSpeech,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

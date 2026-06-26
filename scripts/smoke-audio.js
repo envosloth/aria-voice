@@ -75,5 +75,22 @@ let fires = 0;
 for (let i = 0; i < 10; i++) if (vad3.pushRms(0)) fires++;
 check('vad-fires-once', fires === 1, `fired ${fires} times`);
 
+// 10. sanitizeForSpeech: strips markup/links/emoji but keeps the words so the
+//     voice never reads "asterisk" or spells out a URL.
+const S = A.sanitizeForSpeech;
+check('san-bold', S('This is **really** important') === 'This is really important', `got "${S('This is **really** important')}"`);
+check('san-italic-underscore', S('a _word_ here') === 'a word here', `got "${S('a _word_ here')}"`);
+check('san-inline-code', S('run `npm test` now') === 'run npm test now', `got "${S('run `npm test` now')}"`);
+check('san-bare-url', S('see https://example.com/x?y=1 for more') === 'see link for more', `got "${S('see https://example.com/x?y=1 for more')}"`);
+check('san-md-link', S('click [the docs](https://x.io) please') === 'click the docs please', `got "${S('click [the docs](https://x.io) please')}"`);
+check('san-heading-bullets', S('# Title\n- one\n- two') === 'Title one two', `got "${S('# Title\n- one\n- two')}"`);
+const fenced = 'Here:\n```\nx=1\n```\ndone';
+check('san-code-fence', S(fenced) === 'Here: done', `got "${S(fenced)}"`);
+check('san-emoji', S('great job 🎉🔥 done') === 'great job done', `got "${S('great job 🎉🔥 done')}"`);
+check('san-keeps-punct', S('Wait — is it 3.5 or 4? Yes!') === 'Wait — is it 3.5 or 4? Yes!', `got "${S('Wait — is it 3.5 or 4? Yes!')}"`);
+check('san-url-only-empty', S('https://only-a-link.com').trim() === 'link', `got "${S('https://only-a-link.com')}"`);
+check('san-stars-only-empty', S('***').trim() === '', `got "${S('***')}"`);
+check('san-empty', S('') === '' && S(null) === '' && S(undefined) === '');
+
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

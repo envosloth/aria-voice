@@ -1,14 +1,16 @@
 // Reactive mesh-orb background with a visual state machine.
 //
-// States (AriaOrb.setState):
-//   idle       — calm slow rotation, muted slate. (default)
-//   listening  — cyan, gentle steady breathing (NOT audio-reactive).
-//   processing — amber, faster shimmer/spin (NOT audio-reactive).
-//   speaking   — theme accent, FULL audio-reactive distortion from TTS RMS.
+// States (AriaOrb.setState) — each a clearly DISTINCT hue so the state is
+// obvious at a glance:
+//   idle       — cyan,   calm. (default)
+//   listening  — purple, calm.
+//   processing — orange, calm ("thinking").
+//   speaking   — green,  surface DEFORMS dynamically from the TTS RMS.
 //
-// Only `speaking` moves dynamically with the audio; other states convey progress
-// through colour + subtle calm motion. Keeping non-speaking states cheap also
-// reduces GPU contention with whisper's Vulkan inference while STT is running.
+// Rotation runs at ONE constant speed in every state (it never speeds up when
+// the agent talks); the orb keeps a steady size and only its surface ripples
+// while speaking. State is conveyed by colour, which cross-fades smoothly
+// between states rather than snapping.
 //
 // Performance: per-point trig precomputed once; per-frame work uses reused flat
 // typed arrays (no allocations); shadow blur gated to the speaking state.
@@ -17,37 +19,45 @@
   const LAT = 18, LON = 32;
   const NPTS = (LAT + 1) * LON;
   const TWO_PI = Math.PI * 2;
+  // Constant rotation speed (radians/60fps-frame) — identical in every state.
+  const SPIN = 0.005;
+  // Gentle, constant "alive" breathing amplitude (NOT audio-driven), so the orb
+  // never visibly grows/shrinks with the voice.
+  const BREATHE = 0.018;
 
   let canvas, ctx, w, h, cx, cy, baseR;
   let t = 0, audio = 0, audioSmooth = 0, raf = null;
 
-  // State machine + colour easing.
+  // State machine + colour easing. Fixed, well-separated hues (cyan / purple /
+  // orange / green) so the four states are easy to tell apart — they used to be
+  // too similar, and speaking tracked the theme accent.
   const STATE_COLORS = {
-    idle:       [136, 150, 180],
-    listening:  [ 80, 200, 230],
-    processing: [240, 180,  90],
-    speaking:   [233,  69,  96], // overridden by theme accent
+    idle:       [ 34, 211, 230], // cyan
+    listening:  [167,  92, 255], // purple
+    processing: [255, 146,  48], // orange (thinking)
+    speaking:   [ 42, 208, 102], // green
   };
   let state = 'idle';
-  const col = [136, 150, 180];   // current eased colour
+  const col = STATE_COLORS.idle.slice();  // current eased colour
   let target = STATE_COLORS.idle.slice();
   let accent = [233, 69, 96];
 
   function refreshAccent() {
+    // The orb's state colours are now fixed + distinct rather than the theme
+    // accent (so states stay easy to tell apart in every theme); this only keeps
+    // `accent` current for any other consumer and is otherwise a no-op here.
     try {
       const v = getComputedStyle(document.documentElement)
         .getPropertyValue('--accent-rgb').trim();
       if (v) accent = v.split(',').map((n) => parseInt(n, 10));
     } catch (e) { /* keep default */ }
-    STATE_COLORS.speaking = accent.slice();
-    if (state === 'speaking') target = accent.slice();
   }
 
   function setState(s) {
     if (!STATE_COLORS[s]) return;
     state = s;
-    target = (s === 'speaking' ? accent : STATE_COLORS[s]).slice();
-    if (s !== 'speaking') audio = 0; // stop dynamic motion outside speaking
+    target = STATE_COLORS[s].slice();
+    if (s !== 'speaking') audio = 0; // stop dynamic deformation outside speaking
   }
 
   // Precomputed per-point statics.
@@ -111,27 +121,27 @@
     // already used dt; the colour/audio filters did not.)
     const ease = (k) => 1 - Math.pow(1 - k, dt);
 
-    // Ease colour toward the target state colour.
-    const colK = ease(0.08);
+    // Ease colour toward the target state colour. A gentle constant (~0.8s
+    // cross-fade) so switching states reads as a smooth blend, never a sudden
+    // swap.
+    const colK = ease(0.05);
     col[0] += (target[0] - col[0]) * colK;
     col[1] += (target[1] - col[1]) * colK;
     col[2] += (target[2] - col[2]) * colK;
     const cr = col[0] | 0, cg = col[1] | 0, cb = col[2] | 0;
 
-    // Audio drives motion only in the speaking state. Smoothed a bit more (0.12)
-    // and dt-scaled so a spiky speech envelope pulses the orb smoothly rather
-    // than juddering; attack/decay are dt-scaled too for refresh independence.
-    audioSmooth += (audio - audioSmooth) * ease(0.12);
-    if (state === 'speaking') audio *= Math.pow(0.94, dt); else audioSmooth *= Math.pow(0.9, dt);
-    const react = state === 'speaking' ? audioSmooth : 0;
+    // Audio drives ONLY the speaking-state surface deformation — never rotation
+    // speed or overall size. Forced to 0 outside speaking; smoothed + dt-scaled
+    // so a spiky speech envelope ripples the surface smoothly, not jitterily.
+    if (state !== 'speaking') audio = 0;
+    audioSmooth += (audio - audioSmooth) * ease(0.15);
+    if (state === 'speaking') audio *= Math.pow(0.92, dt); else audioSmooth *= Math.pow(0.85, dt);
+    const react = state === 'speaking' ? Math.min(1, audioSmooth) : 0;
 
-    // Per-state calm motion (independent of audio).
-    let spin = 0.004, breatheAmp = 0.02, pulse = 0;
-    if (state === 'listening') { spin = 0.006; breatheAmp = 0.05; }
-    else if (state === 'processing') { spin = 0.022; breatheAmp = 0.03; pulse = 0.03 * Math.sin(t * 5); }
-    else if (state === 'speaking') { spin = 0.006 + react * 0.04; breatheAmp = 0.025; }
-
-    t += (spin + react * 0.02) * dt;
+    // Rotation is CONSTANT in every state — same smooth speed whether idle,
+    // listening, thinking, or speaking. (dt-scaled, so the angular speed is
+    // identical at 30/60/160 Hz; only smoothness changes.)
+    t += SPIN * dt;
     const rot = t, cosR = Math.cos(rot), sinR = Math.sin(rot);
 
     ctx.clearRect(0, 0, w, h);
@@ -152,11 +162,14 @@
     ctx.fillStyle = gradCache;
     ctx.fillRect(0, 0, w, h);
 
-    // Uniform radius: one scale for every point keeps it a true sphere, so the
-    // longitude/latitude grid intersections stay perfectly aligned (no lumpy
-    // per-vertex distortion). "Speaking" expands the whole sphere with the voice.
-    const rScale = 1 + breatheAmp * Math.sin(t * 1.3) + pulse + react * 0.16;
+    // Steady size: only a gentle constant breathing — NO audio size-pulsing — so
+    // the orb doesn't grow/shrink when the agent talks. The voice instead shows
+    // as per-vertex surface deformation (applied in the projection loop below),
+    // which only happens while speaking.
+    const rScale = 1 + BREATHE * Math.sin(t * 1.3);
     const r = baseR * rScale;
+    // Speaking-only deformation amplitude (0 in every other state).
+    const dAmp = react * 0.13;
 
     // "Nearness" is measured by the perspective scale (pp): a larger pp means the
     // point is closer to the viewer. Using pp (not the raw rotated z) removes any
@@ -165,9 +178,19 @@
     let ppMin = 1e9, ppMax = -1e9;
     for (let k = 0; k < NPTS; k++) {
       const sp = sinPhi[k];
-      const x = r * sp * cosTh[k];
-      const y = r * cosPhi[k];
-      const z = r * sp * sinTh[k];
+      // Speaking-only surface ripple: two low-frequency travelling waves over the
+      // sphere give an organic, non-jittery deformation that tracks the voice.
+      // dAmp is 0 outside speaking, so idle/listening/thinking stay perfectly
+      // smooth true spheres.
+      let rk = r;
+      if (dAmp > 0.0005) {
+        const wob = Math.sin(phiArr[k] * 3.0 + t * 3.1 + seed[k] * 6.2)
+                  + Math.sin(thArr[k] * 2.0 - t * 2.3 + seed[k] * 2.7);
+        rk = r * (1 + dAmp * wob * 0.5);
+      }
+      const x = rk * sp * cosTh[k];
+      const y = rk * cosPhi[k];
+      const z = rk * sp * sinTh[k];
       const x2 = x * cosR - z * sinR;
       const z2 = x * sinR + z * cosR;
       const y2 = y * COS_TILT - z2 * SIN_TILT;
@@ -260,26 +283,36 @@
     }
   }
 
-  // Frame-rate cap per state. `speaking` runs uncapped (smooth, audio-reactive);
-  // other states throttle to ~30 FPS so whisper's Vulkan STT isn't starved of
-  // the GPU while listening/processing (the wake->STT lag fix).
-  const STATE_MIN_MS = { idle: 33, listening: 33, processing: 33, speaking: 0 };
+  // Frame-rate cap per state. idle + speaking run uncapped (native refresh, so
+  // the constant rotation is buttery smooth); listening/processing cap at ~60
+  // FPS — still smooth, but leaves some GPU headroom for whisper's Vulkan STT
+  // while it runs. (The old ~30 FPS cap is what made the rotation look choppy.)
+  const STATE_MIN_MS = { idle: 0, listening: 16, processing: 16, speaking: 0 };
   let lastRenderAt = 0;
 
   let fpsVisible = false, fpsCount = 0, fpsLast = 0, fpsValue = 0;
+  let renderWarned = false;
   function loop(now) {
     const minMs = STATE_MIN_MS[state] || 0;
-    if (now - lastRenderAt < minMs) { raf = requestAnimationFrame(loop); return; }
-    lastRenderAt = now;
-    render(now);
-    fpsCount++;
-    if (now - fpsLast >= 500) { fpsValue = Math.round((fpsCount * 1000) / (now - fpsLast)); fpsCount = 0; fpsLast = now; }
-    if (fpsVisible) {
-      ctx.save(); ctx.shadowBlur = 0;
-      ctx.font = '600 13px system-ui, sans-serif';
-      ctx.fillStyle = fpsValue >= 160 ? '#2ecc71' : fpsValue >= 60 ? '#e0e0e0' : '#f39c12';
-      ctx.fillText(`${fpsValue} FPS · ${state}`, 12, 22);
-      ctx.restore();
+    if (now - lastRenderAt >= minMs) {
+      lastRenderAt = now;
+      // A single bad frame (e.g. a transient state during a resize) must never
+      // throw out of the rAF loop — that would freeze the orb permanently. Catch,
+      // log once, and keep animating.
+      try {
+        render(now);
+        fpsCount++;
+        if (now - fpsLast >= 500) { fpsValue = Math.round((fpsCount * 1000) / (now - fpsLast)); fpsCount = 0; fpsLast = now; }
+        if (fpsVisible) {
+          ctx.save(); ctx.shadowBlur = 0;
+          ctx.font = '600 13px system-ui, sans-serif';
+          ctx.fillStyle = fpsValue >= 160 ? '#2ecc71' : fpsValue >= 60 ? '#e0e0e0' : '#f39c12';
+          ctx.fillText(`${fpsValue} FPS · ${state}`, 12, 22);
+          ctx.restore();
+        }
+      } catch (e) {
+        if (!renderWarned) { console.error('[orb] render error (continuing):', e); renderWarned = true; }
+      }
     }
     raf = requestAnimationFrame(loop);
   }
@@ -323,7 +356,16 @@
   }
   function toggleFps() { fpsVisible = !fpsVisible; return fpsVisible; }
 
-  root.AriaOrb = { init, setLevel, setState, measure, benchmark, refreshAccent, toggleFps };
+  // Synchronously advance the animation by `frames` (~16.7ms each) in the current
+  // state, so colour easing + motion settle deterministically. Used by headless
+  // screenshot/boot tests where the window is hidden and rAF is throttled.
+  function pump(frames) {
+    frames = frames || 60;
+    let now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    for (let i = 0; i < frames; i++) { now += 16.67; try { render(now); } catch (e) {} }
+  }
+
+  root.AriaOrb = { init, setLevel, setState, measure, benchmark, refreshAccent, toggleFps, pump };
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);
 })(typeof self !== 'undefined' ? self : this);

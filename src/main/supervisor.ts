@@ -8,6 +8,7 @@ import {
   HEARTBEAT_TIMEOUT_MS,
   MAX_RESTART_ATTEMPTS,
   RESTART_BACKOFF_BASE_MS,
+  CIRCUIT_RESET_MS,
   RSS_LIMITS_MB,
   MEMORY_CHECK_INTERVAL_MS,
   SOCKET_DIR,
@@ -23,6 +24,12 @@ interface SidecarState {
   // True while a kill+restart is in flight, so the heartbeat/memory monitors
   // don't re-trigger and burn extra restart attempts for the same failure.
   recovering: boolean;
+  // True between start() and stop()/stopAll(): the caller wants this sidecar
+  // running. Used to auto-revive it after the circuit breaker's cooldown.
+  desiredRunning: boolean;
+  // Pending circuit-breaker cooldown reset (see CIRCUIT_RESET_MS), cleared on
+  // any intentional (re)start/stop so it can't revive a sidecar we just stopped.
+  circuitResetTimer: ReturnType<typeof setTimeout> | null;
   // Readiness latch: resolves when the sidecar emits 'ready' after (re)start.
   // Callers gate the first control message on this so a 'synthesize'/'transcribe'
   // never reaches the sidecar before its model has finished loading (the
@@ -60,6 +67,9 @@ export class Supervisor {
 
   async start(name: SidecarName): Promise<void> {
     const state = this.getOrCreateState(name);
+    state.desiredRunning = true;
+    // An intentional start supersedes any pending cooldown revival.
+    if (state.circuitResetTimer) { clearTimeout(state.circuitResetTimer); state.circuitResetTimer = null; }
     if (state.circuitOpen) {
       this.onStatus(name, 'circuit-open', `Exceeded ${MAX_RESTART_ATTEMPTS} restart attempts`);
       return;
@@ -147,6 +157,8 @@ export class Supervisor {
   async stop(name: SidecarName): Promise<void> {
     const state = this.sidecars.get(name);
     if (!state) return;
+    state.desiredRunning = false;
+    if (state.circuitResetTimer) { clearTimeout(state.circuitResetTimer); state.circuitResetTimer = null; }
     state.recovering = true;
     await this.killSidecar(name, state);
     state.recovering = false;
@@ -158,6 +170,10 @@ export class Supervisor {
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     if (this.memoryTimer) clearInterval(this.memoryTimer);
 
+    for (const state of this.sidecars.values()) {
+      state.desiredRunning = false;
+      if (state.circuitResetTimer) { clearTimeout(state.circuitResetTimer); state.circuitResetTimer = null; }
+    }
     const kills = Array.from(this.sidecars.entries()).map(([name, state]) =>
       this.killSidecar(name, state)
     );
@@ -245,6 +261,20 @@ export class Supervisor {
       state.circuitOpen = true;
       state.recovering = false;
       this.onStatus(name, 'circuit-open', `${state.restartCount} consecutive failures`);
+      // Don't give up forever: after a cooldown, reset the breaker and — if the
+      // sidecar is still wanted (e.g. the always-on wake word) — bring it back,
+      // so a transient crash burst self-heals instead of needing an app restart.
+      if (state.circuitResetTimer) clearTimeout(state.circuitResetTimer);
+      state.circuitResetTimer = setTimeout(() => {
+        state.circuitResetTimer = null;
+        if (this.shuttingDown) return;
+        state.circuitOpen = false;
+        state.restartCount = 0;
+        this.onStatus(name, 'circuit-reset', 'cooldown elapsed — retrying');
+        if (state.desiredRunning) {
+          void this.start(name).catch((e) => this.onStatus(name, 'error', (e as Error).message));
+        }
+      }, CIRCUIT_RESET_MS);
       return;
     }
 
@@ -367,6 +397,8 @@ export class Supervisor {
         lastHeartbeat: 0,
         circuitOpen: false,
         recovering: false,
+        desiredRunning: false,
+        circuitResetTimer: null,
         ready: false,
         readyPromise: Promise.resolve(),
         readyResolve: () => {},

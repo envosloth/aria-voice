@@ -5,7 +5,7 @@ import { Supervisor } from './supervisor';
 import { config } from './config';
 import { getSecureBackend, isSecureBackendSafe, setSecret, getSecret, deleteSecret } from './secure-storage';
 import { streamChat } from './llm-stream';
-import { coordinate } from './coordinator';
+import { coordinate, cancelCoordination } from './coordinator';
 import { buildManifest, missingModels, downloadModel } from './model-manager';
 import { IPC } from '../shared/ipc-channels';
 import { SidecarName } from '../shared/constants';
@@ -49,6 +49,13 @@ process.on('unhandledRejection', (reason) => {
   console.error('[ARIA] unhandledRejection (kept alive):', reason);
 });
 
+// A GPU/utility child process crashing must not take ARIA down. Chromium
+// recovers the GPU process on its own and the orb's continuous rAF loop
+// repaints the canvas on the next frame, so we just log it loudly.
+app.on('child-process-gone', (_e, details) => {
+  console.error(`[ARIA] child-process-gone: type=${details.type} reason=${details.reason}`);
+});
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 800,
@@ -89,6 +96,14 @@ function createWindow(): BrowserWindow {
     if (!isQuitting && details.reason !== 'clean-exit' && !win.isDestroyed()) {
       win.reload();
     }
+  });
+
+  // A hung renderer (Chromium fires this after ~30s of an unresponsive UI) is
+  // recovered by reloading rather than leaving a frozen window — another path to
+  // "it locked up while I was using it".
+  win.on('unresponsive', () => {
+    console.error('[ARIA] renderer unresponsive — reloading');
+    if (!isQuitting && !win.isDestroyed()) { try { win.reload(); } catch { /* nothing else to do */ } }
   });
 
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
@@ -189,6 +204,10 @@ function setupIpcHandlers(): void {
       onError: (err) => mainWindow?.webContents.send(IPC.LLM_ERROR, err),
     }, { image });
   });
+
+  // Barge-in: the renderer heard the wake word (or push-to-talk) while a reply
+  // was still streaming — abort generation so ARIA stops talking and listens.
+  ipcMain.on(IPC.LLM_CANCEL, () => cancelCoordination());
 
   ipcMain.on(IPC.TTS_PLAY, async (_e, text: string) => {
     try {
@@ -349,11 +368,13 @@ app.whenReady().then(async () => {
             await mainWindow.webContents.executeJavaScript(
               `document.querySelectorAll('.overlay,#onboard-overlay,#settings-overlay').forEach(e=>e.classList.remove('visible')); true;`,
             );
+            // pump() runs synchronous frames so colour easing/motion settle even
+            // though rAF is throttled while the window is hidden.
             const js = s === 'speaking'
-              ? `AriaOrb.setState('speaking'); for(let i=0;i<200;i++){AriaOrb.setLevel(0.7);} true;`
-              : `AriaOrb.setState('${s}'); true;`;
+              ? `AriaOrb.setState('speaking'); for(let i=0;i<80;i++){AriaOrb.setLevel(0.7); AriaOrb.pump(2);} true;`
+              : `AriaOrb.setState('${s}'); AriaOrb.pump(100); true;`;
             await mainWindow.webContents.executeJavaScript(js);
-            await new Promise((r) => setTimeout(r, 800)); // let colour ease in
+            await new Promise((r) => setTimeout(r, 300));
           }
           const img = await mainWindow.webContents.capturePage();
           require('fs').writeFileSync(process.env.ARIA_SMOKE_SHOT, img.toPNG());

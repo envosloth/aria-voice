@@ -12,6 +12,10 @@ export const HEARTBEAT_INTERVAL_MS = 5000;
 export const HEARTBEAT_TIMEOUT_MS = 10000;
 export const MAX_RESTART_ATTEMPTS = 5;
 export const RESTART_BACKOFF_BASE_MS = 1000;
+// After the circuit breaker trips (too many rapid crashes), wait this long then
+// reset it and retry once — so a transient burst of failures doesn't disable a
+// sidecar (e.g. the wake word) permanently until the app is restarted.
+export const CIRCUIT_RESET_MS = 60000;
 
 export const RSS_LIMITS_MB: Record<SidecarName, number> = {
   stt: 2048,

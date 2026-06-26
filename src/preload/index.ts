@@ -52,6 +52,7 @@ const api = {
   llm: {
     send: (message: string, image?: string | null) =>
       ipcRenderer.send(IPC.LLM_SEND, { message, image: image || null }),
+    cancel: () => ipcRenderer.send(IPC.LLM_CANCEL),
     test: (opts: { endpoint: string; model: string; apiKey?: string }) =>
       ipcRenderer.invoke(IPC.LLM_TEST, opts),
     onToken: (cb: (token: string) => void) =>

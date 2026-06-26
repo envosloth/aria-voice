@@ -23,6 +23,7 @@ export const IPC = {
   WAKEWORD_STATE: 'wakeword:state',
 
   LLM_SEND: 'llm:send',
+  LLM_CANCEL: 'llm:cancel',     // renderer -> main: abort the in-flight generation (barge-in)
   LLM_TOKEN: 'llm:token',
   LLM_DONE: 'llm:done',
   LLM_ERROR: 'llm:error',

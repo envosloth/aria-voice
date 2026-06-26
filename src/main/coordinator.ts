@@ -1,6 +1,6 @@
 import { config } from './config';
 import { getSecret } from './secure-storage';
-import { streamChat, LlmCallbacks, ChatMessage } from './llm-stream';
+import { streamChat, LlmCallbacks, ChatMessage, ChatHandle } from './llm-stream';
 import { route, Target } from './router';
 
 export interface CoordinatorCallbacks extends LlmCallbacks {
@@ -26,9 +26,25 @@ const MAX_TURNS = 24; // cap history (messages, excluding system) to bound paylo
 let history: ChatMessage[] = [];
 let lastTarget: Target | null = null;
 
+// Handle to the request currently streaming a reply, so a barge-in (the user
+// says the wake word while ARIA is talking) can abort generation immediately.
+let activeHandle: ChatHandle | null = null;
+
 export function resetConversation(): void {
   history = [];
   lastTarget = null;
+}
+
+/**
+ * Abort the in-flight reply, if any. Called when the user interrupts (wake word
+ * or push-to-talk while ARIA is still speaking). The aborted request's tokens
+ * are swallowed by streamChat, so no further text/audio reaches the renderer.
+ */
+export function cancelCoordination(): void {
+  if (activeHandle) {
+    try { activeHandle.cancel(); } catch { /* already finished */ }
+    activeHandle = null;
+  }
 }
 
 interface Endpoint { endpoint: string; model: string; apiKeyName: string; }
@@ -133,7 +149,7 @@ export async function coordinate(
       }
     }
 
-    streamChat({ endpoint, model, apiKey, messages }, {
+    activeHandle = streamChat({ endpoint, model, apiKey, messages }, {
       onToken: cb.onToken,
       onDone: (fullText) => {
         // Remember which target answered (drives stickiness next turn) and append

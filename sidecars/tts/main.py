@@ -15,6 +15,7 @@ dominant cost; synthesis is several times realtime once warm.
 
 import json
 import os
+import queue
 import re
 import sys
 import threading
@@ -39,12 +40,23 @@ class TtsSidecar(BaseSidecar):
         self.voice_model_path: str = ""
         self._voice = None       # persistent PiperVoice (piper engine)
         self._kokoro = None      # persistent Kokoro (kokoro engine)
-        self._cancel = False
         self._load_lock = threading.Lock()
+        # Synthesis runs on a dedicated worker thread (not the stdin thread) so a
+        # 'stop' control message is read and applied immediately — that's what
+        # makes barge-in crisp. `_epoch` is bumped on every stop; queued and
+        # in-progress synthesis whose epoch is stale is discarded.
+        self._synth_queue: "queue.Queue[tuple[int, str]]" = queue.Queue()
+        self._epoch = 0
+        self._epoch_lock = threading.Lock()
 
     def initialize(self) -> None:
         detail = self._ensure_loaded()
+        threading.Thread(target=self._synth_worker, daemon=True).start()
         self._emit_status("initialized", detail)
+
+    def _current_epoch(self) -> int:
+        with self._epoch_lock:
+            return self._epoch
 
     def _ensure_loaded(self) -> str:
         """Load the configured engine's model if it isn't already loaded.
@@ -152,19 +164,47 @@ class TtsSidecar(BaseSidecar):
     def on_control(self, msg: dict) -> None:
         mtype = msg.get("type")
         if mtype == "synthesize":
-            self._cancel = False
-            self._synthesize(msg.get("text", ""))
+            # Tag the request with the current epoch and hand it to the worker;
+            # the stdin thread stays free to receive a 'stop' mid-synthesis.
+            self._synth_queue.put((self._current_epoch(), msg.get("text", "")))
         elif mtype == "stop":
-            self._cancel = True
+            # Bump the epoch (cancels the in-progress + queued synthesis) and
+            # drop anything already queued so the next turn starts clean.
+            with self._epoch_lock:
+                self._epoch += 1
+            while True:
+                try:
+                    self._synth_queue.get_nowait()
+                    self._synth_queue.task_done()
+                except queue.Empty:
+                    break
             self.emit({"type": "tts_stopped"})
 
-    def _synthesize(self, text: str) -> None:
+    def _synth_worker(self) -> None:
+        """Consume the synthesis queue off the stdin thread. Each item carries
+        the epoch it was queued under; if a 'stop' has since bumped the epoch the
+        item is skipped, so an interrupted reply is abandoned instead of played
+        over the user's next utterance."""
+        while self._running:
+            try:
+                item_epoch, text = self._synth_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            try:
+                if item_epoch == self._current_epoch():
+                    self._synthesize(text, item_epoch)
+            except Exception as e:  # one bad utterance must not kill the worker
+                self._emit_status("error", f"synthesize: {e}")
+            finally:
+                self._synth_queue.task_done()
+
+    def _synthesize(self, text: str, item_epoch: int) -> None:
         """Synthesize sentence by sentence, streaming PCM as each is ready.
 
         Sentence chunking lets the renderer start playback after the first
         sentence while later sentences are still being generated. Each chunk's
         size + sample rate is announced over stdout before its bytes go out over
-        the socket.
+        the socket. A 'stop' (epoch bump) abandons the rest mid-stream.
         """
         # Guard against a first-utterance race: the model may not have finished
         # loading when this synthesize arrived. _ensure_loaded() is idempotent.
@@ -174,23 +214,24 @@ class TtsSidecar(BaseSidecar):
         total = len(sentences)
 
         for i, sentence in enumerate(sentences):
-            if self._cancel:
-                break
+            if item_epoch != self._current_epoch():
+                return  # superseded by a stop — drop the rest, no tts_done
             if self.engine == "kokoro":
-                self._emit_kokoro(sentence, i, total)
+                self._emit_kokoro(sentence, i, total, item_epoch)
             else:
-                self._emit_piper(sentence, i, total)
+                self._emit_piper(sentence, i, total, item_epoch)
 
-        self.emit({"type": "tts_done"})
+        if item_epoch == self._current_epoch():
+            self.emit({"type": "tts_done"})
 
-    def _emit_kokoro(self, sentence: str, index: int, total: int) -> None:
+    def _emit_kokoro(self, sentence: str, index: int, total: int, item_epoch: int) -> None:
         import numpy as np
         samples, sr = self._kokoro.create(
             sentence, voice=self.voice_name, speed=self.speed,
             lang=_lang_for_voice(self.voice_name),
         )
-        if self._cancel:
-            return
+        if item_epoch != self._current_epoch():
+            return  # a stop landed while synthesizing — don't emit this chunk
         pcm = (np.clip(samples, -1.0, 1.0) * 32767.0).astype("<i2").tobytes()
         self.emit({
             "type": "tts_chunk", "index": index, "total": total,
@@ -198,9 +239,9 @@ class TtsSidecar(BaseSidecar):
         })
         self.send_pcm(pcm)
 
-    def _emit_piper(self, sentence: str, index: int, total: int) -> None:
+    def _emit_piper(self, sentence: str, index: int, total: int, item_epoch: int) -> None:
         for chunk in self._voice.synthesize(sentence):
-            if self._cancel:
+            if item_epoch != self._current_epoch():
                 break
             pcm = chunk.audio_int16_bytes
             self.emit({
