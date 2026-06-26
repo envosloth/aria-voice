@@ -28,6 +28,7 @@
     "smoke:router": "npm run build && node scripts/smoke-router.js",
     "perf:baseline": "npm run build && node scripts/perf-baseline.js",
     "perf:live": "npm run build && node scripts/perf-live.js",
+    "perf:llm-path": "npm run build && node scripts/perf-llm-path.js",
     "smoke:settings": "npm run build && node scripts/smoke-settings-live.js",
     "smoke:onboarding": "npm run build && node scripts/smoke-onboarding-llm.js",
     "smoke:local-llm": "npm run build && node scripts/smoke-local-llm.js",

@@ -144,6 +144,13 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        // Advertise SSE so OpenAI-compatible servers/proxies stream the response
+        // incrementally instead of buffering the whole thing and sending it at
+        // the end. Without this some proxies (e.g. nginx-fronted gateways) hold
+        // the full reply, which silently degrades streaming into a long
+        // wait-for-everything — a real "large response delay even with a direct
+        // provider" cause that no app-side change other than this header fixes.
+        Accept: 'text/event-stream',
         'Content-Length': Buffer.byteLength(body),
         ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
       },

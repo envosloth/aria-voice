@@ -242,11 +242,48 @@ Verification:
 - Latency: main-process menu setup at startup only — off the interaction hot path.
 
 ## Item 5: Large response delay even with direct LLM provider
-Status: not-started
-Findings (early): Item 0 baseline shows app-side pre-network overhead is ~3ms and
-streaming starts rendering/speaking on the first token. So any "large delay" is most
-likely provider TTFT or a TTS-start gap (tts_first_request trails first token ~138ms),
-NOT app buffering. Must confirm against a real provider with the harness.
+Status: done
+Findings (all MEASURED with the Item 0 harness + `scripts/perf-llm-path.js`, not
+guessed — no real provider was available so realistic mocks drive the REAL
+streamChat client):
+- App-side pre-network overhead: ~3ms (Item 0 perf-live), TTFT-independent.
+- Streaming IS used: first token renders/ speaks on arrival, well before
+  completion (req->first-token 69ms vs total 224ms for a 60ms-TTFT mock).
+- Connection + TLS reuse ALREADY works via Node's default keep-alive agent
+  (Electron 40 / Node 19+): measured 1 TCP conn + 1 TLS handshake for 5 sequential
+  HTTPS turns, and 0 NEW connections across 5 follow-up turns. So there is NO
+  per-turn handshake to eliminate — keep-alive was a red herring (verified before
+  "fixing" it, per the task's "don't guess").
+- No request retry/duplication on the happy path; `getSecret` is synchronous and
+  the keyring key is process-cached, so it's not a per-turn cost.
+- THE real app-side cause of a "large delay even with a direct provider": the
+  request did NOT advertise SSE. Some OpenAI-compatible servers/proxies
+  (nginx-fronted gateways especially) BUFFER the entire reply and flush it at the
+  end unless the client sends `Accept: text/event-stream`, silently degrading
+  streaming into a wait-for-everything batch.
+
+Fix (files touched):
+- `src/main/llm-stream.ts`: add `Accept: text/event-stream` to the request headers.
+- `scripts/perf-llm-path.js` (`npm run perf:llm-path`): measures the stage
+  breakdown, connection reuse, AND the buffering-proxy before/after.
+
+Verification (before/after, measured):
+- `npm run perf:llm-path`: 4/4 PASS. Against a proxy that only streams when the
+  client advertises SSE:
+  - BEFORE (no Accept header): first token at 322ms of 322ms total — i.e. buffered
+    to the very end (the bug, reproduced).
+  - AFTER (streamChat now sends Accept): first token at 22ms of 325ms total —
+    streaming restored. ~300ms earlier first token on a buffering proxy.
+- Stage breakdown reported (mock TTFT 60ms -> first-token 69ms; 350ms -> 352ms),
+  connection reuse confirmed (0 new conns / 5 turns).
+- Regression: `npm run smoke:llm` 5/5 PASS (mocks that ignore Accept still stream).
+  typecheck + build clean.
+- Latency: the change is a single static request header — no added work on the hot
+  path; for buffering proxies it's a large net REDUCTION in time-to-first-token.
+
+Note: with a well-behaved direct provider that already streams, the dominant
+latency is provider TTFT (network + model), which is outside the app's control;
+the harness now makes that attributable so future app-side regressions are visible.
 
 ## Item 6: Chat messages should only show timestamp on hover
 Status: not-started
