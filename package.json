@@ -35,7 +35,7 @@
     "smoke:menu": "npm run build && node scripts/smoke-menu.js",
     "smoke:hover": "npm run build && node scripts/smoke-hover.js",
     "smoke:screenshare": "npm run build && node scripts/smoke-screenshare.js",
-    "smoke:delegate": "npm run build && node scripts/smoke-delegate.js"
+    "smoke:routing-invariant": "npm run build && node scripts/smoke-routing-invariant.js"
   },
   "author": "ARIA Project <aria@localhost>",
   "homepage": "https://github.com/aria-voice/aria",

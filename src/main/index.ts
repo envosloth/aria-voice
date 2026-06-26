@@ -498,27 +498,29 @@ app.whenReady().then(async () => {
       return;
     }
 
-    // Direct-LLM tool-delegation verification (Item 8): configure a (mock) direct
-    // LLM + agent harness, drive one tool-requiring message, and capture the final
-    // assistant text. Used by scripts/smoke-delegate.js.
-    if (process.env.ARIA_VERIFY_DELEGATE && mainWindow) {
+    // Routing-invariant verification: configure a (mock) direct LLM + agent harness,
+    // drive one tool-requiring message under a chosen routing mode, and capture the
+    // final assistant text. Used by scripts/smoke-routing-invariant.js to prove the
+    // direct LLM is never offered tools and that tool-requiring requests route to
+    // the harness up front (the delegation decision lives in routing, not a tool).
+    if (process.env.ARIA_VERIFY_ROUTING && mainWindow) {
       const wc = mainWindow.webContents;
       const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
       if (process.env.ARIA_VERIFY_LLM_ENDPOINT) config.set('llm.endpoint', process.env.ARIA_VERIFY_LLM_ENDPOINT);
       if (process.env.ARIA_VERIFY_HARNESS_ENDPOINT) config.set('harness.endpoint', process.env.ARIA_VERIFY_HARNESS_ENDPOINT);
       config.set('llm.model', 'mock-llm');
       config.set('harness.model', 'mock-harness');
-      config.set('routing.mode', 'llm'); // force the direct-LLM path
+      config.set('routing.mode', process.env.ARIA_VERIFY_ROUTING_MODE || 'auto');
       (async () => {
         try {
           await wc.executeJavaScript(
             `(function(){document.querySelectorAll('.overlay,#onboard-overlay,#settings-overlay').forEach(function(e){e.classList.remove('visible');});` +
-            `var ti=document.getElementById('text-input');ti.value=${JSON.stringify(process.env.ARIA_VERIFY_DELEGATE_MSG || 'what is the weather in austin')};` +
+            `var ti=document.getElementById('text-input');ti.value=${JSON.stringify(process.env.ARIA_VERIFY_ROUTING_MSG || 'what is the weather in austin')};` +
             `ti.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));})(); true;`,
           );
-          await delay(2800); // tool_call -> harness -> final answer
+          await delay(2500); // route -> stream -> final answer
           const convo = await wc.executeJavaScript(`(function(){return JSON.stringify(Array.from(document.querySelectorAll('#conversation .message')).map(function(m){return {role:m.classList.contains('user')?'user':'assistant',text:(m.textContent||'').trim()};}));})()`);
-          console.log('[ARIA_VERIFY] delegate-convo=' + convo);
+          console.log('[ARIA_VERIFY] routing-convo=' + convo);
         } catch (e) {
           console.log('[ARIA_VERIFY] error: ' + (e as Error).message);
         }
