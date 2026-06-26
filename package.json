@@ -33,7 +33,8 @@
     "smoke:onboarding": "npm run build && node scripts/smoke-onboarding-llm.js",
     "smoke:local-llm": "npm run build && node scripts/smoke-local-llm.js",
     "smoke:menu": "npm run build && node scripts/smoke-menu.js",
-    "smoke:hover": "npm run build && node scripts/smoke-hover.js"
+    "smoke:hover": "npm run build && node scripts/smoke-hover.js",
+    "smoke:screenshare": "npm run build && node scripts/smoke-screenshare.js"
   },
   "author": "ARIA Project <aria@localhost>",
   "homepage": "https://github.com/aria-voice/aria",

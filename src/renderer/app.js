@@ -195,7 +195,14 @@ async function startScreenShare() {
       screenVideo.muted = true;
       await screenVideo.play();
     }
-    screenTrack.addEventListener('ended', () => { stopScreenShare(); assistantSay('Screen sharing stopped.'); });
+    // Fires when sharing ends for a reason OTHER than our own stop() — e.g. the
+    // user clicks "Stop sharing" in the OS portal. If we already stopped it
+    // ourselves (screenStream is null), don't add a second "stopped" message.
+    screenTrack.addEventListener('ended', () => {
+      if (!isSharing()) return;
+      stopScreenShare();
+      assistantSay('Screen sharing stopped.');
+    });
     if (screenShareBtn) screenShareBtn.classList.add('active');
     // Warm a frame now and keep it fresh in the background, off the send path.
     screenFrameCache = null;

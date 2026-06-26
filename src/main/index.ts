@@ -455,6 +455,49 @@ app.whenReady().then(async () => {
       return; // skip the standard 4s auto-quit while verifying
     }
 
+    // Screen-share chat-state verification (Item 7): fake getDisplayMedia with a
+    // canvas-backed stream (no portal), build a 3+ message conversation, toggle
+    // screen share, and dump the conversation before/after to catch a duplicated
+    // first message. Used by scripts/smoke-screenshare.js.
+    if (process.env.ARIA_VERIFY_SCREENSHARE && mainWindow) {
+      const wc = mainWindow.webContents;
+      const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      if (process.env.ARIA_VERIFY_LLM_ENDPOINT) {
+        config.set('llm.endpoint', process.env.ARIA_VERIFY_LLM_ENDPOINT);
+        config.set('routing.mode', 'llm');
+      }
+      const snap = `(function(){return JSON.stringify(Array.from(document.querySelectorAll('#conversation .message')).map(function(m){return {role:m.classList.contains('user')?'user':'assistant',text:(m.textContent||'').trim()};}));})()`;
+      const sendMsg = async (t: string) => {
+        await wc.executeJavaScript(`(function(){var ti=document.getElementById('text-input');ti.value=${JSON.stringify(t)};ti.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));})(); true;`);
+      };
+      (async () => {
+        try {
+          await wc.executeJavaScript(
+            `(function(){document.querySelectorAll('.overlay,#onboard-overlay,#settings-overlay').forEach(function(e){e.classList.remove('visible');});` +
+            `var c=document.createElement('canvas');c.width=160;c.height=120;var g=c.getContext('2d');g.fillStyle='#123';g.fillRect(0,0,160,120);` +
+            `window.__fakeStream=c.captureStream(2);` +
+            `navigator.mediaDevices.getDisplayMedia=function(){return Promise.resolve(window.__fakeStream);};})(); true;`,
+          );
+          // Build real history: two normal turns (the mock LLM replies so onDone
+          // appends them to the coordinator's shared history).
+          await sendMsg('alpha first message'); await delay(500);
+          await sendMsg('bravo second message'); await delay(500);
+          console.log('[ARIA_VERIFY] convo-before=' + (await wc.executeJavaScript(snap)));
+          // Activate screen share, then send a message WHILE sharing (image
+          // attached). The mock server records the messages array it receives.
+          await wc.executeJavaScript(`(function(){var b=document.getElementById('screen-btn'); if(b) b.click();})(); true;`);
+          await delay(1000);
+          await sendMsg('describe my screen please'); await delay(800);
+          console.log('[ARIA_VERIFY] convo-after=' + (await wc.executeJavaScript(snap)));
+        } catch (e) {
+          console.log('[ARIA_VERIFY] error: ' + (e as Error).message);
+        }
+        await supervisor.stopAll();
+        app.exit(0);
+      })();
+      return;
+    }
+
     // Hover-timestamp verification (Item 6): create two real message bubbles,
     // confirm each carries a data-time and the ::after timestamp is hidden by
     // default, then FORCE :hover on the 2nd bubble via the DevTools protocol and

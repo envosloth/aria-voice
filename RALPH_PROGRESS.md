@@ -320,7 +320,48 @@ Verification:
   off the streaming hot path. No impact.
 
 ## Item 7: Screen share causes chat to duplicate/repeat the first message
-Status: not-started
+Status: done
+Findings: Reproduced the exact scenario deliberately (3+ message conversation, then
+activate screen share, then send a message while sharing) with two rigorous headless
+harnesses — and the CURRENT code does NOT exhibit the bug. Checked all three task
+hypotheses against the live app:
+  1. Re-render/re-seed from index 0 on toggle: the renderer never re-inits chat
+     state on screen-share toggle (snapshot before/after is identical except the
+     expected "Screen sharing is on" line). Not present.
+  2. Duplicate event listener re-firing the first message: every send/toggle
+     listener (textInput keydown, screen-btn click, stt.onResult, llm.onToken) is
+     attached exactly once at module load; the per-share track 'ended' listener is
+     on a fresh track each share. No accumulation. Not present.
+  3. "user said X" payload hardcoded to the first message: the coordinator attaches
+     the screen image to `messages[lastIdx]` (the CURRENT user turn). Captured what
+     the model actually receives — the last user turn is "describe my screen please"
+     WITH the image, not the first message. Not present.
+Git history corroborates: at v1.6.6 (and now) the image already attached to the last
+message; the earlier screen-share duplicate was resolved by the v1.6.2/v1.6.3
+screen-share fixes. So this is already fixed — the value here is locking it down.
+
+Fix (files touched):
+- `scripts/smoke-screenshare.js` (`npm run smoke:screenshare`) + the
+  `ARIA_VERIFY_SCREENSHARE` hook in `src/main/index.ts`: a permanent regression
+  guard. It fakes getDisplayMedia with a canvas-captureStream track (no portal),
+  builds real history against a mock LLM, activates screen share, sends a message
+  while sharing, and asserts (a) no duplicate first message in the chat and (b) the
+  image is attributed to the current user turn.
+- `src/renderer/app.js`: small in-theme hardening — the track 'ended' handler (fires
+  when the user ends sharing from the OS portal) now no-ops if we already stopped
+  sharing ourselves, so it can't add a second "Screen sharing stopped." message.
+
+Verification:
+- `npm run smoke:screenshare`: 5/5 PASS — first user message not duplicated after
+  share, the while-sharing message routes its OWN text to the model, the image is on
+  the current user turn, and no first-message text leaks as the latest user turn.
+- typecheck + build clean.
+- Latency: verification-only + a one-line guard on a user-initiated toggle path; no
+  hot-path impact.
+
+Found but not in scope: my first repro reused a single fake MediaStream across
+toggles, which (artificially) accumulated 'ended' listeners on the same track — a
+non-issue in the real app since getDisplayMedia returns a fresh stream per share.
 
 ## Item 8: Direct LLM doesn't know it can delegate to tools / agent harness
 Status: not-started
