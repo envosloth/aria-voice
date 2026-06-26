@@ -57,6 +57,8 @@ const api = {
       ipcRenderer.invoke(IPC.LLM_TEST, opts),
     onToken: (cb: (token: string) => void) =>
       ipcRenderer.on(IPC.LLM_TOKEN, (_e, token) => cb(token)),
+    onTool: (cb: (info: { name: string; args?: string }) => void) =>
+      ipcRenderer.on(IPC.LLM_TOOL, (_e, info) => cb(info)),
     onDone: (cb: (fullText: string) => void) =>
       ipcRenderer.on(IPC.LLM_DONE, (_e, text) => cb(text)),
     onError: (cb: (error: string) => void) =>

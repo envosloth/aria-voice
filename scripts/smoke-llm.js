@@ -18,6 +18,25 @@ function makeServer() {
       return;
     }
 
+    // Streams OpenAI-style tool_calls: a tool's name arrives in its first delta,
+    // then its argument fragments stream across later deltas, then content.
+    if (req.url === '/tools') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      const events = [
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: 'a', function: { name: 'web_search', arguments: '' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"q":"weather"}' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 1, id: 'b', function: { name: 'open_url', arguments: '' } }] } }] },
+        { choices: [{ delta: { content: 'The ' } }] },
+        { choices: [{ delta: { content: 'weather is sunny.' } }] },
+      ];
+      let j = 0;
+      const t2 = setInterval(() => {
+        if (j < events.length) { res.write(`data: ${JSON.stringify(events[j])}\n\n`); j++; }
+        else { res.write('data: [DONE]\n\n'); clearInterval(t2); res.end(); }
+      }, 10);
+      return;
+    }
+
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const tokens = ['Hello', ', ', 'world', '!'];
     let i = 0;
@@ -38,12 +57,14 @@ function makeServer() {
 function runCase(name, opts) {
   return new Promise((resolve) => {
     const tokens = [];
+    const tools = [];
     let done = null;
     let error = null;
     streamChat(opts, {
       onToken: (t) => tokens.push(t),
-      onDone: (full) => { done = full; resolve({ name, tokens, done, error }); },
-      onError: (e) => { error = e; resolve({ name, tokens, done, error }); },
+      onTool: (info) => tools.push(info),
+      onDone: (full) => { done = full; resolve({ name, tokens, tools, done, error }); },
+      onError: (e) => { error = e; resolve({ name, tokens, tools, done, error }); },
     });
   });
 }
@@ -79,6 +100,14 @@ async function main() {
   const c4ok = !!c4.error && c4.error.includes('No LLM endpoint');
   console.log(`[no-endpoint] error="${c4.error}" -> ${c4ok ? 'PASS' : 'FAIL'}`);
   pass = pass && c4ok;
+
+  // Case 5: tool_calls surfaced once per distinct call, content still aggregates
+  const c5 = await runCase('tools', { endpoint: `${base}/tools`, model: 'mock', message: 'weather?' });
+  const names = c5.tools.map((t) => t.name);
+  const c5ok = c5.done === 'The weather is sunny.' && names.length === 2 &&
+    names[0] === 'web_search' && names[1] === 'open_url' && !c5.error;
+  console.log(`[tools]     tools=${JSON.stringify(names)} done="${c5.done}" -> ${c5ok ? 'PASS' : 'FAIL'}`);
+  pass = pass && c5ok;
 
   server.close();
   console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);

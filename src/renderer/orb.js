@@ -130,13 +130,17 @@
     col[2] += (target[2] - col[2]) * colK;
     const cr = col[0] | 0, cg = col[1] | 0, cb = col[2] | 0;
 
-    // Audio drives ONLY the speaking-state surface deformation — never rotation
-    // speed or overall size. Forced to 0 outside speaking; smoothed + dt-scaled
-    // so a spiky speech envelope ripples the surface smoothly, not jitterily.
+    // Audio drives the speaking-state surface deformation — never rotation speed
+    // or overall size. Only 'speaking' FEEDS new audio in; other states let the
+    // residual decay out. Crucially we DON'T hard-zero react when leaving
+    // speaking: the smoothed level eases down, so a barge-in (speaking ->
+    // listening) makes the orb un-deform GRADUALLY while its colour cross-fades,
+    // instead of snapping flat. In a steady non-speaking state audioSmooth ~= 0,
+    // so there's no residual deformation.
     if (state !== 'speaking') audio = 0;
     audioSmooth += (audio - audioSmooth) * ease(0.15);
-    if (state === 'speaking') audio *= Math.pow(0.92, dt); else audioSmooth *= Math.pow(0.85, dt);
-    const react = state === 'speaking' ? Math.min(1, audioSmooth) : 0;
+    if (state === 'speaking') audio *= Math.pow(0.92, dt); else audioSmooth *= Math.pow(0.9, dt);
+    const react = Math.min(1, audioSmooth);
 
     // Rotation is CONSTANT in every state — same smooth speed whether idle,
     // listening, thinking, or speaking. (dt-scaled, so the angular speed is
@@ -168,8 +172,11 @@
     // which only happens while speaking.
     const rScale = 1 + BREATHE * Math.sin(t * 1.3);
     const r = baseR * rScale;
-    // Speaking-only deformation amplitude (0 in every other state).
-    const dAmp = react * 0.13;
+    // Speaking deformation amplitude. Tracks the (eased) voice level, so it
+    // ramps in when speaking and eases back out on a barge-in. Higher than the
+    // first pass — the deformation was too subtle — but the waves are smooth +
+    // low-frequency so it stays a rounded blob, not spikes.
+    const dAmp = react * 0.24;
 
     // "Nearness" is measured by the perspective scale (pp): a larger pp means the
     // point is closer to the viewer. Using pp (not the raw rotated z) removes any

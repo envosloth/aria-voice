@@ -151,6 +151,7 @@ export async function coordinate(
 
     activeHandle = streamChat({ endpoint, model, apiKey, messages }, {
       onToken: cb.onToken,
+      onTool: cb.onTool,
       onDone: (fullText) => {
         // Remember which target answered (drives stickiness next turn) and append
         // its reply to the shared history.

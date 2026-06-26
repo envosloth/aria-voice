@@ -25,6 +25,7 @@ export const IPC = {
   LLM_SEND: 'llm:send',
   LLM_CANCEL: 'llm:cancel',     // renderer -> main: abort the in-flight generation (barge-in)
   LLM_TOKEN: 'llm:token',
+  LLM_TOOL: 'llm:tool',        // main -> renderer: a tool the harness invoked (shown above the reply)
   LLM_DONE: 'llm:done',
   LLM_ERROR: 'llm:error',
   LLM_TEST: 'llm:test',        // renderer -> main: test a provider endpoint/key

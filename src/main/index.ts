@@ -200,6 +200,7 @@ function setupIpcHandlers(): void {
     coordinate(message, {
       onRoute: (info) => mainWindow?.webContents.send(IPC.LLM_ROUTE, info),
       onToken: (token) => mainWindow?.webContents.send(IPC.LLM_TOKEN, token),
+      onTool: (info) => mainWindow?.webContents.send(IPC.LLM_TOOL, info),
       onDone: (text) => mainWindow?.webContents.send(IPC.LLM_DONE, text),
       onError: (err) => mainWindow?.webContents.send(IPC.LLM_ERROR, err),
     }, { image });
@@ -375,6 +376,33 @@ app.whenReady().then(async () => {
               : `AriaOrb.setState('${s}'); AriaOrb.pump(100); true;`;
             await mainWindow.webContents.executeJavaScript(js);
             await new Promise((r) => setTimeout(r, 300));
+          }
+          if (process.env.ARIA_CHAT_DEMO) {
+            // Drive a fake harness turn through the REAL IPC path (route + tool
+            // chips + streamed text) so the tool-usage UI can be screenshotted.
+            // Click "Skip setup" so the first-run onboarding overlay is dismissed
+            // for good (it loads async and otherwise re-shows over the chat).
+            await mainWindow.webContents.executeJavaScript(
+              `(function(){var s=document.getElementById('onb-skip'); if(s) s.click();` +
+              `document.querySelectorAll('.overlay,#onboard-overlay,#settings-overlay').forEach(e=>e.classList.remove('visible'));})(); true;`,
+            );
+            await new Promise((r) => setTimeout(r, 100));
+            const wc = mainWindow.webContents;
+            wc.send(IPC.LLM_ROUTE, { target: 'harness', name: 'Agent' });
+            wc.send(IPC.LLM_TOOL, { name: 'web_search', args: '{"q":"weather Austin"}' });
+            wc.send(IPC.LLM_TOOL, { name: 'get_weather' });
+            wc.send(IPC.LLM_TOOL, { name: 'web_search' }); // duplicate -> ×2
+            for (const tok of ['It’s ', 'sunny ', 'and 75°F ', 'in Austin ', 'right now.']) {
+              wc.send(IPC.LLM_TOKEN, tok);
+            }
+            await new Promise((r) => setTimeout(r, 300));
+            // The first-run onboarding overlay loads async and can re-show after
+            // the earlier dismiss — clear it again, then let the (hidden-window)
+            // compositor settle so the capture reflects the cleared DOM.
+            await wc.executeJavaScript(
+              `document.querySelectorAll('.overlay,#onboard-overlay,#settings-overlay').forEach(e=>e.classList.remove('visible')); true;`,
+            );
+            await new Promise((r) => setTimeout(r, 350));
           }
           const img = await mainWindow.webContents.capturePage();
           require('fs').writeFileSync(process.env.ARIA_SMOKE_SHOT, img.toPNG());

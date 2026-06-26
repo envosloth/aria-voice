@@ -320,6 +320,23 @@
     .route-llm { background: var(--accent); }
     .route-harness { background: var(--accent-active); }
 
+    /* Tool-usage row: shows which tools the agent harness invoked, above the
+       reply text. */
+    .msg-tools {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      margin: 2px 0 8px;
+    }
+    .tool-chip {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 11px; font-weight: 600; line-height: 1;
+      padding: 4px 8px; border-radius: 6px;
+      background: rgba(var(--accent-rgb), 0.16);
+      border: 1px solid rgba(var(--accent-rgb), 0.4);
+      color: var(--text);
+    }
+    .tool-chip-icon { font-size: 11px; filter: grayscale(0.2); }
+    .tool-chip-count { opacity: 0.7; font-weight: 700; }
+
     /* Onboarding */
     .onboard-overlay {
       position: fixed; inset: 0; background: var(--bg);

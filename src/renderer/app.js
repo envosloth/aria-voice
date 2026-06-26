@@ -337,6 +337,8 @@ function bargeIn() {
   streamBuf = '';
   streamTextNode = null;
   currentAssistantMsg = null;
+  currentToolsEl = null;
+  toolChips = null;
   pendingRoute = null;
 }
 
@@ -404,6 +406,10 @@ aria.llm.onRoute((info) => { pendingRoute = info; });
 let streamTextNode = null;
 let streamBuf = '';
 let streamFlushScheduled = false;
+// Tool-usage row for the in-progress assistant message (the harness's tool calls
+// are shown here, above the reply text). Reset whenever the message is.
+let currentToolsEl = null;
+let toolChips = null; // Map<toolName, { el, count, countEl }>
 
 function ensureAssistantMsg() {
   if (currentAssistantMsg) return;
@@ -412,11 +418,50 @@ function ensureAssistantMsg() {
     const badge = document.createElement('span');
     badge.className = 'route-badge route-' + pendingRoute.target;
     badge.textContent = pendingRoute.name;
-    currentAssistantMsg.prepend(badge);
+    currentAssistantMsg.appendChild(badge);
     pendingRoute = null;
   }
+  // Tools the harness invokes get listed here, ABOVE the answer text. Hidden
+  // until the first tool actually arrives so plain chat replies have no empty row.
+  currentToolsEl = document.createElement('div');
+  currentToolsEl.className = 'msg-tools';
+  currentToolsEl.style.display = 'none';
+  toolChips = new Map();
+  currentAssistantMsg.appendChild(currentToolsEl);
+
   streamTextNode = document.createTextNode('');
   currentAssistantMsg.appendChild(streamTextNode);
+}
+
+// Show (or bump the count on) a chip for a tool the harness just used.
+function addToolChip(info) {
+  ensureAssistantMsg();
+  if (!currentToolsEl) return;
+  const name = (info && info.name ? String(info.name) : '').trim();
+  if (!name) return;
+  currentToolsEl.style.display = '';
+  const existing = toolChips.get(name);
+  if (existing) { // same tool called again -> show a ×N count instead of a dupe
+    existing.count += 1;
+    existing.countEl.textContent = '×' + existing.count;
+    existing.countEl.style.display = '';
+    return;
+  }
+  const chip = document.createElement('span');
+  chip.className = 'tool-chip';
+  const icon = document.createElement('span');
+  icon.className = 'tool-chip-icon';
+  icon.textContent = '🔧';
+  const label = document.createElement('span');
+  label.textContent = name;
+  const countEl = document.createElement('span');
+  countEl.className = 'tool-chip-count';
+  countEl.style.display = 'none';
+  chip.append(icon, label, countEl);
+  if (info && info.args) chip.title = String(info.args).slice(0, 240);
+  currentToolsEl.appendChild(chip);
+  toolChips.set(name, { el: chip, count: 1, countEl });
+  conversationEl.scrollTop = conversationEl.scrollHeight;
 }
 
 function flushStream() {
@@ -512,6 +557,9 @@ function feedTtsStream(token) {
 
 function resetTtsStream() { ttsStreamBuf = ''; ttsTurnSpeaking = false; }
 
+// A tool the harness invoked — show it above the reply as it happens.
+aria.llm.onTool((info) => { try { addToolChip(info); } catch (e) {} });
+
 aria.llm.onToken((token) => {
   cancelThinkingHold(); // reply has started — no "hold on" needed
   ensureAssistantMsg();
@@ -534,6 +582,8 @@ aria.llm.onDone((fullText) => {
   }
   currentAssistantMsg = null;
   streamTextNode = null;
+  currentToolsEl = null;
+  toolChips = null;
   pendingRoute = null;
   // Speak the final partial sentence. If nothing was streamed (non-streaming
   // reply), speak the whole text — orbState('speaking') is set inside speakChunk.
@@ -688,6 +738,8 @@ aria.llm.onError((error) => {
   streamBuf = '';
   streamTextNode = null;
   currentAssistantMsg = null;
+  currentToolsEl = null;
+  toolChips = null;
   resetTtsStream(); // drop any half-buffered sentence; turn is over
   orbState('idle');
   showError(`LLM error: ${error}. Text input remains available.`);
