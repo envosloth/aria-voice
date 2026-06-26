@@ -4,9 +4,9 @@
 > Those files are now historical; this file is canonical going forward.
 
 ## Current Status (overwrite each iteration)
-Run #: 1 | Iteration #: 2 | Last benchmark: STT 953→502ms (e2e), 810→370ms (warm inference) | Last change: default STT model small→base.en | Verified?: yes
-Biggest bottleneck: TTS first-chunk variance (kokoro, cold synthesis 539–831ms) — now the dominant local-latency factor; e2e LOCAL budget flaky (2/4 over) entirely due to this
-Next target: TTS first-chunk latency/variance (iter 3) — prewarm/cold-synthesis investigation to get e2e reliably green
+Run #: 1 | Iteration #: 3 | Last benchmark: TTS first-chunk -350 to -490ms on clause-leading replies | Last change: split first sentence at first clause boundary | Verified?: yes
+Biggest bottleneck: TTS first-chunk floor for COMMA-LESS single sentences (~600-800ms kokoro, inherent) + run-to-run variance; the clause-split cannot shorten a comma-less opener
+Next target: PLATEAU CHECK — remaining local-latency levers are higher-risk/lower-yield. Lean toward stopping (§12) and running the §13 ship gate. Candidates left: real-provider latency baseline (needs a live provider); TTS engine/quant alternatives (need audio QA, can't verify by ear here).
 
 ## Pre-loop baseline (from Item 0 harness, prior loop)
 - App-side pre-network overhead: ~3ms, TTFT-independent (user_input → llm_request).
@@ -28,6 +28,14 @@ Harness commands: `npm run perf:baseline`, `npm run perf:live [ttftMs]`, `npm ru
 
 ## History (append-only, newest first)
 
+### Iter 3 — 2026-06-26
+Bottleneck: TTS first-chunk latency (kokoro). Measured (§4): kokoro synth is ~0.26x realtime, scales linearly with text length; the first audio chunk waits for the ENTIRE first sentence (~600ms warm for a 7-word sentence, spiking to ~825ms under load). Ruled out: cold-start (3 consecutive ~825ms; warmup already exists via _warmup_kokoro "Ready."), idle-threadpool-spindown (idle gap gave 592-797ms, no clean correlation — it's inherent CPU jitter), ONNX thread tuning (kokoro_onnx creates InferenceSession with default threads, no clean hook). Only lever: emit a shorter first unit.
+Change: `sidecars/tts/main.py` — new `_chunks_for()` splits the FIRST sentence at its first clause boundary (comma/semicolon/colon/dash — natural pauses kokoro already renders as pauses, so prosody-safe), only when the first sentence is ≥20 chars and both head (≥4) and tail (≥6) are substantial. Only the first sentence is split (into ≤2 parts); the rest stay whole for smooth prosody + to avoid create() overhead on fragments.
+Before/After (measured through the real sidecar, time-to-first-tts_chunk): "Sure, it is currently sunny in Austin today." 845→358ms (-487ms); "According to the latest forecast, ..." 992→643ms (-349ms); "Well, ..." ~690→~296ms (-394ms). Comma-less sentences UNCHANGED: "I heard you say the test numbers." stays 1 chunk (zero regression).
+Gate: pass. smoke:tts PASS (byte-accounting exact, 3 chunks — short opener "Hello from ARIA." <20 chars stays whole), smoke:e2e PASS this run (comma-less reply unaffected; STT 401ms + TTS 763ms = 1164 < 1300), smoke:routing-invariant PASS. No build needed (Python sidecar).
+Honest scope note: this improves real-world TTFA for clause-leading replies (very common: "Sure,", "Well,", "According to ...,") but does NOT change the comma-less e2e benchmark sentence, so it does not resolve the e2e budget flakiness (that's kokoro's inherent single-sentence floor + jitter, logged in BACKLOG). It targets the mission metric (speech→first audio), not the benchmark.
+Outcome: kept. Commit: <pending>.
+
 ### Iter 2 — 2026-06-26
 Bottleneck: STT latency. e2e LOCAL budget OVER; measured the STT sidecar (whisper-server, Vulkan, RX 9060 XT) at ~810ms warm inference for a short utterance (953ms in e2e incl. 100ms flush + overhead). Verified it is NOT cold-start (3 consecutive transcribes all ~825ms) and NOT CPU fallback (Vulkan0 backend confirmed in server log). Whisper encodes a fixed 30s window, so cost is model-size-bound.
 Change: `DEFAULT_STT_MODEL` small→base.en (`src/shared/constants.ts`) + sidecar standalone fallback small→base.en (`sidecars/stt/main.py`). Updated STT_MODELS descriptions (moved "(default)" label).
@@ -35,7 +43,7 @@ Investigation that ruled out alternatives (measured, §4): flash-attn (`-fa`) is
 Accuracy (measured both, §4): base.en vs small on 5 hard phrases (numbers, %, "Dr. Alvarez", "Kubernetes", "authentication service", timers/reminders) = 4/5 identical; base.en differs only on the rare foreign proper noun "Reykjavik"→"Rick de Vec". Equivalent for common English commands; small/medium remain opt-in via Settings for accuracy-sensitive users.
 Before: STT 953ms (e2e) / ~810ms warm inference. After: STT 502ms (e2e) / ~370ms warm inference. −451ms on the voice critical path.
 Gate: pass (no regression introduced). smoke:stt PASS (base.en transcribes correctly through the sidecar), smoke:models PASS (uses 'small' explicitly, unaffected), smoke:routing-invariant 6/6, build clean. e2e: STT now stable 502–503ms across 4 runs; LOCAL budget is now TTS-bound and flaky (2 PASS / 2 FAIL) entirely due to TTS first-chunk variance (539–831ms) — a separate subsystem, escalated to iter 3 (my STT change took e2e from ALWAYS-fail to passes-when-TTS-normal; strictly an improvement, not a regression).
-Outcome: kept. Commit: <pending>.
+Outcome: kept. Commit: 375949c.
 
 ### Iter 1 — 2026-06-26
 Bottleneck: routing-invariant violation — v2.0.0's `delegate_to_agent` tool was offered to the DIRECT conversational LLM (reproduced: `smoke:delegate` showed `llm requests: [{hasTools:true}]`, model invoked the tool). Violates §2 (direct LLM must have zero tools at the model level; routing decision must be pre-invocation, not a tool the model calls mid-reply).
