@@ -215,11 +215,31 @@ Verification:
   on the path; no measurable change.
 
 ## Item 4: Remove "File, Edit, View, Window" menu bar items
-Status: not-started
-Findings (early): `src/main/index.ts` never calls `Menu.setApplicationMenu`, so
-Electron shows its DEFAULT menu (File/Edit/View/Window). Fix will likely be
-`Menu.setApplicationMenu(null)` while preserving copy/paste accelerators (role-based
-or a minimal hidden menu).
+Status: done
+Findings: `src/main/index.ts` never called `Menu.setApplicationMenu`, so Electron
+rendered its DEFAULT application menu (File / Edit / View / Window) in the window's
+menu bar. The Edit menu is also what carries the standard copy/paste/undo
+accelerators, so a blind `setApplicationMenu(null)` would risk those shortcuts.
+
+Fix (files touched — `src/main/index.ts`):
+- `applyAppMenu()`: replaces the default menu with an Edit-only menu
+  (`Menu.buildFromTemplate([{ role: 'editMenu' }])`) — this keeps the
+  undo/redo/cut/copy/paste/selectAll accelerators registered app-wide.
+- `createWindow()`: `win.autoHideMenuBar = false` + `win.setMenuBarVisibility(false)`
+  so the bar is fully hidden (and can't be revealed with Alt). Net effect: the user
+  sees NO menu, File/View/Window are gone, and editing shortcuts still work in the
+  chat box and on selected transcript text.
+- Verification hook `ARIA_VERIFY_MENU` + `scripts/smoke-menu.js`
+  (`npm run smoke:menu`).
+
+Verification:
+- `npm run smoke:menu` (real app headless): 7/7 PASS. Live main-process menu state:
+  `appmenu-toplevel=["Edit"]`, `appmenu-roles=["undo","redo","cut","copy","paste",
+  "delete","selectall"]`, `menubar-visible=false`. So no File/View/Window, the bar
+  is hidden, and copy/paste/selectAll accelerators are preserved.
+- Standard `smoke:boot` still reaches `[ARIA_SMOKE] OK` (window still displays;
+  hiding the bar didn't break boot). typecheck + build clean.
+- Latency: main-process menu setup at startup only — off the interaction hot path.
 
 ## Item 5: Large response delay even with direct LLM provider
 Status: not-started

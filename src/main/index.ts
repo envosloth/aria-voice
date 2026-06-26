@@ -70,6 +70,13 @@ function createWindow(): BrowserWindow {
     },
   });
 
+  // Hide the menu bar entirely (no File/Edit/View/Window). autoHideMenuBar stays
+  // false + setMenuBarVisibility(false) so it can't be revealed with Alt either.
+  // Editing accelerators are preserved by the app-level edit menu (see
+  // applyAppMenu); this just removes the visible bar.
+  win.autoHideMenuBar = false;
+  win.setMenuBarVisibility(false);
+
   if (SMOKE) {
     // Surface renderer console + load failures to the main stdout so the
     // headless boot test can assert the renderer JS ran without throwing.
@@ -116,6 +123,17 @@ function showMainWindow(): void {
   if (!mainWindow.isVisible()) mainWindow.show();
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.focus();
+}
+
+// Replace Electron's DEFAULT application menu (which shows File / Edit / View /
+// Window) with an Edit-only menu. The visible bar is hidden per-window (see
+// createWindow), so nothing shows on screen — but keeping the `editMenu` roles
+// in the application menu preserves the standard editing accelerators
+// (undo/redo/cut/copy/paste/selectAll) app-wide, so copy/paste still work in the
+// chat box and on selected transcript text even with no visible menu.
+function applyAppMenu(): void {
+  const menu = Menu.buildFromTemplate([{ role: 'editMenu' }]);
+  Menu.setApplicationMenu(menu);
 }
 
 function createTray(): void {
@@ -331,6 +349,9 @@ app.whenReady().then(async () => {
     console.error('[ARIA] display-media handler setup failed:', (e as Error).message);
   }
 
+  // Remove the default File/Edit/View/Window menu (keep editing accelerators).
+  applyAppMenu();
+
   mainWindow = createWindow();
   try {
     createTray();
@@ -376,6 +397,22 @@ app.whenReady().then(async () => {
   if (SMOKE) {
     // Headless boot test: confirm the app initialized, then quit cleanly.
     console.log('[ARIA_SMOKE] app ready, window+tray+supervisor initialized');
+
+    // Menu verification (Item 4): report the application menu's top-level labels,
+    // the editing roles it still carries, and whether the window's menu bar is
+    // visible. Consumed by scripts/smoke-menu.js.
+    if (process.env.ARIA_VERIFY_MENU) {
+      const m = Menu.getApplicationMenu();
+      const labels = m ? m.items.map((i) => i.label || i.role || '') : [];
+      const roles: string[] = [];
+      if (m) for (const it of m.items) {
+        const sub = it.submenu;
+        if (sub) for (const s of sub.items) if (s.role) roles.push(s.role);
+      }
+      console.log('[ARIA_VERIFY] appmenu-toplevel=' + JSON.stringify(labels));
+      console.log('[ARIA_VERIFY] appmenu-roles=' + JSON.stringify(roles));
+      console.log('[ARIA_VERIFY] menubar-visible=' + (mainWindow ? mainWindow.isMenuBarVisible() : 'n/a'));
+    }
 
     // Live latency baseline: when ARIA_PERF_LIVE points at a (mock) endpoint,
     // drive ONE real text turn through the genuine UI path (text box -> Enter ->

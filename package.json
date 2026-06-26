@@ -30,7 +30,8 @@
     "perf:live": "npm run build && node scripts/perf-live.js",
     "smoke:settings": "npm run build && node scripts/smoke-settings-live.js",
     "smoke:onboarding": "npm run build && node scripts/smoke-onboarding-llm.js",
-    "smoke:local-llm": "npm run build && node scripts/smoke-local-llm.js"
+    "smoke:local-llm": "npm run build && node scripts/smoke-local-llm.js",
+    "smoke:menu": "npm run build && node scripts/smoke-menu.js"
   },
   "author": "ARIA Project <aria@localhost>",
   "homepage": "https://github.com/aria-voice/aria",
