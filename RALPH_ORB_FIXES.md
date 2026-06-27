@@ -15,6 +15,11 @@ Visual items are verified by tests + code reasoning only; each carries a MANUAL 
 
 ---
 
+## Release
+All 5 items done + committed per item; pre-existing smoke:hardware failure fixed.
+Full `smoke:all` GREEN (16/16 suites). Released as **v2.5.0**: fast-forward main,
+`chore(release): v2.5.0`, tag `v2.5.0` pushed → CI builds + draft GitHub Release.
+
 ## Item 2: Orb stays green after the agent finishes speaking
 Status: done
 Root cause (confirmed in code): the orb is set to 'speaking' in `speakChunk`, and the
