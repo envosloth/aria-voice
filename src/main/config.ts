@@ -42,6 +42,11 @@ interface AppConfig {
     // on-device STT so a spoken reply can't drive the GPU to 100% and freeze the
     // desktop on weaker hardware. See hardware.ts/perfProfile.
     gpuCap: number;
+    // Resource-usage preset that drives STT model/backend/threads, TTS engine/
+    // voice, orb quality, and gpuCap as one spec-aware bundle. 'auto' optimises
+    // for the host; 'custom' = the user changed an individual setting by hand.
+    // See hardware.ts/resolveProfile.
+    perfPreset: 'auto' | 'power-saver' | 'balanced' | 'max-performance' | 'custom';
   };
   debug: {
     // When true, emit [ARIA_PERF] latency stage marks (see perf.ts). Off by
@@ -92,6 +97,7 @@ const defaults: AppConfig = {
     theme: 'system',
     onboarded: false,
     gpuCap: 50,
+    perfPreset: 'auto',
   },
   debug: {
     perf: false,

@@ -8,7 +8,7 @@ import { streamChat } from './llm-stream';
 import { coordinate, cancelCoordination } from './coordinator';
 import { buildManifest, missingModels, downloadModel } from './model-manager';
 import { perfEnabled, setPerfEnabled, perfMark, perfMarkExternal } from './perf';
-import { detectHardware, perfProfile, clampCap } from './hardware';
+import { detectHardware, perfProfile, clampCap, resolveProfile, isPerfPreset, PerfPreset } from './hardware';
 import {
   initUpdater, checkForUpdates, installUpdate, openReleasePage,
   currentVersion, deliveryChannel, isInstallingUpdate,
@@ -211,14 +211,19 @@ function setupIpcHandlers(): void {
     if (key === 'wakeword.phrase' || key === 'wakeword.enabled') {
       scheduleWakewordReload();
     } else if (key === 'tts.voice' || key === 'tts.engine') {
-      scheduleSidecarReload('tts');
+      markCustomIfManaged(); scheduleSidecarReload('tts');
     } else if (key === 'stt.model' || key === 'stt.backend') {
-      scheduleSidecarReload('stt');
+      markCustomIfManaged(); scheduleSidecarReload('stt');
     } else if (key === 'ui.gpuCap') {
       // The GPU cap changes STT's thread budget (and possibly its backend), which
       // the sidecar only reads at spawn — reload it so the new cap takes effect
       // live. The orb's quality is applied renderer-side (see app.js).
-      scheduleSidecarReload('stt');
+      markCustomIfManaged(); scheduleSidecarReload('stt');
+    } else if (key === 'ui.perfPreset') {
+      // Picking a resource preset writes a whole bundle of concrete settings
+      // (STT model/backend, TTS engine/voice, GPU cap) and reloads the sidecars,
+      // so the change is real + observable. 'custom' applies nothing.
+      void applyResourcePreset(value as PerfPreset);
     }
   });
 
@@ -764,6 +769,37 @@ function migrateConfig(): void {
   if (eng === 'piper' && /^(af_|am_|bf_|bm_)/.test(voice)) {
     config.set('tts.engine', 'kokoro');
   }
+}
+
+// Flip the active resource preset to 'custom' when the user hand-edits one of the
+// preset-managed settings (STT model/backend, TTS engine/voice, GPU cap), so the
+// UI reflects that they've diverged from the preset. Writes done BY a preset go
+// through applyResourcePreset (config.set directly), never this IPC path, so they
+// don't trip this.
+function markCustomIfManaged(): void {
+  if (config.get('ui.perfPreset') !== 'custom') config.set('ui.perfPreset', 'custom');
+}
+
+// Apply a resource preset: resolve it against the detected hardware, persist the
+// concrete bundle (STT model/backend, TTS engine/voice, GPU cap), and reload the
+// STT + TTS sidecars so the change is REAL — a different model/backend/voice
+// actually runs, not just a label. 'custom' is a no-op (keeps manual settings).
+async function applyResourcePreset(preset: PerfPreset): Promise<void> {
+  if (!isPerfPreset(preset) || preset === 'custom') return;
+  const hw = detectHardware();
+  const p = resolveProfile(preset, hw);
+  config.set('stt.model', p.sttModel);
+  config.set('stt.backend', p.sttBackend);
+  config.set('tts.engine', p.ttsEngine);
+  config.set('tts.voice', p.ttsVoice);
+  config.set('ui.gpuCap', p.gpuCapPct);
+  console.log(
+    `[ARIA] resource preset '${preset}' -> stt=${p.sttModel}/${p.sttBackend} threads=${p.sttThreads} ` +
+    `tts=${p.ttsEngine}/${p.ttsVoice} orb=${p.orbQuality} gpuCap=${p.gpuCapPct}%`,
+  );
+  if (SMOKE || !supervisor) return;
+  scheduleSidecarReload('stt');
+  scheduleSidecarReload('tts');
 }
 
 function applyConfigToEnv(): void {

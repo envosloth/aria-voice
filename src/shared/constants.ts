@@ -26,7 +26,8 @@ export const RSS_LIMITS_MB: Record<SidecarName, number> = {
 export const MEMORY_CHECK_INTERVAL_MS = 30000;
 
 export const STT_MODELS = {
-  'base.en': { size: '74M', description: 'Fast, English-only (default)' },
+  'tiny.en': { size: '39M', description: 'Fastest, English-only (low-end / max responsiveness)' },
+  'base.en': { size: '74M', description: 'Fast, English-only (recommended)' },
   'small': { size: '244M', description: 'Balanced accuracy/speed' },
   'medium': { size: '769M', description: 'Higher accuracy, slower' },
 } as const;

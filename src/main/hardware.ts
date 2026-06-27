@@ -189,3 +189,123 @@ export function clampCap(pct: unknown): number {
   const n = typeof pct === 'number' && Number.isFinite(pct) ? pct : 50;
   return Math.max(20, Math.min(100, Math.round(n)));
 }
+
+// ---------------------------------------------------------------------------
+// Resource-usage presets.
+//
+// A preset is a single, observable bundle of EVERY runtime knob — the STT model
+// size + backend + threads, the TTS engine/voice, the orb render quality, and the
+// GPU cap — so picking one produces a real, measurable change (not just a number
+// the UI shows). The whole point: a user (or the spec-aware 'auto' default) flips
+// one control and ARIA actually gets lighter/heavier, optimised for the lowest
+// latency the detected hardware can sustain while still running on weak machines.
+//
+// Concrete config is what gets written (see index.ts applyResourcePreset), so the
+// sidecars + orb consume real values and any manual change just edits a field and
+// flips the preset to 'custom'.
+
+export type PerfPreset = 'auto' | 'power-saver' | 'balanced' | 'max-performance' | 'custom';
+
+export interface ResourceProfile {
+  preset: PerfPreset;          // which preset produced this (resolved, never 'auto')
+  sttModel: string;            // whisper ggml model: tiny.en | base.en | small | medium
+  sttBackend: 'vulkan' | 'cpu';
+  sttThreads: number;          // whisper -t
+  ttsEngine: 'piper' | 'kokoro';
+  ttsVoice: string;
+  orbQuality: 'low' | 'medium' | 'high';
+  gpuCapPct: number;
+}
+
+// Default voices per engine. Kokoro 'bm_george' is the refined British "Jarvis";
+// Piper 'en_US-lessac-medium' is the small, very-low-latency CPU voice.
+const KOKORO_DEFAULT_VOICE = 'bm_george';
+const PIPER_DEFAULT_VOICE = 'en_US-lessac-medium';
+
+// Threads for a given cap, leaving a core free for UI/audio on multicore hosts.
+function threadsFor(hw: HardwareInfo, capPct: number): number {
+  const headroom = hw.cpuCores > 2 ? hw.cpuCores - 1 : hw.cpuCores;
+  return Math.max(1, Math.min(headroom, Math.round(hw.cpuCores * (capPct / 100))));
+}
+
+// 'auto' resolves to a concrete profile tuned for the LOWEST latency the tier can
+// sustain: a fast STT model (tiny on weak hardware, base elsewhere), GPU STT only
+// when there's a usable discrete GPU, the light Piper voice on low-end hardware
+// (Kokoro is heavier to first-audio) and the nicer Kokoro voice where it's
+// affordable, and orb quality scaled to the tier.
+function autoProfile(hw: HardwareInfo): ResourceProfile {
+  const discrete = hw.gpu.discrete;
+  if (hw.tier === 'low') {
+    const cap = 40;
+    return {
+      preset: 'auto', sttModel: 'tiny.en', sttBackend: 'cpu', sttThreads: threadsFor(hw, cap),
+      ttsEngine: 'piper', ttsVoice: PIPER_DEFAULT_VOICE, orbQuality: 'low', gpuCapPct: cap,
+    };
+  }
+  if (hw.tier === 'medium') {
+    const cap = 70;
+    return {
+      preset: 'auto', sttModel: 'base.en', sttBackend: discrete ? 'vulkan' : 'cpu', sttThreads: threadsFor(hw, cap),
+      ttsEngine: 'kokoro', ttsVoice: KOKORO_DEFAULT_VOICE, orbQuality: 'medium', gpuCapPct: cap,
+    };
+  }
+  // high
+  const cap = 100;
+  return {
+    preset: 'auto', sttModel: 'base.en', sttBackend: 'vulkan', sttThreads: threadsFor(hw, cap),
+    ttsEngine: 'kokoro', ttsVoice: KOKORO_DEFAULT_VOICE, orbQuality: 'high', gpuCapPct: cap,
+  };
+}
+
+/**
+ * Resolve a preset (given the detected hardware) to the concrete bundle of knobs
+ * to apply. 'auto' is spec-aware; the explicit presets are fixed intents that
+ * still scale their thread budget to the host. 'custom' has no profile (the
+ * caller keeps the user's manual settings) so it resolves like 'auto' only as a
+ * safe fallback if ever asked.
+ */
+export function resolveProfile(preset: PerfPreset, hw: HardwareInfo): ResourceProfile {
+  switch (preset) {
+    case 'power-saver': {
+      const cap = 30;
+      return {
+        preset, sttModel: 'tiny.en', sttBackend: 'cpu', sttThreads: threadsFor(hw, cap),
+        ttsEngine: 'piper', ttsVoice: PIPER_DEFAULT_VOICE, orbQuality: 'low', gpuCapPct: cap,
+      };
+    }
+    case 'balanced': {
+      const cap = 60;
+      return {
+        preset, sttModel: 'base.en', sttBackend: hw.gpu.discrete ? 'vulkan' : 'cpu', sttThreads: threadsFor(hw, cap),
+        ttsEngine: 'kokoro', ttsVoice: KOKORO_DEFAULT_VOICE, orbQuality: 'medium', gpuCapPct: cap,
+      };
+    }
+    case 'max-performance': {
+      const cap = 100;
+      // A bigger STT model only where there's headroom for it (high tier); medium/
+      // low stay on base so "max" never makes a weak machine unusably slow.
+      const sttModel = hw.tier === 'high' ? 'small' : 'base.en';
+      return {
+        preset, sttModel, sttBackend: hw.gpu.discrete ? 'vulkan' : 'cpu', sttThreads: threadsFor(hw, cap),
+        ttsEngine: 'kokoro', ttsVoice: KOKORO_DEFAULT_VOICE, orbQuality: 'high', gpuCapPct: cap,
+      };
+    }
+    case 'auto':
+    case 'custom':
+    default:
+      return autoProfile(hw);
+  }
+}
+
+// Preset metadata for the Settings dropdown (order = display order).
+export const PERF_PRESETS: { id: PerfPreset; label: string; desc: string }[] = [
+  { id: 'auto', label: 'Auto (recommended)', desc: 'Detects your hardware and picks the fastest settings it can run smoothly.' },
+  { id: 'power-saver', label: 'Power saver', desc: 'Smallest models, CPU-only, minimal GPU — runs light on any machine.' },
+  { id: 'balanced', label: 'Balanced', desc: 'Fast STT + natural Kokoro voice at moderate resource use.' },
+  { id: 'max-performance', label: 'Max performance', desc: 'Largest models your hardware allows, full GPU, best accuracy/quality.' },
+  { id: 'custom', label: 'Custom', desc: 'Your own manual choices (set automatically when you change a setting).' },
+];
+
+export function isPerfPreset(v: unknown): v is PerfPreset {
+  return v === 'auto' || v === 'power-saver' || v === 'balanced' || v === 'max-performance' || v === 'custom';
+}

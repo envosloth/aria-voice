@@ -4,7 +4,7 @@
  * Performance panel. No Electron/GPU needed: hardware.ts is pure Node, and perf.js
  * is loaded into a minimal window stub. */
 const path = require('path');
-const { detectHardware, perfProfile, clampCap } = require('../dist/main/hardware');
+const { detectHardware, perfProfile, clampCap, resolveProfile, isPerfPreset } = require('../dist/main/hardware');
 
 let pass = true;
 function check(name, cond, detail) {
@@ -41,6 +41,33 @@ for (const cap of [35, 50, 80, 100]) {
 }
 // A very low cap must keep STT off the GPU (so GPU stays near idle).
 check('profile.35.cpu', perfProfile(hw, 35).sttBackend === 'cpu', perfProfile(hw, 35).sttBackend);
+
+// ---- resource presets (resolveProfile) ----------------------------------
+const VALID_STT = ['tiny.en', 'base.en', 'small', 'medium'];
+for (const preset of ['auto', 'power-saver', 'balanced', 'max-performance']) {
+  const p = resolveProfile(preset, hw);
+  check(`preset.${preset}.sttModel`, VALID_STT.includes(p.sttModel), p.sttModel);
+  check(`preset.${preset}.ttsEngine`, ['piper', 'kokoro'].includes(p.ttsEngine), p.ttsEngine);
+  check(`preset.${preset}.orb`, ['low', 'medium', 'high'].includes(p.orbQuality), p.orbQuality);
+  check(`preset.${preset}.cap`, p.gpuCapPct >= 20 && p.gpuCapPct <= 100, String(p.gpuCapPct));
+  check(`preset.${preset}.threads`, p.sttThreads >= 1 && p.sttThreads <= hw.cpuCores, String(p.sttThreads));
+}
+// Power saver is the lightest bundle; max-performance the heaviest — and they
+// must be DISTINCT (the user's complaint was that presets changed nothing).
+const ps = resolveProfile('power-saver', hw);
+const mp = resolveProfile('max-performance', hw);
+const auto = resolveProfile('auto', hw);
+check('power-saver.cpu', ps.sttBackend === 'cpu', ps.sttBackend);
+check('power-saver.piper', ps.ttsEngine === 'piper', ps.ttsEngine);
+check('power-saver.tiny', ps.sttModel === 'tiny.en', ps.sttModel);
+check('power-saver.orb-low', ps.orbQuality === 'low', ps.orbQuality);
+check('power-saver.cap-low', ps.gpuCapPct <= 35, String(ps.gpuCapPct));
+check('max.orb-high', mp.orbQuality === 'high', mp.orbQuality);
+check('max.cap-100', mp.gpuCapPct === 100, String(mp.gpuCapPct));
+check('presets-distinct', JSON.stringify(ps) !== JSON.stringify(mp) && JSON.stringify(ps) !== JSON.stringify(auto),
+  'power-saver / max / auto must differ');
+check('isPerfPreset', isPerfPreset('auto') && isPerfPreset('power-saver') && !isPerfPreset('nope') && !isPerfPreset(5),
+  'preset type guard');
 
 // ---- perf.js timeline math (renderer) ----------------------------------
 // Minimal window so perf.js can install window.AriaPerf without Electron.
