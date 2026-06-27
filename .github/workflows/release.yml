@@ -48,6 +48,18 @@ jobs:
       - name: Compile TypeScript + renderer
         run: npm run build
 
+      # Each sidecar is frozen from its OWN venv (scripts/package-sidecar.sh),
+      # which a fresh runner doesn't have — this was the long-standing release
+      # failure ("Missing venv"). Create each venv and install its pinned
+      # requirements so the freeze step has the interpreter + deps it expects.
+      - name: Set up sidecar venvs
+        run: |
+          for s in stt tts wakeword; do
+            python -m venv "sidecars/$s/venv"
+            "sidecars/$s/venv/bin/python" -m pip install --upgrade pip
+            "sidecars/$s/venv/bin/pip" install -r "sidecars/$s/requirements.txt"
+          done
+
       # Freeze the three Python sidecars (STT, TTS/Kokoro, wake word) into
       # onedir bundles for THIS OS. PyInstaller runs natively per platform.
       - name: Freeze sidecars

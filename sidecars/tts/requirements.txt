@@ -1,2 +1,6 @@
+# Kokoro is the DEFAULT TTS engine (kokoro-onnx pulls onnxruntime, espeakng-loader,
+# phonemizer-fork and, transitively, language-tags — all needed by the freeze).
+kokoro-onnx>=0.4.0
+# Piper is the lightweight CPU fallback engine (power-saver default).
 piper-tts>=1.4.0
 numpy>=1.26
