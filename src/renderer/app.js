@@ -881,7 +881,7 @@ const cfg = {
   wwEnabled: document.getElementById('cfg-ww-enabled'),
   wwPhrase: document.getElementById('cfg-ww-phrase'),
   theme: document.getElementById('cfg-theme'),
-  gpuCap: document.getElementById('cfg-gpu-cap'),
+  perfPreset: document.getElementById('cfg-perf-preset'),
 };
 
 // Live theme preview while the dropdown changes (persisted on Save).
@@ -985,12 +985,30 @@ function applyOrbQuality(info) {
 // Bound the orb from the very first frame, before Settings is ever opened.
 loadHardwareInfo().then((info) => applyOrbQuality(info));
 
-// The GPU cap applies live: persist on change (which reloads STT with the new
-// thread budget in main) and re-derive the orb quality + hardware readout.
-if (cfg.gpuCap) {
-  cfg.gpuCap.addEventListener('change', async () => {
-    const v = parseInt(cfg.gpuCap.value, 10) || 50;
-    await aria.config.set('ui.gpuCap', v);
+// Resource preset descriptions (mirrors hardware.ts PERF_PRESETS).
+const PRESET_HINTS = {
+  'auto': 'Detects your hardware and picks the fastest settings it can run smoothly.',
+  'power-saver': 'Smallest models, CPU-only, minimal GPU — runs light on any machine.',
+  'balanced': 'Fast speech-to-text + the natural Kokoro voice at moderate resource use.',
+  'max-performance': 'Largest models your hardware allows, full GPU, best accuracy & voice.',
+  'custom': 'Your own manual choices (set automatically when you change a setting below).',
+};
+function updatePresetHint() {
+  const el = document.getElementById('perf-preset-hint');
+  if (el && cfg.perfPreset) el.textContent = PRESET_HINTS[cfg.perfPreset.value] || '';
+}
+
+// Picking a resource preset applies live: the main process writes the whole
+// bundle (STT model/backend, TTS engine/voice, GPU cap) and reloads the sidecars,
+// so we re-read Settings to reflect the new values, re-derive the orb quality, and
+// refresh the hardware readout. This is what makes a preset visibly DO something.
+if (cfg.perfPreset) {
+  cfg.perfPreset.addEventListener('change', async () => {
+    await aria.config.set('ui.perfPreset', cfg.perfPreset.value);
+    updatePresetHint();
+    // 'custom' applies nothing; for a real preset, pull the resolved settings back
+    // into the STT/TTS/etc. controls so the user sees them change.
+    if (cfg.perfPreset.value !== 'custom') await loadSettings();
     const info = await loadHardwareInfo();
     applyOrbQuality(info);
     renderHardware(info);
@@ -1107,7 +1125,7 @@ async function loadSettings() {
   cfg.wwEnabled.checked = !!(await aria.config.get('wakeword.enabled'));
   cfg.wwPhrase.value = (await aria.config.get('wakeword.phrase')) || 'hey_jarvis';
   cfg.theme.value = (await aria.config.get('ui.theme')) || 'midnight';
-  if (cfg.gpuCap) cfg.gpuCap.value = String((await aria.config.get('ui.gpuCap')) || 50);
+  if (cfg.perfPreset) { cfg.perfPreset.value = (await aria.config.get('ui.perfPreset')) || 'auto'; updatePresetHint(); }
 
   // Performance panel: show the latest turn's latency + detected hardware.
   refreshPerfPanel();
@@ -1150,12 +1168,23 @@ settingsSave.addEventListener('click', async () => {
   await aria.config.set('harness.model', cfg.harnessModel.value.trim());
   await aria.config.set('stt.model', cfg.sttModel.value);
   await aria.config.set('stt.backend', cfg.sttBackend.value);
-  await aria.config.set('tts.voice', cfg.ttsVoice.value.trim());
+  // Derive the TTS engine from the chosen voice: Kokoro voices are af_/am_/bf_/bm_;
+  // anything else (e.g. en_US-lessac-medium) is a Piper voice.
+  const ttsVoice = cfg.ttsVoice.value.trim();
+  await aria.config.set('tts.engine', /^(af_|am_|bf_|bm_)/.test(ttsVoice) ? 'kokoro' : 'piper');
+  await aria.config.set('tts.voice', ttsVoice);
   await aria.config.set('wakeword.enabled', cfg.wwEnabled.checked);
   await aria.config.set('wakeword.phrase', cfg.wwPhrase.value.trim());
   await aria.config.set('ui.theme', cfg.theme.value);
-  if (cfg.gpuCap) await aria.config.set('ui.gpuCap', parseInt(cfg.gpuCap.value, 10) || 50);
   applyTheme(cfg.theme.value);
+  // The GPU cap is preset-driven (no separate control). Manually editing the STT
+  // model / backend / TTS voice above flips the active preset to 'custom' in main;
+  // re-read it so the Resource-usage dropdown reflects that.
+  if (cfg.perfPreset) { cfg.perfPreset.value = (await aria.config.get('ui.perfPreset')) || 'auto'; updatePresetHint(); }
+  // A changed STT model/backend may not be downloaded yet + needs a sidecar
+  // reload; that's handled in main. Re-derive the orb quality from the (possibly
+  // preset-changed) GPU cap so the orb matches what was saved.
+  loadHardwareInfo().then((info) => applyOrbQuality(info));
 
   // Persist exactly what's in the key fields (they stay populated, not cleared).
   const lk = cfg.llmKey.value.trim();

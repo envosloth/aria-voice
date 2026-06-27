@@ -9,12 +9,18 @@
  */
 const { spawn } = require('child_process');
 const path = require('path');
+const os = require('os');
+const fs = require('fs');
 
 function main() {
   const electron = path.join(__dirname, '..', 'node_modules', '.bin', 'electron');
-  const child = spawn(electron, ['--no-sandbox', path.join(__dirname, '..', 'dist', 'main', 'index.js')], {
+  // Isolated user-data-dir: the verifier WRITES config (it picks a preset to prove
+  // it changes settings), so it must never touch the user's real aria-config.
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aria-perf-panel-'));
+  const child = spawn(electron, ['--no-sandbox', `--user-data-dir=${dataDir}`, path.join(__dirname, '..', 'dist', 'main', 'index.js')], {
     env: { ...process.env, ARIA_SMOKE: '1', ARIA_VERIFY_PERF: '1' },
   });
+  const cleanup = () => { try { fs.rmSync(dataDir, { recursive: true, force: true }); } catch (e) {} };
 
   const marks = {};
   let buf = '';
@@ -28,6 +34,7 @@ function main() {
   child.stderr.on('data', pump);
 
   child.on('exit', () => {
+    cleanup();
     let p = {};
     try { p = JSON.parse(marks['perf-panel'] || '{}'); } catch (e) {}
     const isMs = (s) => typeof s === 'string' && /^\d+(\.\d+)?\s*(ms|s)$/.test(s.trim());
@@ -43,7 +50,14 @@ function main() {
       ['LLM label names the target', typeof p.llmLabel === 'string' && /LLM/.test(p.llmLabel)],
       // Hardware line is populated by the real hardware:info IPC round-trip.
       ['hardware line populated', typeof p.hw === 'string' && /tier/.test(p.hw) && /GPU:/.test(p.hw)],
-      ['GPU cap control has a numeric value', /^\d+$/.test(String(p.gpuCap || ''))],
+      ['resource preset control set', ['auto', 'power-saver', 'balanced', 'max-performance', 'custom'].includes(String(p.perfPreset || ''))],
+      // Picking "power-saver" must REALLY change the STT model + voice (the core
+      // P0 complaint: presets that did nothing).
+      ['preset applied -> STT model = tiny.en', p.psSttModel === 'tiny.en'],
+      ['preset applied -> Piper voice', p.psTtsVoice === 'en_US-lessac-medium'],
+      ['preset dropdown reflects power-saver', p.psPreset === 'power-saver'],
+      // Hand-editing a managed setting flips the preset to custom.
+      ['manual STT edit -> preset becomes custom', p.customPreset === 'custom'],
       // Updates panel populated via the update:current IPC round-trip.
       ['update version shows a semver', /^\d+\.\d+\.\d+/.test(String(p.updVersion || ''))],
       ['update channel hint populated', typeof p.updHint === 'string' && p.updHint.length > 10],

@@ -493,7 +493,7 @@ app.whenReady().then(async () => {
             var ob = document.getElementById('onboard-overlay'); if (ob) ob.classList.remove('visible');
             document.getElementById('settings-btn').click();
             await new Promise(function(r){setTimeout(r,500);});
-            return JSON.stringify({
+            var snap = {
               firstAudio: document.getElementById('perf-first-audio').textContent,
               stt: document.getElementById('perf-stt').textContent,
               llm: document.getElementById('perf-llm').textContent,
@@ -501,10 +501,25 @@ app.whenReady().then(async () => {
               tts: document.getElementById('perf-tts').textContent,
               total: document.getElementById('perf-total').textContent,
               hw: document.getElementById('perf-hw').textContent,
-              gpuCap: document.getElementById('cfg-gpu-cap').value,
+              perfPreset: document.getElementById('cfg-perf-preset').value,
               updVersion: document.getElementById('update-version').textContent,
               updHint: document.getElementById('update-channel-hint').textContent
-            });
+            };
+            // Prove a preset REALLY changes settings: pick power-saver and read back
+            // the STT model + voice dropdowns (config writes happen even in SMOKE;
+            // only the sidecar reload is skipped).
+            var pp = document.getElementById('cfg-perf-preset');
+            pp.value = 'power-saver'; pp.dispatchEvent(new Event('change'));
+            await new Promise(function(r){setTimeout(r,500);});
+            snap.psSttModel = document.getElementById('cfg-stt-model').value;
+            snap.psTtsVoice = document.getElementById('cfg-tts-voice').value;
+            snap.psPreset = document.getElementById('cfg-perf-preset').value;
+            // Manually changing the STT model must flip the preset to Custom.
+            var sm = document.getElementById('cfg-stt-model');
+            sm.value = 'small';
+            await window.aria.config.set('stt.model','small');
+            snap.customPreset = await window.aria.config.get('ui.perfPreset');
+            return JSON.stringify(snap);
           })()`);
           console.log('[ARIA_VERIFY] perf-panel=' + out);
         } catch (e) {

@@ -546,6 +546,7 @@
         <h3>Speech-to-Text</h3>
         <label>Model
           <select id="cfg-stt-model">
+            <option value="tiny.en">tiny.en — fastest (39M)</option>
             <option value="base.en">base.en — fast (74M)</option>
             <option value="small">small — balanced (244M)</option>
             <option value="medium">medium — accurate (769M)</option>
@@ -563,14 +564,15 @@
         <h3>Text-to-Speech</h3>
         <label>Voice
           <select id="cfg-tts-voice">
-            <option value="bm_george">Jarvis — British male (recommended)</option>
-            <option value="af_heart">Aria — warm female (US)</option>
-            <option value="af_bella">Bella — expressive female (US)</option>
-            <option value="am_michael">Michael — clear male (US)</option>
-            <option value="bf_emma">Emma — British female</option>
+            <option value="bm_george">Jarvis — British male, Kokoro (recommended)</option>
+            <option value="af_heart">Aria — warm female, Kokoro (US)</option>
+            <option value="af_bella">Bella — expressive female, Kokoro (US)</option>
+            <option value="am_michael">Michael — clear male, Kokoro (US)</option>
+            <option value="bf_emma">Emma — British female, Kokoro</option>
+            <option value="en_US-lessac-medium">Piper — fast &amp; light (lowest latency, more robotic)</option>
           </select>
         </label>
-        <p class="hint">Kokoro-82M neural voices — natural, runs locally on CPU.</p>
+        <p class="hint">Kokoro-82M neural voices are natural but heavier to first audio; the Piper voice is small &amp; very low-latency. Both run locally on CPU.</p>
       </section>
 
       <section>
@@ -615,14 +617,16 @@
         </div>
         <p class="hint" id="perf-hint">From your most recent turn. <b>Time to first audio</b> is the delay you actually feel before ARIA starts talking; the · rows under it are its breakdown. <b>Full reply</b> is the whole turn (it keeps running for seconds while the rest streams + speaks). Dashes mean a stage didn't run (e.g. speech-to-text is blank for a typed message).</p>
 
-        <label>GPU usage cap
-          <select id="cfg-gpu-cap">
-            <option value="35">Power saver — keep GPU low (~35%)</option>
-            <option value="50">Balanced — cap GPU ~50% (recommended)</option>
-            <option value="80">Performance — allow up to ~80%</option>
-            <option value="100">Unlimited — use full GPU</option>
+        <label>Resource usage
+          <select id="cfg-perf-preset">
+            <option value="auto">Auto (recommended)</option>
+            <option value="power-saver">Power saver</option>
+            <option value="balanced">Balanced</option>
+            <option value="max-performance">Max performance</option>
+            <option value="custom">Custom</option>
           </select>
-          <span class="hint">Bounds ARIA's own GPU work (orb animation + on-device speech-to-text) so a spoken reply can't peg the GPU and freeze the desktop. Applied live.</span>
+          <span class="hint" id="perf-preset-hint"></span>
+          <span class="hint">Picking a preset instantly sets the speech-to-text model, voice, GPU/CPU budget and orb quality below to match — tuned to your detected hardware for the lowest latency it can run smoothly. Changing any of those by hand switches this to <b>Custom</b>.</span>
         </label>
 
         <div class="perf-hw" id="perf-hw">Detecting hardware…</div>
