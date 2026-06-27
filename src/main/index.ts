@@ -445,6 +445,47 @@ app.whenReady().then(async () => {
       }, 1200);
     }
 
+    // Performance-panel verification: fire a turn's worth of perf marks into the
+    // REAL renderer, open Settings, and read back the per-stage latency rows +
+    // the detected-hardware line — so the panel's end-to-end DOM wiring (not just
+    // perf.js's math) is exercised headlessly. Consumed by scripts/smoke-perf-panel.js.
+    if (process.env.ARIA_VERIFY_PERF && mainWindow) {
+      const wc = mainWindow.webContents;
+      (async () => {
+        try {
+          const out = await wc.executeJavaScript(`(async function(){
+            var P = window.AriaPerf;
+            var t = P.newTurn('text');
+            P.mark(t,'user_input'); P.mark(t,'dispatch');
+            await new Promise(function(r){setTimeout(r,60);});
+            P.mark(t,'first_token_render'); P.mark(t,'tts_first_request');
+            await new Promise(function(r){setTimeout(r,40);});
+            P.mark(t,'tts_first_audio'); P.mark(t,'turn_complete');
+            P.setTurnMeta(t,{target:'LLM'});
+            // Dismiss the first-run onboarding overlay, then open Settings (which
+            // runs loadSettings -> refreshPerfPanel + renderHardware).
+            var ob = document.getElementById('onboard-overlay'); if (ob) ob.classList.remove('visible');
+            document.getElementById('settings-btn').click();
+            await new Promise(function(r){setTimeout(r,500);});
+            return JSON.stringify({
+              stt: document.getElementById('perf-stt').textContent,
+              llm: document.getElementById('perf-llm').textContent,
+              llmLabel: document.getElementById('perf-llm-label').textContent,
+              tts: document.getElementById('perf-tts').textContent,
+              total: document.getElementById('perf-total').textContent,
+              hw: document.getElementById('perf-hw').textContent,
+              gpuCap: document.getElementById('cfg-gpu-cap').value
+            });
+          })()`);
+          console.log('[ARIA_VERIFY] perf-panel=' + out);
+        } catch (e) {
+          console.log('[ARIA_VERIFY] perf error:', (e as Error).message);
+        }
+        setTimeout(() => { void supervisor.stopAll().then(() => app.exit(0)); }, 1000);
+      })();
+      return; // skip the standard auto-quit while verifying
+    }
+
     // Live-settings verification (Item 1): start TTS, then change tts.voice
     // through the REAL config IPC path and let the sidecar reload pick it up.
     // The external verifier (scripts/smoke-settings-live.js) watches for a SECOND
