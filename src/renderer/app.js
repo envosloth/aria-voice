@@ -1231,6 +1231,10 @@ async function loadSettings() {
   cfg.ttsVoice.value = (await aria.config.get('tts.voice')) || 'bm_george';
   cfg.wwEnabled.checked = !!(await aria.config.get('wakeword.enabled'));
   cfg.wwPhrase.value = (await aria.config.get('wakeword.phrase')) || 'hey_jarvis';
+  // Legacy/free-text values (e.g. "hey jarvis" with a space, or an unsupported
+  // "aria") won't match a dropdown option -> fall back to the reliable default so
+  // the control never shows blank and always reflects a model that actually loads.
+  if (cfg.wwPhrase.selectedIndex < 0) cfg.wwPhrase.value = 'hey_jarvis';
   cfg.theme.value = (await aria.config.get('ui.theme')) || 'midnight';
   if (cfg.perfPreset) { cfg.perfPreset.value = (await aria.config.get('ui.perfPreset')) || 'auto'; updatePresetHint(); }
 
