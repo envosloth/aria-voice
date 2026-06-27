@@ -28,7 +28,7 @@
     "smoke:status-dots": "node scripts/smoke-status-dots.js",
     "smoke:update-progress": "node scripts/smoke-update-progress.js",
     "smoke:all": "npm run smoke && npm run smoke:tts && npm run smoke:stt && npm run smoke:resilience && npm run smoke:pdeathsig && npm run smoke:memory && npm run smoke:llm && npm run smoke:router && npm run smoke:hardware && npm run smoke:updater && npm run smoke:orb && npm run smoke:status-dots && npm run smoke:update-progress && npm run smoke:models && npm run smoke:audio && npm run smoke:e2e",
-    "package:sidecars": "for s in stt tts wakeword; do bash scripts/package-sidecar.sh $s; done",
+    "package:sidecars": "bash scripts/package-sidecars.sh",
     "package:whisper": "bash scripts/stage-whisper.sh",
     "dist": "npm run build && npm run package:sidecars && npm run package:whisper && electron-builder --config electron-builder.yml",
     "smoke:router": "npm run build && node scripts/smoke-router.js",
