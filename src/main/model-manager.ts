@@ -26,8 +26,21 @@ export interface ModelProgress {
 export type ProgressCallback = (p: ModelProgress) => void;
 
 const HF_WHISPER = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main';
-const HF_PIPER = 'https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium';
+const HF_PIPER = 'https://huggingface.co/rhasspy/piper-voices/resolve/main';
 const KOKORO_BASE = 'https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0';
+
+// Resolve a Piper voice id (e.g. 'en_US-ryan-high') to its HuggingFace directory.
+// piper-voices is laid out as <group>/<lang>/<speaker>/<quality>/, e.g.
+// en/en_US/ryan/high/. The id is <lang>-<speaker>-<quality>; the speaker may
+// itself contain hyphens, so peel lang off the front and quality off the back.
+function piperVoiceBase(voice: string): string {
+  const parts = voice.split('-');
+  const lang = parts[0];                         // en_US
+  const quality = parts[parts.length - 1];       // high
+  const speaker = parts.slice(1, -1).join('-');  // ryan
+  const group = lang.split('_')[0];              // en
+  return `${HF_PIPER}/${group}/${lang}/${speaker}/${quality}`;
+}
 
 export const MODELS_DIR =
   process.env.ARIA_MODELS_DIR || path.join(os.homedir(), '.local', 'share', 'aria', 'models');
@@ -54,11 +67,13 @@ export function buildManifest(sttModel: string, ttsVoice: string, ttsEngine = 'k
     ];
   }
 
-  // Piper fallback engine.
+  // Piper fallback engine. Each voice ships a separate .onnx (+ .onnx.json) under
+  // its own per-voice HuggingFace directory (see piperVoiceBase).
+  const piperBase = piperVoiceBase(ttsVoice);
   return [
     stt,
-    { id: `tts:${ttsVoice}`, kind: 'tts', file: `${ttsVoice}.onnx`, url: `${HF_PIPER}/${ttsVoice}.onnx`, required: true },
-    { id: `tts:${ttsVoice}:config`, kind: 'tts', file: `${ttsVoice}.onnx.json`, url: `${HF_PIPER}/${ttsVoice}.onnx.json`, required: true },
+    { id: `tts:${ttsVoice}`, kind: 'tts', file: `${ttsVoice}.onnx`, url: `${piperBase}/${ttsVoice}.onnx`, required: true },
+    { id: `tts:${ttsVoice}:config`, kind: 'tts', file: `${ttsVoice}.onnx.json`, url: `${piperBase}/${ttsVoice}.onnx.json`, required: true },
   ];
 }
 

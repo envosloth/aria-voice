@@ -69,6 +69,39 @@ check('presets-distinct', JSON.stringify(ps) !== JSON.stringify(mp) && JSON.stri
 check('isPerfPreset', isPerfPreset('auto') && isPerfPreset('power-saver') && !isPerfPreset('nope') && !isPerfPreset(5),
   'preset type guard');
 
+// Power saver now ships a good-sounding MALE Piper voice (en_US-ryan-high) so the
+// lightweight CPU engine still sounds natural.
+check('power-saver.voice-male', ps.ttsVoice === 'en_US-ryan-high', ps.ttsVoice);
+
+// The per-voice Piper download path is derived generically from the voice id
+// (<group>/<lang>/<speaker>/<quality>/), not hardcoded to one voice.
+const { buildManifest } = require('../dist/main/model-manager');
+const piperManifest = buildManifest('tiny.en', 'en_US-ryan-high', 'piper');
+const ryan = piperManifest.find((s) => s.id === 'tts:en_US-ryan-high');
+check('piper.manifest.voice', !!ryan, JSON.stringify(piperManifest.map((s) => s.id)));
+check('piper.url.path', ryan && ryan.url.endsWith('/en/en_US/ryan/high/en_US-ryan-high.onnx'), ryan && ryan.url);
+const lessac = buildManifest('tiny.en', 'en_US-lessac-medium', 'piper').find((s) => s.id === 'tts:en_US-lessac-medium');
+check('piper.url.generic', lessac && lessac.url.endsWith('/en/en_US/lessac/medium/en_US-lessac-medium.onnx'), lessac && lessac.url);
+
+// Orb smoothness fix: a high-tier host on the default 'auto' preset must resolve
+// to gpuCap 100 -> HIGH orb quality. The bug was that 'auto' was never applied at
+// startup, so the DEFAULT cap (50) -> perfProfile -> MEDIUM orb (choppy) even on a
+// capable GPU. Use a synthetic high-tier host so the assertion holds on any CI box.
+const fakeHigh = {
+  cpuCores: 16, cpuModel: 'Test CPU', totalMemGB: 32,
+  gpu: { name: 'Radeon RX 9060 XT', vendor: 'amd', vramMB: 16384, discrete: true },
+  tier: 'high', platform: 'linux',
+};
+const autoHigh = resolveProfile('auto', fakeHigh);
+check('auto.high.cap-100', autoHigh.gpuCapPct === 100, String(autoHigh.gpuCapPct));
+check('auto.high.orb-high', autoHigh.orbQuality === 'high', autoHigh.orbQuality);
+check('auto.high.perfProfile-high', perfProfile(fakeHigh, autoHigh.gpuCapPct).orbQuality === 'high',
+  perfProfile(fakeHigh, autoHigh.gpuCapPct).orbQuality);
+// Document the bug the startup-apply fixes: the old default cap (50) capped a
+// capable GPU to medium — which is exactly why 'auto' must be resolved at startup.
+check('auto.high.default-cap-was-medium', perfProfile(fakeHigh, 50).orbQuality === 'medium',
+  perfProfile(fakeHigh, 50).orbQuality);
+
 // ---- perf.js timeline math (renderer) ----------------------------------
 // Minimal window so perf.js can install window.AriaPerf without Electron.
 const fakeWindow = { aria: undefined };

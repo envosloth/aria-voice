@@ -8,7 +8,7 @@ import { streamChat } from './llm-stream';
 import { coordinate, cancelCoordination } from './coordinator';
 import { buildManifest, missingModels, downloadModel } from './model-manager';
 import { perfEnabled, setPerfEnabled, perfMark, perfMarkExternal } from './perf';
-import { detectHardware, perfProfile, clampCap, resolveProfile, isPerfPreset, PerfPreset } from './hardware';
+import { detectHardware, perfProfile, clampCap, resolveProfile, isPerfPreset, PerfPreset, ResourceProfile } from './hardware';
 import {
   initUpdater, checkForUpdates, installUpdate, openReleasePage,
   currentVersion, deliveryChannel, isInstallingUpdate,
@@ -401,6 +401,11 @@ app.whenReady().then(async () => {
   }
 
   supervisor.startMonitoring();
+
+  // Make the active resource preset real before anything reads its values: the
+  // default 'auto' preset adapts gpuCap (and the STT/TTS bundle) to the detected
+  // hardware, which is what lifts the orb to high quality on a capable GPU.
+  applyStartupPreset();
 
   // Push config-derived settings into the environment the sidecars inherit
   // (model choice, STT backend, TTS voice, wake-word phrase/threshold).
@@ -813,6 +818,39 @@ function markCustomIfManaged(): void {
   if (config.get('ui.perfPreset') !== 'custom') config.set('ui.perfPreset', 'custom');
 }
 
+// Persist a resolved preset's concrete bundle (STT model/backend, TTS engine/
+// voice, GPU cap) to config. Shared by the Settings-driven applyResourcePreset
+// and the startup applyStartupPreset; neither writes ui.perfPreset, so the active
+// preset label is preserved. No sidecar reload here — callers decide.
+function writeProfileToConfig(p: ResourceProfile): void {
+  config.set('stt.model', p.sttModel);
+  config.set('stt.backend', p.sttBackend);
+  config.set('tts.engine', p.ttsEngine);
+  config.set('tts.voice', p.ttsVoice);
+  config.set('ui.gpuCap', p.gpuCapPct);
+}
+
+// On startup, make the active resource preset REAL. The default preset is 'auto'
+// (hardware-adaptive), but it was previously only resolved when the user re-picked
+// a preset in Settings — so a fresh install ran at the DEFAULT gpuCap (50)
+// regardless of hardware. perfProfile maps cap<=60 to MEDIUM orb quality (idle
+// capped ~25 FPS), so even a capable GPU rendered a visibly choppy orb. Resolving
+// the preset here (anything but 'custom') and persisting its bundle BEFORE
+// applyConfigToEnv reads gpuCap makes 'auto' on high-tier hardware yield
+// gpuCap=100 -> HIGH orb quality (native-refresh while focused). No reload is
+// needed: sidecars haven't lazy-started yet and read the fresh config on first
+// spawn. 'custom' is skipped so hand-picked settings are never overwritten.
+function applyStartupPreset(): void {
+  const preset = config.get('ui.perfPreset');
+  if (!isPerfPreset(preset) || preset === 'custom') return;
+  const p = resolveProfile(preset, detectHardware());
+  writeProfileToConfig(p);
+  console.log(
+    `[ARIA] startup preset '${preset}' -> stt=${p.sttModel}/${p.sttBackend} ` +
+    `tts=${p.ttsEngine}/${p.ttsVoice} orb=${p.orbQuality} gpuCap=${p.gpuCapPct}%`,
+  );
+}
+
 // Apply a resource preset: resolve it against the detected hardware, persist the
 // concrete bundle (STT model/backend, TTS engine/voice, GPU cap), and reload the
 // STT + TTS sidecars so the change is REAL — a different model/backend/voice
@@ -821,11 +859,7 @@ async function applyResourcePreset(preset: PerfPreset): Promise<void> {
   if (!isPerfPreset(preset) || preset === 'custom') return;
   const hw = detectHardware();
   const p = resolveProfile(preset, hw);
-  config.set('stt.model', p.sttModel);
-  config.set('stt.backend', p.sttBackend);
-  config.set('tts.engine', p.ttsEngine);
-  config.set('tts.voice', p.ttsVoice);
-  config.set('ui.gpuCap', p.gpuCapPct);
+  writeProfileToConfig(p);
   console.log(
     `[ARIA] resource preset '${preset}' -> stt=${p.sttModel}/${p.sttBackend} threads=${p.sttThreads} ` +
     `tts=${p.ttsEngine}/${p.ttsVoice} orb=${p.orbQuality} gpuCap=${p.gpuCapPct}%`,

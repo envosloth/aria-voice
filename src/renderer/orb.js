@@ -398,6 +398,17 @@
   // makes rAF stop, but a VISIBLE-but-unfocused window keeps animating at full
   // rate; this is what catches that case.
   const BLUR_MIN_MS = 200;
+  // While the window IS focused the user is actually watching the orb, so it must
+  // look smooth even under a power preset (power-saver maps to the 'low' tier,
+  // whose per-state caps are ~15 FPS — visibly choppy). The per-tier caps exist to
+  // bound GPU WORK, but the costly part is the shadow blur + backing-store
+  // resolution (both still gated by the quality profile in render()), NOT the
+  // frame cadence. So a focused window renders at AT LEAST ~60 FPS regardless of
+  // tier — and faster on the 'high' tier, whose 4ms cap already means native
+  // refresh. Power is still saved where it matters: a backgrounded window throttles
+  // to BLUR_MIN_MS. 60 FPS is well short of the uncapped native-refresh rate that
+  // used to peg a CPU core, so this stays safe on weak hardware.
+  const FOCUS_SMOOTH_MS = 16;
   let windowFocused = (typeof document === 'undefined') || document.hasFocus();
   let lastRenderAt = 0;
 
@@ -409,7 +420,8 @@
     // keep it smooth even if the window isn't focused. Idle/listening/processing
     // in the background (the always-on drain) drop to 5 FPS.
     const blurred = !windowFocused && state !== 'speaking';
-    const minMs = blurred ? BLUR_MIN_MS : stateMinMs(state);
+    // Focused -> smooth (>=60 FPS, native on the high tier); backgrounded -> ~5 FPS.
+    const minMs = blurred ? BLUR_MIN_MS : Math.min(stateMinMs(state), FOCUS_SMOOTH_MS);
     if (now - lastRenderAt >= minMs) {
       lastRenderAt = now;
       // A single bad frame (e.g. a transient state during a resize) must never

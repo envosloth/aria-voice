@@ -86,10 +86,10 @@ class TtsSidecar(BaseSidecar):
                 return f"engine=kokoro voice={self.voice_name}"
             elif self.engine == "piper":
                 if self._voice is None:
-                    # Piper voice names look like en_US-lessac-medium; fall back if
+                    # Piper voice names look like en_US-ryan-high; fall back if
                     # a Kokoro-style name leaked into the piper path.
                     if self.voice_name.startswith(("af_", "am_", "bf_", "bm_")):
-                        self.voice_name = "en_US-lessac-medium"
+                        self.voice_name = "en_US-ryan-high"
                     self.voice_model_path = self._find_piper_voice()
                     self._load_piper()
                 return f"engine=piper voice={os.path.basename(self.voice_model_path)}"

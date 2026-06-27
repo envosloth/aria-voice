@@ -218,9 +218,11 @@ export interface ResourceProfile {
 }
 
 // Default voices per engine. Kokoro 'bm_george' is the refined British "Jarvis";
-// Piper 'en_US-lessac-medium' is the small, very-low-latency CPU voice.
+// Piper 'en_US-ryan-high' is the most natural-sounding MALE Piper voice — chosen
+// for power-saver so the lightweight CPU engine still sounds good. Piper is many
+// times realtime on CPU even at 'high' quality, so it stays power-saver-friendly.
 const KOKORO_DEFAULT_VOICE = 'bm_george';
-const PIPER_DEFAULT_VOICE = 'en_US-lessac-medium';
+const PIPER_DEFAULT_VOICE = 'en_US-ryan-high';
 
 // Threads for a given cap, leaving a core free for UI/audio on multicore hosts.
 function threadsFor(hw: HardwareInfo, capPct: number): number {

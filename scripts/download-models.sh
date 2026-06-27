@@ -5,7 +5,10 @@ MODELS_DIR="${ARIA_MODELS_DIR:-$HOME/.local/share/aria/models}"
 mkdir -p "$MODELS_DIR" "$MODELS_DIR/wakeword"
 
 WHISPER_BASE="https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
-PIPER_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/lessac/medium"
+# Most natural-sounding MALE Piper voice; used by the power-saver preset's
+# lightweight CPU engine. piper-voices is laid out as <group>/<lang>/<speaker>/<quality>/.
+PIPER_VOICE="en_US-ryan-high"
+PIPER_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/high"
 
 declare -A WHISPER_MODELS=(
   ["base.en"]="ggml-base.en.bin"
@@ -50,9 +53,9 @@ download_with_resume "$KOKORO_BASE/kokoro-v1.0.onnx" "$MODELS_DIR/kokoro-v1.0.on
 download_with_resume "$KOKORO_BASE/voices-v1.0.bin" "$MODELS_DIR/voices-v1.0.bin"
 # Piper voice kept as an optional lightweight fallback engine (ARIA_WITH_PIPER=1).
 if [ "${ARIA_WITH_PIPER:-0}" = "1" ]; then
-  echo "  (optional) Piper voice 'en_US-lessac-medium'"
-  download_with_resume "$PIPER_BASE/en_US-lessac-medium.onnx" "$MODELS_DIR/en_US-lessac-medium.onnx"
-  download_with_resume "$PIPER_BASE/en_US-lessac-medium.onnx.json" "$MODELS_DIR/en_US-lessac-medium.onnx.json"
+  echo "  (optional) Piper voice '$PIPER_VOICE'"
+  download_with_resume "$PIPER_BASE/$PIPER_VOICE.onnx" "$MODELS_DIR/$PIPER_VOICE.onnx"
+  download_with_resume "$PIPER_BASE/$PIPER_VOICE.onnx.json" "$MODELS_DIR/$PIPER_VOICE.onnx.json"
 fi
 
 echo
