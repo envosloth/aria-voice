@@ -8,7 +8,7 @@ headless boot (`ARIA_SMOKE=1 xvfb-run -a ./node_modules/.bin/electron --no-sandb
 Visual items are verified by tests + code reasoning only; each carries a MANUAL CHECK line.
 
 ## Checklist
-- [ ] 1. Update progress bar (app self-update)
+- [x] 1. Update progress bar (app self-update)
 - [x] 2. Orb color stage sticks on green after speaking
 - [x] 3. Status dots flaky after first utterance + green too subtle
 - [ ] 4+5. Orb low-res after optimization + fullscreen right-side jitter
@@ -60,7 +60,27 @@ MANUAL CHECK: launch ARIA, confirm STT/TTS/Wake dots turn a vivid glowing green 
 ready; talk to it, then confirm all three STAY green afterward (no dropping to grey).
 
 ## Item 1: Update progress bar (app self-update)
-Status: pending
+Status: done
+Scope confirmed by user: the APP self-update flow (updater.ts), not the first-run
+model download. Backend already emits `{ state:'downloading', percent }`
+(updater.ts:216 for AppImage, :296 for .deb) — so this was purely renderer wiring.
+Fix:
+- `src/renderer/index.html`: a `<progress id="update-progress">` on its own full-width
+  row inside the update banner (banner now `flex-wrap`), with themed CSS — a
+  determinate `--success` fill and an animated `.indeterminate` sweep for
+  checking/installing (no percent).
+- `src/renderer/app.js`: `setUpdateProgress('hide'|'indeterminate'|<0..100>)` helper,
+  wired through the `aria.updates.onStatus` switch: downloading → determinate at
+  `percent` (or indeterminate if absent) and surfaces the banner for every channel;
+  installing/appimage-available → indeterminate; checking/not-available/downloaded/
+  installed/error → hidden.
+Verify: new `scripts/smoke-update-progress.js` (in `smoke:all`) — 19/19 PASS,
+including EXECUTING the shipped `setUpdateProgress` against a fake element
+(determinate value + clamping, indeterminate class, hide) and the switch wiring.
+`smoke:updater` still PASS; build clean; headless boot reaches `[ARIA_SMOKE] OK`.
+MANUAL CHECK: trigger an update (or watch a real release download) — the banner shows
+a progress bar that advances 0→100% while downloading and an animated sweep while
+checking/installing, so the update is visibly working.
 
 ## Item 4+5: Orb resolution + fullscreen jitter
 Status: pending

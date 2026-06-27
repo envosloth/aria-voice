@@ -252,7 +252,7 @@
 
     /* Update banner (top of window) — shown when a newer release is available. */
     .update-banner {
-      display: none; align-items: center; gap: 12px;
+      display: none; align-items: center; gap: 12px; flex-wrap: wrap;
       padding: 10px 16px; margin-bottom: 12px;
       background: rgba(42, 208, 102, 0.13);
       border: 1px solid var(--success); border-radius: 8px;
@@ -267,6 +267,28 @@
     }
     .update-banner button.ghost { background: transparent; border: 1px solid var(--success); color: var(--success); }
     .update-banner .dismiss { background: transparent; border: none; color: var(--text-muted); padding: 6px 8px; }
+    /* Download progress: a slim bar on its own row so the user can see the update
+       actually moving (determinate via percent) instead of wondering if it hung.
+       Drops to a full-width second row via flex-basis 100% + the banner's wrap. */
+    .update-progress {
+      flex: 1 0 100%; width: 100%; height: 6px; margin: 2px 0 0 0;
+      border: none; border-radius: 999px; overflow: hidden;
+      -webkit-appearance: none; appearance: none;
+      background: rgba(255,255,255,0.12);
+    }
+    .update-progress::-webkit-progress-bar { background: rgba(255,255,255,0.12); border-radius: 999px; }
+    .update-progress::-webkit-progress-value { background: var(--success); border-radius: 999px; transition: width 0.2s ease; }
+    /* Indeterminate (checking / installing — no percent): an animated sweep so the
+       bar still signals "working". A value-less <progress> renders no value part,
+       so we animate the bar background instead. */
+    .update-progress.indeterminate {
+      background:
+        linear-gradient(90deg, transparent 0%, var(--success) 50%, transparent 100%)
+        rgba(255,255,255,0.12);
+      background-size: 38% 100%; background-repeat: no-repeat;
+      animation: update-indet 1.1s linear infinite;
+    }
+    @keyframes update-indet { 0% { background-position: -40% 0; } 100% { background-position: 140% 0; } }
 
     /* Settings → Updates rows */
     .update-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
@@ -757,6 +779,7 @@
       <span class="grow" id="update-banner-text"></span>
       <button id="update-banner-action"></button>
       <button class="dismiss" id="update-banner-dismiss" title="Dismiss">&times;</button>
+      <progress class="update-progress" id="update-progress" max="100" style="display:none"></progress>
     </div>
     <div class="error-banner" id="error-banner"></div>
     <div id="conversation"></div>

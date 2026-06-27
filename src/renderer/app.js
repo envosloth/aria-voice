@@ -1069,6 +1069,7 @@ const upd = {
   actionBtn: document.getElementById('update-action-btn'),
   status: document.getElementById('update-status'),
   channelHint: document.getElementById('update-channel-hint'),
+  progress: document.getElementById('update-progress'),
   banner: document.getElementById('update-banner'),
   bannerText: document.getElementById('update-banner-text'),
   bannerAction: document.getElementById('update-banner-action'),
@@ -1100,6 +1101,25 @@ function showActionBtn(label, handler) {
 }
 function hideActionBtn() { upd.actionBtn.style.display = 'none'; upd.actionBtn.onclick = null; }
 
+// Drive the update progress bar so the user can see a download/install actually
+// moving instead of wondering whether it stalled.
+//   'hide'          -> no bar
+//   'indeterminate' -> animated sweep (checking / installing, no percent yet)
+//   <number 0..100> -> determinate fill at that percent (downloading)
+function setUpdateProgress(state) {
+  const p = upd.progress;
+  if (!p) return;
+  if (state === 'hide' || state == null) { p.style.display = 'none'; return; }
+  p.style.display = '';
+  if (state === 'indeterminate') {
+    p.classList.add('indeterminate');
+    p.removeAttribute('value');
+  } else {
+    p.classList.remove('indeterminate');
+    p.value = Math.max(0, Math.min(100, Number(state) || 0));
+  }
+}
+
 let updateBannerDismissed = false;
 function showUpdateBanner(text, actionLabel, handler) {
   if (updateBannerDismissed) return;
@@ -1126,14 +1146,15 @@ aria.updates.onStatus((s) => {
   const v = s.version ? 'v' + s.version : '';
   switch (s.state) {
     case 'checking':
-      setUpdateStatus('Checking for updates…'); hideActionBtn(); break;
+      setUpdateStatus('Checking for updates…'); hideActionBtn(); setUpdateProgress('hide'); break;
     case 'not-available':
-      setUpdateStatus(`You're on the latest version (v${s.current}).`, 'ok'); hideActionBtn(); break;
+      setUpdateStatus(`You're on the latest version (v${s.current}).`, 'ok'); hideActionBtn(); setUpdateProgress('hide'); break;
     case 'available':
       if (s.canAutoInstall && updateChannel === 'appimage') {
         // AppImage downloads automatically in the background.
         setUpdateStatus(`${v} found — downloading…`); hideActionBtn();
         showUpdateBanner(`ARIA ${v} is available and downloading…`, null);
+        setUpdateProgress('indeterminate'); // download starting; percent arrives next
       } else if (s.canAutoInstall) {
         // .deb: one-click Update (downloads, verifies, installs via a password
         // prompt, and restarts). View release stays as a manual fallback.
@@ -1141,16 +1162,28 @@ aria.updates.onStatus((s) => {
         showActionBtn('Update', () => aria.updates.install());
         upd.releaseUrl = s.url;
         showUpdateBanner(`ARIA ${v} is available.`, 'Update', () => aria.updates.install());
+        setUpdateProgress('hide'); // nothing downloading until the user clicks Update
       } else {
         setUpdateStatus(`${v} is available.`, 'ok');
         showActionBtn('View release', () => aria.updates.openRelease(s.url));
         showUpdateBanner(`ARIA ${v} is available.`, 'View release', () => aria.updates.openRelease(s.url));
+        setUpdateProgress('hide');
       }
       break;
-    case 'downloading':
-      setUpdateStatus(`Downloading ${v}… ${s.percent != null ? s.percent + '%' : ''}`); hideActionBtn(); break;
+    case 'downloading': {
+      // Show a moving bar so the user can see the download progressing instead of
+      // wondering if it hung. The banner is the always-visible surface; surface it
+      // here for every channel (the deb path only emits 'downloading' after the
+      // user clicks Update, so this won't pop unprompted).
+      const pct = s.percent != null ? s.percent + '%' : '';
+      const label = v || 'the update';
+      setUpdateStatus(`Downloading ${v}… ${pct}`); hideActionBtn();
+      showUpdateBanner(`Downloading ARIA ${label}… ${pct}`, null);
+      setUpdateProgress(s.percent != null ? s.percent : 'indeterminate');
+      break;
+    }
     case 'downloaded':
-      setUpdateStatus(`${v} downloaded.`, 'ok');
+      setUpdateStatus(`${v} downloaded.`, 'ok'); setUpdateProgress('hide');
       // AppImage waits for an explicit Install & Restart; .deb proceeds to install.
       if (updateChannel === 'appimage') {
         showActionBtn('Install & Restart', () => aria.updates.install());
@@ -1160,13 +1193,16 @@ aria.updates.onStatus((s) => {
     case 'installing':
       setUpdateStatus(`Installing ${v}… approve the password prompt.`); hideActionBtn();
       showUpdateBanner(`Installing ARIA ${v}…`, null);
+      setUpdateProgress('indeterminate'); // install has no percent — keep it moving
       break;
     case 'installed':
       setUpdateStatus(`${v} installed — restarting…`, 'ok'); hideActionBtn();
       showUpdateBanner(`ARIA ${v} installed — restarting…`, null);
+      setUpdateProgress('hide');
       break;
     case 'error':
       setUpdateStatus(`Update failed: ${s.message || 'unknown error'}`, 'warn');
+      setUpdateProgress('hide');
       // Offer the manual fallback when we have a release URL.
       if (upd.releaseUrl) showActionBtn('View release', () => aria.updates.openRelease(upd.releaseUrl));
       else hideActionBtn();
