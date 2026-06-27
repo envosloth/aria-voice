@@ -47,6 +47,13 @@ function main() {
       ['first-audio row shows a duration', isMs(p.firstAudio)],
       ['LLM row shows a duration', isMs(p.llm)],
       ['Total row shows a duration', isMs(p.total)],
+      // Voice turn: "time to first audio" + "full reply" must be measured from
+      // END of speech, so a 200ms utterance with a ~100ms post-speech path reads
+      // ~100ms — NOT ~300ms (the old audio_start bug counted the speaking time).
+      ['voice time-to-first-audio excludes speaking time',
+        typeof p.voiceFirstAudio === 'number' && p.voiceFirstAudio < 200],
+      ['voice full-reply excludes speaking time',
+        typeof p.voiceTotal === 'number' && p.voiceTotal < 200],
       ['LLM label names the target', typeof p.llmLabel === 'string' && /LLM/.test(p.llmLabel)],
       // Hardware line is populated by the real hardware:info IPC round-trip.
       ['hardware line populated', typeof p.hw === 'string' && /tier/.test(p.hw) && /GPU:/.test(p.hw)],

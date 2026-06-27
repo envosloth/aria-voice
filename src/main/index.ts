@@ -519,6 +519,24 @@ app.whenReady().then(async () => {
             sm.value = 'small';
             await window.aria.config.set('stt.model','small');
             snap.customPreset = await window.aria.config.get('ui.perfPreset');
+            // Voice-turn latency check: "time to first audio" and "full reply"
+            // must be timed from the END of speech (audio_end), not its start —
+            // the seconds spent speaking are the user's, not the system's latency.
+            // Simulate a 200ms utterance with a ~100ms post-speech path; a correct
+            // panel reports ~100ms, the old audio_start bug reported ~300ms.
+            var vt = P.newTurn('voice');
+            P.mark(vt,'audio_start');
+            await new Promise(function(r){setTimeout(r,200);}); // speaking
+            P.mark(vt,'audio_end');
+            await new Promise(function(r){setTimeout(r,30);});
+            P.mark(vt,'stt_result_render'); P.mark(vt,'user_input'); P.mark(vt,'dispatch');
+            await new Promise(function(r){setTimeout(r,40);});
+            P.mark(vt,'first_token_render'); P.mark(vt,'tts_first_request');
+            await new Promise(function(r){setTimeout(r,30);});
+            P.mark(vt,'tts_first_audio'); P.mark(vt,'turn_complete');
+            var vs = P.lastStages();
+            snap.voiceFirstAudio = vs ? vs.firstAudio : null;
+            snap.voiceTotal = vs ? vs.total : null;
             return JSON.stringify(snap);
           })()`);
           console.log('[ARIA_VERIFY] perf-panel=' + out);

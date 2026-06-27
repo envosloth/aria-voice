@@ -88,7 +88,12 @@
     if (!tl) return null;
     const m = tl.marks;
     const d = (a, b) => (m[a] !== undefined && m[b] !== undefined ? Math.max(0, Math.round(m[b] - m[a])) : null);
-    const start = m.audio_start !== undefined ? m.audio_start : m.user_input;
+    // Latency clock starts when the user STOPS providing input — end of speech for
+    // a voice turn (audio_end), or Enter for a typed turn (user_input). It must NOT
+    // be audio_start: the seconds the user spends speaking are not latency the
+    // system is responsible for, and counting them made "time to first audio" read
+    // far larger than what the user actually waits after they finish talking.
+    const start = m.audio_end !== undefined ? m.audio_end : m.user_input;
     return {
       // Speech-to-text: end of speech -> transcript rendered (voice turns only).
       stt: d('audio_end', 'stt_result_render'),

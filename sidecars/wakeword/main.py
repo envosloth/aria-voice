@@ -35,11 +35,15 @@ class WakewordSidecar(BaseSidecar):
         # on the full phrase, so we lower the bar to let the shorter spoken
         # phrase trigger it.
         self.partial_threshold = float(os.environ.get("ARIA_WAKEWORD_PARTIAL_THRESHOLD", "0.3"))
-        # Silero VAD gate. openWakeWord suppresses a detection whose VAD speech
-        # score is below this — at the old 0.5 it swallowed quietly/quickly spoken
-        # wake words (the main "unreliable" complaint). Lowered so real speech
-        # isn't gated out; the wake-word model itself still does the discriminating.
-        self.vad_threshold = float(os.environ.get("ARIA_WAKEWORD_VAD_THRESHOLD", "0.2"))
+        # Silero VAD gate. openWakeWord ZEROES a detection whose VAD speech score
+        # is below this. It was the main "doesn't activate when spoken" cause:
+        # Silero lags at speech onset, so a short/quick wake word fires the model
+        # but the VAD hasn't ramped yet and the detection is suppressed. Lowering
+        # it (0.5 -> 0.2) wasn't enough, so it now DEFAULTS TO 0.0 = gate OFF; the
+        # wake-word model itself is the discriminator and the post-detection
+        # cooldown bounds double-fires. Set ARIA_WAKEWORD_VAD_THRESHOLD>0 to re-arm
+        # the gate (e.g. for a very noisy room trading recall for fewer false fires).
+        self.vad_threshold = float(os.environ.get("ARIA_WAKEWORD_VAD_THRESHOLD", "0.0"))
         # After a detection, ignore further detections for this long so one spoken
         # wake word can't double-fire as its score lingers above threshold.
         self.cooldown_s = float(os.environ.get("ARIA_WAKEWORD_COOLDOWN", "1.5"))

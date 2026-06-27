@@ -410,5 +410,34 @@ Verification:
 ## Found but not in scope
 - (none yet)
 
+## Follow-up fixes (wake word + latency accuracy)
+Status: done
+
+1. Wake word unreliable / didn't activate when spoken.
+   Root cause: the Silero VAD gate. openWakeWord ZEROES a wake-word detection
+   whose per-frame VAD speech score is below `vad_threshold`; Silero lags at
+   speech onset, so a short/quickly-spoken wake word fired the model but was
+   suppressed by the gate. Lowering 0.5 -> 0.2 wasn't enough.
+   Fix: `sidecars/wakeword/main.py` — `ARIA_WAKEWORD_VAD_THRESHOLD` now defaults
+   to 0.0 (gate OFF). The wake-word model itself is the discriminator; the
+   post-detection cooldown bounds double-fires. Verified: Model init + predict
+   with vad=OFF runs clean; 1s of silence peaks at score 0.0001 (no false fire),
+   well under the 0.4 trigger threshold — so disabling the gate raises recall
+   without inviting silence-triggered false positives.
+
+2. Latency panel "time to first audio" AND "full reply" both wrong for voice.
+   Root cause: both numbers derive from a shared `start` that was `audio_start`
+   (when the user BEGAN speaking) instead of `audio_end` (when they stopped), so
+   every second spent speaking was miscounted as system latency — inflating both
+   by the utterance length. The code even contradicted its own comment ("end of
+   speech").
+   Fix: `src/renderer/perf.js` — `start = audio_end ?? user_input`. One change
+   corrects both the headline first-audio number and the full-reply total.
+   Test gap that hid it: `ARIA_VERIFY_PERF` only injected a TEXT turn (no audio
+   stages). Added a VOICE turn to the verifier (`src/main/index.ts`) + assertions
+   (`scripts/smoke-perf-panel.js`): a 200ms utterance with a ~100ms post-speech
+   path now reports ~101ms for both first-audio and full-reply (was ~301ms).
+   Verified: `npm run smoke:perf-panel` 16/16 PASS; `npm run smoke:boot` OK.
+
 ## Blocked
 - (none yet)
