@@ -690,20 +690,21 @@ let nextPlayTime = 0;
 let ttsSources = [];      // currently scheduled buffer sources (this utterance)
 let idleTimer = null;
 // True once the TTS sidecar has reported 'done' for the current reply (no more
-// audio chunks coming). The orb may only return to idle once synthesis is done
-// AND all scheduled audio has finished — tracked together so neither a late
-// chunk nor a missed onended can strand the orb in the green 'speaking' state.
+// audio chunks coming). The orb stays green ('speaking') until the last scheduled
+// audio actually finishes playing.
 let ttsSynthDone = false;
 
-// Return the orb to idle once the current reply has fully finished speaking.
-// Driven from BOTH the last source's onended (snappy) and a wall-clock backstop
-// (resilient): if an onended never fires, the backstop still releases the orb.
-// Gated on orbStateName so a barge-in that moved us to 'listening'/'processing'
-// is never overridden.
-function ttsMaybeGoIdle() {
-  if (orbStateName === 'speaking' && ttsSynthDone && ttsSources.length === 0) {
-    orbState('idle');
-  }
+// Schedule the orb's return to idle for the moment the LAST scheduled audio
+// finishes. Re-armed on every chunk: the sidecar's stdout 'done' can beat the
+// final PCM over the UDS socket, so computing the end time once (at 'done') made
+// the orb drop to idle BEFORE the last words played. Re-arming on each chunk keeps
+// the deadline at the true audio end. Gated on orbStateName so a barge-in that
+// moved us to listening/processing is never overridden.
+function armIdleAtAudioEnd() {
+  if (!ttsSynthDone) return;
+  const remainMs = audioCtx ? Math.max(0, (nextPlayTime - audioCtx.currentTime) * 1000) : 0;
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => { if (orbStateName === 'speaking') orbState('idle'); }, remainMs + 250);
 }
 
 function getAudioCtx() {
@@ -814,10 +815,10 @@ aria.tts.onAudio((pcmArrayBuffer) => {
     source.onended = () => {
       const i = ttsSources.indexOf(source);
       if (i >= 0) ttsSources.splice(i, 1);
-      // The real end of audio — release the orb the instant the last chunk of a
-      // finished reply stops playing (well before the wall-clock backstop).
-      ttsMaybeGoIdle();
     };
+    // If this chunk landed AFTER the sidecar's 'done', extend the idle deadline to
+    // the new (later) audio end so the orb stays green through the final words.
+    if (ttsSynthDone) armIdleAtAudioEnd();
   } catch (e) {
     // One bad audio segment must never kill the renderer — drop it and continue.
     console.error('[ARIA] tts audio chunk dropped:', e && e.message);
@@ -833,19 +834,12 @@ aria.tts.onState((state) => {
     if (state.index === 0 && idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
   }
   if (state.state === 'done') {
-    // Synthesis finished: no more chunks coming. The orb returns to idle once all
-    // scheduled audio has also drained — normally via the last source's onended
-    // (see above), with this wall-clock timer as a backstop. The backstop is NOT
-    // gated on ttsSources being empty (a missed/late onended used to strand the
-    // orb green here); by nextPlayTime + a guard, all scheduled audio has finished
-    // by wall clock, so releasing the orb is correct even if an onended never fired.
+    // Synthesis finished. Arm the return-to-idle for the moment the last scheduled
+    // audio finishes playing; armIdleAtAudioEnd re-arms if more PCM arrives after
+    // this (stdout 'done' can beat the final UDS PCM), so the orb holds green for
+    // the FULL utterance instead of dropping to idle early.
     ttsSynthDone = true;
-    const remainMs = audioCtx ? Math.max(0, (nextPlayTime - audioCtx.currentTime) * 1000) : 0;
-    clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => {
-      ttsSources = [];          // any source still listed by now has finished playing
-      ttsMaybeGoIdle();
-    }, remainMs + 250);
+    armIdleAtAudioEnd();
     // NOTE: do NOT reset nextPlayTime here — that previously let the tail be
     // overwritten/clipped. It's reset by stopPlayback() when the next turn starts.
   }

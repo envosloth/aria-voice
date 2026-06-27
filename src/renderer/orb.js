@@ -53,7 +53,11 @@
   //   shadows: whether to draw the GPU-costly shadow blur at all
   //   blurMax: ceiling on shadowBlur radius when shadows are on
   const QUALITY = {
-    high:   { stateMs: { idle: 33, listening: 33, processing: 33, speaking: 22 }, shadows: true,  blurMax: 26 },
+    // High tier (capable GPU, focused window): render every rAF -> native display
+    // refresh (160/165/240 Hz), so the orb is buttery, not visibly capped. 4ms is a
+    // ~250 FPS ceiling that no real panel hits, so in practice it's one render per
+    // refresh. Background windows still drop to BLUR_MIN_MS (~5 FPS) in loop().
+    high:   { stateMs: { idle: 4, listening: 4, processing: 4, speaking: 4 }, shadows: true,  blurMax: 26 },
     medium: { stateMs: { idle: 40, listening: 40, processing: 40, speaking: 28 }, shadows: true,  blurMax: 8 },
     low:    { stateMs: { idle: 66, listening: 66, processing: 66, speaking: 40 }, shadows: false, blurMax: 0 },
   };
