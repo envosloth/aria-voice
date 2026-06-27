@@ -99,9 +99,12 @@ const s = AriaPerf.lastStages();
 check('perf.stt', s && s.stt === 400, s && String(s.stt));
 check('perf.llm', s && s.llm === 700, s && String(s.llm));
 check('perf.tts', s && s.tts === 150, s && String(s.tts));
-check('perf.total', s && s.total === 2600, s && String(s.total));
-// Time to first audible audio = tts_first_audio(2900) - audio_start(1000) = 1900.
-check('perf.firstAudio', s && s.firstAudio === 1900, s && String(s.firstAudio));
+// Full-turn total is timed from audio_END (1500), not audio_start: the seconds the
+// user spends speaking are not latency (see perf.js stagesOf). total =
+// turn_complete(3600) - audio_end(1500) = 2100.
+check('perf.total', s && s.total === 2100, s && String(s.total));
+// Time to first audible audio = tts_first_audio(2900) - audio_end(1500) = 1400.
+check('perf.firstAudio', s && s.firstAudio === 1400, s && String(s.firstAudio));
 check('perf.target', s && s.target === 'LLM', s && String(s.target));
 
 // A typed turn (no audio_*) -> STT is null but LLM/total still compute.

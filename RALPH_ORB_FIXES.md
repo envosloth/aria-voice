@@ -82,6 +82,17 @@ MANUAL CHECK: trigger an update (or watch a real release download) — the banne
 a progress bar that advances 0→100% while downloading and an animated sweep while
 checking/installing, so the update is visibly working.
 
+## Pre-existing failure fixed to unblock the release gate (out of the 5 items)
+`scripts/smoke-hardware.js` was already FAILING on `main` (deterministically, 2100/
+1400) — unrelated to my changes (I touched neither perf.js nor this test). A prior
+fix made `perf.js` time the reply from `audio_end` (not `audio_start`) so the seconds
+spent speaking aren't counted as latency, but this test still asserted the old
+`audio_start`-based `total=2600`/`firstAudio=1900`. Corrected the two stale
+assertions (+ comments) to the right post-fix values `total=2100`/`firstAudio=1400`
+(= turn_complete/tts_first_audio − audio_end). The stt/llm/tts checks already passed
+(they don't depend on `start`). This is a stale-assertion correction, not a
+test weakening. `smoke:hardware` now PASS.
+
 ## Item 4+5: Orb resolution + fullscreen jitter
 Status: done  (done together — same orb.js resize/DPR code, opposing forces)
 Root causes (confirmed in code):
