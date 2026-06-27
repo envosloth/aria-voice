@@ -71,8 +71,14 @@ class SttSidecar(BaseSidecar):
             with self._buffer_lock:
                 pcm = bytes(self._audio_buffer)
                 self._audio_buffer.clear()
+            t0 = time.time()
             text = self._transcribe(pcm) if pcm else ""
-            self.emit({"type": "stt_result", "text": text})
+            ms = int((time.time() - t0) * 1000)
+            audio_ms = int(len(pcm) / 2 / 16000 * 1000) if pcm else 0
+            # Measured inference latency (prove the warm/GPU path is fast, and let
+            # the perf panel / logs show real numbers instead of guesses).
+            self._emit_status("info", f"transcribe {ms}ms for {audio_ms}ms audio ({'vulkan' if self.using_vulkan else 'cpu'})")
+            self.emit({"type": "stt_result", "text": text, "transcribe_ms": ms})
         elif mtype == "reset":
             with self._buffer_lock:
                 self._audio_buffer.clear()
