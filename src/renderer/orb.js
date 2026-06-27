@@ -153,18 +153,27 @@
   }
   let lastW = -1, lastH = -1, lastBw = -1, lastBh = -1;
   function resize() {
-    const cw = canvas.clientWidth, ch = canvas.clientHeight;
-    // Skip until the canvas has a real layout size — sizing the backing store to
-    // 0 (or to a pre-layout value) is what left the mesh looking thin/blurry
-    // until a window minimize/restore forced a correct resize.
-    if (cw < 2 || ch < 2) return;
-    const rawDpr = Math.min(window.devicePixelRatio || 1, 2);
+    const realDpr = window.devicePixelRatio || 1;
+    // Available CSS size = the viewport (the canvas is position:fixed inset:0). Use
+    // this, NOT the element's own box — once we set an explicit grid-snapped width
+    // below, reading the element back would stop tracking window/fullscreen resizes.
+    const availW = window.innerWidth || (canvas.clientWidth), availH = window.innerHeight || (canvas.clientHeight);
+    if (!availW || !availH || availW < 2 || availH < 2) return;
+    // THE right-edge-jitter fix: snap the element to a WHOLE number of device pixels.
+    // At a fractional devicePixelRatio (125%/150% scaling) an integer-CSS-pixel width
+    // put the element's right/bottom edge BETWEEN device pixels; the left/top edges
+    // are pinned at 0, so only the right/bottom shimmered as the orb animated. Sizing
+    // to devW/realDpr lands those edges exactly on the device-pixel grid.
+    const devW = Math.round(availW * realDpr), devH = Math.round(availH * realDpr);
+    const cw = devW / realDpr, ch = devH / realDpr;
+    const rawDpr = Math.min(realDpr, 2);
     const { bw, bh, sx, sy } = backingFor(cw, ch, rawDpr);
-    // No-op if neither the layout size nor the (integer) backing store changed, so
+    // No-op if neither the (snapped) layout size nor the integer backing changed, so
     // a chatty ResizeObserver doesn't clear the canvas every tick (which flickers).
     if (cw === lastW && ch === lastH && bw === lastBw && bh === lastBh) return;
     lastW = cw; lastH = ch; lastBw = bw; lastBh = bh;
     w = cw; h = ch;
+    canvas.style.width = cw + 'px'; canvas.style.height = ch + 'px';
     canvas.width = bw; canvas.height = bh;
     // Exact per-axis scale (≈dpr) so the drawing space fills the backing store with
     // no fractional overhang on the right/bottom edge — see backingFor().
