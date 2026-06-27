@@ -869,14 +869,24 @@ aria.wakeword.onDetected((phrase) => {
   beginUtterance({ vad: true });
 });
 
+// Lifecycle statuses that actually change a sidecar's health. The supervisor also
+// forwards EVERY sidecar stdout line as status 'log' (and emits heartbeats etc.) —
+// those are NOT state changes. The old handler blanked the dot on any status, so
+// the first time STT logged during a transcription its green dot went dark and
+// never came back ("dots stop working after I talk to it"). Now only a recognized
+// transition repaints the dot; anything else leaves the last good state intact.
+const DOT_CLASS_FOR_STATUS = {
+  ready: 'active', started: 'active', initialized: 'active',
+  restarting: 'loading', 'circuit-reset': 'loading',
+  error: 'error', 'circuit-open': 'error', exited: 'error',
+  'memory-exceeded': 'error', 'heartbeat-timeout': 'error',
+};
 aria.sidecar.onStatus(({ name, status, detail }) => {
   const dot = statusDots[name];
   if (!dot) return;
-
-  dot.className = 'status-dot';
-  if (status === 'ready' || status === 'started') dot.classList.add('active');
-  else if (status === 'error' || status === 'circuit-open') dot.classList.add('error');
-  else if (status === 'restarting') dot.classList.add('loading');
+  const cls = DOT_CLASS_FOR_STATUS[status];
+  if (!cls) return; // 'log'/heartbeat/unknown — not a state change; keep the dot as-is
+  dot.className = 'status-dot ' + cls;
 });
 
 aria.sidecar.onError(({ name, status, detail }) => {

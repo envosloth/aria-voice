@@ -88,13 +88,24 @@
     }
 
     .status-dot {
-      width: 8px;
-      height: 8px;
+      width: 9px;
+      height: 9px;
       border-radius: 50%;
       background: var(--text-muted);
+      transition: background 0.2s ease, box-shadow 0.2s ease;
     }
-    .status-dot.active { background: var(--success); }
-    .status-dot.error { background: var(--error); }
+    /* "Online" must read at a glance — a brighter fill plus a coloured halo/ring,
+       far more visible than the old flat 8px dot. Uses the theme --success token so
+       it stays correct across all themes. */
+    .status-dot.active {
+      background: var(--success);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 35%, transparent),
+                  0 0 9px 1px var(--success);
+    }
+    .status-dot.error {
+      background: var(--error);
+      box-shadow: 0 0 7px 0 var(--error);
+    }
     .status-dot.loading { background: var(--warning); animation: pulse 1.5s infinite; }
 
     @keyframes pulse {
