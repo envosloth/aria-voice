@@ -13,7 +13,12 @@
 
 import { app, BrowserWindow, shell } from 'electron';
 import https from 'https';
+import http from 'http';
 import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import crypto from 'crypto';
+import { spawn } from 'child_process';
 import { IPC } from '../shared/ipc-channels';
 
 const REPO_OWNER = 'envosloth';
@@ -23,21 +28,26 @@ const RELEASES_LATEST_PAGE = `https://github.com/${REPO_OWNER}/${REPO_NAME}/rele
 export type UpdateChannel = 'appimage' | 'deb' | 'dev';
 
 export interface UpdateStatus {
-  state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'not-available' | 'error';
+  state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'installing' | 'installed' | 'not-available' | 'error';
   current: string;          // running app version
   version?: string;         // the available/newer version (no leading "v")
   notes?: string;           // release notes (notify path)
   url?: string;             // release page url
-  percent?: number;         // download progress 0..100 (AppImage)
+  percent?: number;         // download progress 0..100
   message?: string;         // error detail
-  canAutoInstall?: boolean; // true when electron-updater can install it (AppImage)
+  canAutoInstall?: boolean; // true when ARIA can install it itself (AppImage OR .deb via pkexec)
 }
+
+interface DebInfo { version: string; url: string; sha512?: string; }
 
 let win: BrowserWindow | null = null;
 let autoUpdater: import('electron-updater').AppUpdater | null = null;
 let beforeInstall: (() => Promise<void>) | null = null;
 let installing = false;
 let downloadedVersion: string | null = null;
+// The .deb to install on the next install() click (set when a check finds a newer
+// release on the .deb channel). Holds the direct asset URL + expected sha512.
+let pendingDeb: DebInfo | null = null;
 
 /** Which install medium are we running as — decides auto-install vs notify. */
 export function deliveryChannel(): UpdateChannel {
@@ -88,7 +98,8 @@ export function isNewer(remote: string, current: string): boolean {
 
 // Minimal GitHub Releases "latest" fetch — no token (public repo), with the
 // User-Agent the API requires. Returns the parsed tag/notes/url or throws.
-function fetchLatestRelease(): Promise<{ version: string; notes: string; url: string }> {
+interface ReleaseAsset { name: string; url: string }
+function fetchLatestRelease(): Promise<{ version: string; notes: string; url: string; assets: ReleaseAsset[] }> {
   return new Promise((resolve, reject) => {
     const req = https.request(
       {
@@ -107,10 +118,14 @@ function fetchLatestRelease(): Promise<{ version: string; notes: string; url: st
           if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
             try {
               const j = JSON.parse(body);
+              const assets: ReleaseAsset[] = Array.isArray(j.assets)
+                ? j.assets.map((a: any) => ({ name: String(a.name || ''), url: String(a.browser_download_url || '') }))
+                : [];
               resolve({
                 version: String(j.tag_name || '').replace(/^v/i, ''),
                 notes: typeof j.body === 'string' ? j.body : '',
                 url: j.html_url || RELEASES_LATEST_PAGE,
+                assets,
               });
             } catch (e) {
               reject(new Error('Could not parse GitHub response'));
@@ -125,6 +140,58 @@ function fetchLatestRelease(): Promise<{ version: string; notes: string; url: st
     req.setTimeout(10000, () => { req.destroy(new Error('GitHub request timed out')); });
     req.end();
   });
+}
+
+// GET a URL following redirects (GitHub asset URLs 302 to a CDN). `onData` gets
+// each chunk; resolves on completion. Used for both the small yml manifest and
+// the large .deb download.
+function httpGet(url: string, onData: (chunk: Buffer) => void, redirectsLeft = 5): Promise<{ statusCode: number }> {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const transport = u.protocol === 'https:' ? https : http;
+    const req = transport.get(
+      { hostname: u.hostname, port: u.port, path: u.pathname + u.search, headers: { 'User-Agent': `ARIA/${currentVersion()}` } },
+      (res) => {
+        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirectsLeft > 0) {
+          res.resume();
+          httpGet(new URL(res.headers.location, url).toString(), onData, redirectsLeft - 1).then(resolve, reject);
+          return;
+        }
+        if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+          res.resume();
+          reject(new Error(`HTTP ${res.statusCode} for ${u.pathname}`));
+          return;
+        }
+        res.on('data', onData);
+        res.on('end', () => resolve({ statusCode: res.statusCode! }));
+        res.on('error', reject);
+      },
+    );
+    req.on('error', reject);
+    req.setTimeout(60000, () => req.destroy(new Error('download timed out')));
+  });
+}
+
+// Read the published latest-linux.yml so we know the .deb's expected sha512 (the
+// same integrity source electron-updater uses for the AppImage). Best-effort:
+// returns null if it can't be fetched/parsed (we just skip the checksum then).
+async function fetchDebSha512(debName: string): Promise<string | null> {
+  try {
+    let body = '';
+    await httpGet(`https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download/latest-linux.yml`,
+      (c) => { body += c.toString(); });
+    // Find the "- url: <debName>" block and the sha512 line under it.
+    const lines = body.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes(debName)) {
+        for (let j = i; j < Math.min(i + 4, lines.length); j++) {
+          const m = lines[j].match(/sha512:\s*(\S+)/);
+          if (m) return m[1];
+        }
+      }
+    }
+  } catch { /* skip checksum */ }
+  return null;
 }
 
 /**
@@ -165,28 +232,103 @@ export async function checkForUpdates(): Promise<void> {
     catch (e) { emit({ state: 'error', message: (e as Error).message }); }
     return;
   }
-  // Notify-only path (.deb / dev): compare the latest release tag to our version.
+  // .deb / dev path: compare the latest release tag to our version.
   try {
     const rel = await fetchLatestRelease();
-    if (isNewer(rel.version, currentVersion())) {
-      emit({ state: 'available', version: rel.version, notes: rel.notes, url: rel.url, canAutoInstall: false });
-    } else {
+    if (!isNewer(rel.version, currentVersion())) {
       emit({ state: 'not-available' });
+      return;
+    }
+    // On a .deb install we CAN now self-install: find the .deb asset, remember it
+    // (+ its checksum), and advertise the update as one-click installable. On dev
+    // there's nothing to install, so it stays a notify-with-link.
+    const isDeb = deliveryChannel() === 'deb';
+    const debAsset = isDeb ? rel.assets.find((a) => /_amd64\.deb$/.test(a.name)) : undefined;
+    if (isDeb && debAsset) {
+      const sha512 = await fetchDebSha512(debAsset.name);
+      pendingDeb = { version: rel.version, url: debAsset.url, sha512: sha512 || undefined };
+      emit({ state: 'available', version: rel.version, notes: rel.notes, url: rel.url, canAutoInstall: true });
+    } else {
+      pendingDeb = null;
+      emit({ state: 'available', version: rel.version, notes: rel.notes, url: rel.url, canAutoInstall: false });
     }
   } catch (e) {
     emit({ state: 'error', message: (e as Error).message });
   }
 }
 
-/** Install a downloaded AppImage update and relaunch. No-op off the AppImage path. */
+/**
+ * Install the available update and relaunch. AppImage uses electron-updater's
+ * downloaded artifact; .deb downloads the new package, verifies it, and installs
+ * it with pkexec (a graphical password prompt) — so one click updates either way.
+ */
 export async function installUpdate(): Promise<void> {
-  if (!autoUpdater || !downloadedVersion) return;
+  if (autoUpdater && downloadedVersion) {
+    installing = true;
+    try { if (beforeInstall) await beforeInstall(); } catch { /* best effort cleanup */ }
+    setImmediate(() => {
+      try { autoUpdater!.quitAndInstall(false, true); }
+      catch (e) { installing = false; emit({ state: 'error', message: (e as Error).message }); }
+    });
+    return;
+  }
+  if (pendingDeb) { await installDebUpdate(pendingDeb); return; }
+  emit({ state: 'error', message: 'No installable update is available.' });
+}
+
+// Download the new .deb (with progress + checksum), then install via pkexec and
+// relaunch. pkexec shows the desktop's polkit password dialog; if the user
+// cancels or it's unavailable, we surface an error and the app keeps running.
+async function installDebUpdate(deb: DebInfo): Promise<void> {
+  const dest = path.join(os.tmpdir(), deb.url.split('/').pop() || `aria-${deb.version}.deb`);
+  const hash = crypto.createHash('sha512');
+  let received = 0;
+  // The deb asset is ~210MB; GitHub doesn't always send content-length through the
+  // CDN redirect, so report progress against the known release size when present.
+  emit({ state: 'downloading', version: deb.version, percent: 0 });
+  try {
+    const out = fs.createWriteStream(dest);
+    await httpGet(deb.url, (chunk) => {
+      received += chunk.length;
+      hash.update(chunk);
+      out.write(chunk);
+      // ~211MB; coarse percent so the bar moves without a content-length header.
+      emit({ state: 'downloading', version: deb.version, percent: Math.min(99, Math.round((received / 211_200_000) * 100)) });
+    });
+    await new Promise<void>((r) => out.end(r));
+  } catch (e) {
+    try { fs.unlinkSync(dest); } catch { /* ignore */ }
+    emit({ state: 'error', message: `Download failed: ${(e as Error).message}` });
+    return;
+  }
+  if (deb.sha512 && hash.digest('base64') !== deb.sha512) {
+    try { fs.unlinkSync(dest); } catch { /* ignore */ }
+    emit({ state: 'error', message: 'Downloaded update failed its integrity check; not installing.' });
+    return;
+  }
+  emit({ state: 'downloaded', version: deb.version });
+
+  // Install with elevated privileges, fixing any dependencies, then relaunch.
+  emit({ state: 'installing', version: deb.version });
   installing = true;
   try { if (beforeInstall) await beforeInstall(); } catch { /* best effort cleanup */ }
-  // Defer so this IPC handler returns before the app tears down.
-  setImmediate(() => {
-    try { autoUpdater!.quitAndInstall(false, true); }
-    catch (e) { installing = false; emit({ state: 'error', message: (e as Error).message }); }
+  const script = `dpkg -i '${dest.replace(/'/g, "'\\''")}' || apt-get -y -f install`;
+  const child = spawn('pkexec', ['sh', '-c', script], { stdio: 'ignore' });
+  child.on('error', (e) => {
+    installing = false;
+    emit({ state: 'error', message: `Couldn't launch the installer (${e.message}). Use "View release" to update manually.` });
+  });
+  child.on('exit', (code) => {
+    if (code === 0) {
+      emit({ state: 'installed', version: deb.version });
+      try { fs.unlinkSync(dest); } catch { /* ignore */ }
+      setImmediate(() => { app.relaunch(); app.exit(0); });
+    } else {
+      installing = false;
+      // 126 = polkit auth dismissed/denied.
+      const why = code === 126 ? 'cancelled at the password prompt' : `failed (exit ${code})`;
+      emit({ state: 'error', message: `Update ${why}. You can try again or use "View release".` });
+    }
   });
 }
 

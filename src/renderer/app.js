@@ -1040,7 +1040,7 @@ let updateChannel = 'dev';
     upd.version.textContent = info.version;
     upd.channelHint.textContent =
       info.channel === 'appimage' ? 'Auto-updates are enabled — a new release downloads in the background and installs on your click.'
-      : info.channel === 'deb' ? 'Installed from a .deb — ARIA will tell you about new releases and open the download page (your package manager owns the install).'
+      : info.channel === 'deb' ? 'One-click updates are enabled — ARIA downloads the new release and installs it after you approve a password prompt, then restarts.'
       : 'Development build — update checks compare against the latest GitHub release.';
   } catch (e) { /* bridge unavailable */ }
 })();
@@ -1087,9 +1087,17 @@ aria.updates.onStatus((s) => {
     case 'not-available':
       setUpdateStatus(`You're on the latest version (v${s.current}).`, 'ok'); hideActionBtn(); break;
     case 'available':
-      if (s.canAutoInstall) {
+      if (s.canAutoInstall && updateChannel === 'appimage') {
+        // AppImage downloads automatically in the background.
         setUpdateStatus(`${v} found — downloading…`); hideActionBtn();
         showUpdateBanner(`ARIA ${v} is available and downloading…`, null);
+      } else if (s.canAutoInstall) {
+        // .deb: one-click Update (downloads, verifies, installs via a password
+        // prompt, and restarts). View release stays as a manual fallback.
+        setUpdateStatus(`${v} is available.`, 'ok');
+        showActionBtn('Update', () => aria.updates.install());
+        upd.releaseUrl = s.url;
+        showUpdateBanner(`ARIA ${v} is available.`, 'Update', () => aria.updates.install());
       } else {
         setUpdateStatus(`${v} is available.`, 'ok');
         showActionBtn('View release', () => aria.updates.openRelease(s.url));
@@ -1099,12 +1107,27 @@ aria.updates.onStatus((s) => {
     case 'downloading':
       setUpdateStatus(`Downloading ${v}… ${s.percent != null ? s.percent + '%' : ''}`); hideActionBtn(); break;
     case 'downloaded':
-      setUpdateStatus(`${v} downloaded — ready to install.`, 'ok');
-      showActionBtn('Install & Restart', () => aria.updates.install());
-      showUpdateBanner(`ARIA ${v} is ready.`, 'Install & Restart', () => aria.updates.install());
+      setUpdateStatus(`${v} downloaded.`, 'ok');
+      // AppImage waits for an explicit Install & Restart; .deb proceeds to install.
+      if (updateChannel === 'appimage') {
+        showActionBtn('Install & Restart', () => aria.updates.install());
+        showUpdateBanner(`ARIA ${v} is ready.`, 'Install & Restart', () => aria.updates.install());
+      } else { hideActionBtn(); }
+      break;
+    case 'installing':
+      setUpdateStatus(`Installing ${v}… approve the password prompt.`); hideActionBtn();
+      showUpdateBanner(`Installing ARIA ${v}…`, null);
+      break;
+    case 'installed':
+      setUpdateStatus(`${v} installed — restarting…`, 'ok'); hideActionBtn();
+      showUpdateBanner(`ARIA ${v} installed — restarting…`, null);
       break;
     case 'error':
-      setUpdateStatus(`Update check failed: ${s.message || 'unknown error'}`, 'warn'); hideActionBtn(); break;
+      setUpdateStatus(`Update failed: ${s.message || 'unknown error'}`, 'warn');
+      // Offer the manual fallback when we have a release URL.
+      if (upd.releaseUrl) showActionBtn('View release', () => aria.updates.openRelease(upd.releaseUrl));
+      else hideActionBtn();
+      break;
   }
 });
 
