@@ -78,12 +78,20 @@
       align-items: center;
       justify-content: space-between;
       padding: 12px 20px;
-      background: var(--surface);
-      border-bottom: 1px solid rgba(255,255,255,0.05);
+      background: color-mix(in srgb, var(--surface) 70%, transparent);
+      backdrop-filter: blur(16px) saturate(1.3);
+      -webkit-backdrop-filter: blur(16px) saturate(1.3);
+      border-bottom: 1px solid rgba(255,255,255,0.07);
       -webkit-app-region: drag;
     }
 
-    header h1 { font-size: 18px; font-weight: 600; }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand-mark { flex: none; display: block; }
+    .brand-name {
+      font-size: 16px; font-weight: 700; letter-spacing: 0.22em;
+      background: linear-gradient(90deg, var(--text), var(--accent-active));
+      -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+    }
 
     .status-bar {
       display: flex;
@@ -179,23 +187,30 @@
 
     .input-area {
       display: flex;
-      gap: 8px;
+      gap: 10px;
       padding: 16px 20px;
-      background: var(--surface);
-      border-top: 1px solid rgba(255,255,255,0.05);
+      background: color-mix(in srgb, var(--surface) 70%, transparent);
+      backdrop-filter: blur(16px) saturate(1.3);
+      -webkit-backdrop-filter: blur(16px) saturate(1.3);
+      border-top: 1px solid rgba(255,255,255,0.07);
     }
 
     #text-input {
       flex: 1;
-      padding: 10px 16px;
-      background: var(--bg);
+      padding: 12px 18px;
+      background: color-mix(in srgb, var(--bg) 60%, transparent);
       border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 8px;
+      border-radius: 999px;
       color: var(--text);
       font-size: 14px;
       outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
     }
-    #text-input:focus { border-color: var(--accent-active); }
+    #text-input::placeholder { color: var(--text-muted); }
+    #text-input:focus {
+      border-color: var(--accent-active);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-active) 22%, transparent);
+    }
 
     #mic-btn {
       width: 44px;
@@ -502,7 +517,14 @@
 <body>
   <canvas id="orb-canvas"></canvas>
   <header>
-    <h1>ARIA</h1>
+    <div class="brand">
+      <svg class="brand-mark" width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <circle cx="16" cy="16" r="13" stroke="var(--accent-active)" stroke-width="2" opacity="0.3"/>
+        <circle cx="16" cy="16" r="7.5" stroke="var(--accent-active)" stroke-width="2"/>
+        <circle cx="16" cy="16" r="2.5" fill="var(--accent-active)"/>
+      </svg>
+      <span class="brand-name">ARIA</span>
+    </div>
     <div class="status-bar">
       <div class="status-item">
         <div class="status-dot" id="status-stt"></div>
