@@ -56,8 +56,10 @@ jobs:
         run: |
           for s in stt tts wakeword; do
             python -m venv "sidecars/$s/venv"
-            "sidecars/$s/venv/bin/python" -m pip install --upgrade pip
-            "sidecars/$s/venv/bin/pip" install -r "sidecars/$s/requirements.txt"
+            # venv tool dir is bin/ on Linux/macOS, Scripts/ on Windows.
+            BIN="sidecars/$s/venv/bin"; [ -d "sidecars/$s/venv/Scripts" ] && BIN="sidecars/$s/venv/Scripts"
+            "$BIN/python" -m pip install --upgrade pip
+            "$BIN/pip" install -r "sidecars/$s/requirements.txt"
           done
 
       # Freeze the three Python sidecars (STT, TTS/Kokoro, wake word) into

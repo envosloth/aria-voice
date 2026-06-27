@@ -15,9 +15,11 @@ SHARED="$ROOT/sidecars/shared"
 OUT="$ROOT/build/sidecars"
 
 if [ ! -d "$VENV" ]; then echo "Missing venv: $VENV"; exit 1; fi
-if [ ! -x "$VENV/bin/pyinstaller" ]; then
+# venv tool dir is bin/ on Linux/macOS, Scripts/ on Windows (Git Bash runner).
+BIN="$VENV/bin"; [ -d "$VENV/Scripts" ] && BIN="$VENV/Scripts"
+if [ ! -x "$BIN/pyinstaller" ] && [ ! -f "$BIN/pyinstaller.exe" ]; then
   echo "Installing PyInstaller into $NAME venv..."
-  "$VENV/bin/pip" install -q pyinstaller
+  "$BIN/pip" install -q pyinstaller
 fi
 
 echo "=== Freezing sidecar '$NAME' (onedir) ==="
@@ -38,12 +40,12 @@ if [ "$NAME" = "tts" ]; then
   EXTRA_ARGS+=(--collect-data language_tags)
   EXTRA_ARGS+=(--hidden-import numpy)
   # Piper is an optional fallback engine; collect it only if installed.
-  if "$VENV/bin/python" -c "import piper" >/dev/null 2>&1; then
+  if "$BIN/python" -c "import piper" >/dev/null 2>&1; then
     EXTRA_ARGS+=(--collect-data piper)
   fi
 fi
 
-"$VENV/bin/pyinstaller" \
+"$BIN/pyinstaller" \
   --onedir \
   --name "$NAME" \
   --paths "$SHARED" \
@@ -56,5 +58,7 @@ fi
   "$SIDECAR_DIR/main.py"
 
 echo
-echo "=== Built: $OUT/$NAME/$NAME ==="
-ls -la "$OUT/$NAME/$NAME"
+# PyInstaller names the onedir launcher $NAME on Linux/macOS, $NAME.exe on Windows.
+BINEXT=""; [ -f "$OUT/$NAME/$NAME.exe" ] && BINEXT=".exe"
+echo "=== Built: $OUT/$NAME/$NAME$BINEXT ==="
+ls -la "$OUT/$NAME/$NAME$BINEXT"
