@@ -723,7 +723,8 @@ function getAudioCtx() {
       ttsAnalyser.fftSize = 1024;
       ttsAnalyser.smoothingTimeConstant = 0.6;
       ttsAnalyser.connect(audioCtx.destination);
-      pollTtsLevel();
+      // The level poll is started on demand by startTtsLevelPoll() when audio is
+      // actually scheduled (see onAudio), and stops itself when playback drains.
     } catch (e) {
       // Audio output unavailable — keep the app alive; speech just won't play.
       audioCtx = null;
@@ -751,15 +752,16 @@ function stopPlayback(cancelSidecar) {
 }
 
 let ttsAnalyser = null;
+let ttsLevelRaf = null;
 const _analyserBuf = new Float32Array(1024);
 
-// Sample the TTS analyser and feed the orb WHILE audio is playing. Gated on
-// active sources: the analyser is created once and never torn down, so without
-// this guard the 1024-sample RMS ran every frame at the display's native refresh
-// forever — a second always-on CPU drain next to the orb. When nothing is
-// playing this is now just a cheap reschedule.
+// Sample the TTS analyser and feed the orb WHILE audio is playing. The loop now
+// STOPS itself once nothing is playing instead of rescheduling forever: at the
+// orb's native refresh that idle reschedule was a 160+/s wakeup doing nothing, an
+// always-on drain. startTtsLevelPoll() re-arms it when the next chunk is scheduled.
 function pollTtsLevel() {
-  if (ttsSources.length && ttsAnalyser && window.AriaOrb) {
+  if (!ttsSources.length) { ttsLevelRaf = null; return; } // idle -> stop (re-armed on next chunk)
+  if (ttsAnalyser && window.AriaOrb) {
     ttsAnalyser.getFloatTimeDomainData(_analyserBuf);
     let sum = 0;
     for (let i = 0; i < _analyserBuf.length; i++) sum += _analyserBuf[i] * _analyserBuf[i];
@@ -767,8 +769,9 @@ function pollTtsLevel() {
     // Map speech RMS (~0..0.3) into a lively 0..1 orb level.
     window.AriaOrb.setLevel(Math.min(1, rms * 3.2));
   }
-  requestAnimationFrame(pollTtsLevel);
+  ttsLevelRaf = requestAnimationFrame(pollTtsLevel);
 }
+function startTtsLevelPoll() { if (ttsLevelRaf == null) ttsLevelRaf = requestAnimationFrame(pollTtsLevel); }
 
 // Trailing odd byte carried from a PCM segment that didn't end on a sample
 // boundary (see below), prepended to the next segment.
@@ -819,6 +822,7 @@ aria.tts.onAudio((pcmArrayBuffer) => {
     if (!ttsFirstAudioMarked) { ttsFirstAudioMarked = true; perf.mark(currentTurnId, 'tts_first_audio'); }
     nextPlayTime += buffer.duration;
     ttsSources.push(source);
+    startTtsLevelPoll(); // drive the reactive orb only while audio is actually playing
     source.onended = () => {
       const i = ttsSources.indexOf(source);
       if (i >= 0) ttsSources.splice(i, 1);
