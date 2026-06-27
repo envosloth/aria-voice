@@ -9,6 +9,10 @@ import { coordinate, cancelCoordination } from './coordinator';
 import { buildManifest, missingModels, downloadModel } from './model-manager';
 import { perfEnabled, setPerfEnabled, perfMark, perfMarkExternal } from './perf';
 import { detectHardware, perfProfile, clampCap } from './hardware';
+import {
+  initUpdater, checkForUpdates, installUpdate, openReleasePage,
+  currentVersion, deliveryChannel, isInstallingUpdate,
+} from './updater';
 import { IPC } from '../shared/ipc-channels';
 import { SidecarName } from '../shared/constants';
 
@@ -255,6 +259,14 @@ function setupIpcHandlers(): void {
     return { hardware: hw, profile: perfProfile(hw, cap) };
   });
 
+  // In-app updates (see updater.ts). The renderer asks for the current version +
+  // delivery channel to render the Updates panel, triggers a check, and either
+  // installs (AppImage) or opens the release page (.deb/dev).
+  ipcMain.handle(IPC.UPDATE_CURRENT, () => ({ version: currentVersion(), channel: deliveryChannel() }));
+  ipcMain.on(IPC.UPDATE_CHECK, () => { void checkForUpdates(); });
+  ipcMain.on(IPC.UPDATE_INSTALL, () => { void installUpdate(); });
+  ipcMain.on(IPC.UPDATE_OPEN, (_e, url?: string) => openReleasePage(url));
+
   // Barge-in: the renderer heard the wake word (or push-to-talk) while a reply
   // was still streaming — abort generation so ARIA stops talking and listens.
   ipcMain.on(IPC.LLM_CANCEL, () => cancelCoordination());
@@ -374,6 +386,15 @@ app.whenReady().then(async () => {
   }
   registerGlobalShortcut();
 
+  // In-app updates. beforeInstall stops the sidecars so an AppImage relaunch
+  // never orphans a child process. A one-shot check runs shortly after launch
+  // (skipped under the headless smoke harness) so a returning user is told about
+  // a new release without having to open Settings.
+  if (!SMOKE) {
+    initUpdater(mainWindow, { beforeInstall: () => supervisor.stopAll() });
+    setTimeout(() => { void checkForUpdates(); }, 8000);
+  }
+
   supervisor.startMonitoring();
 
   // Push config-derived settings into the environment the sidecars inherit
@@ -474,7 +495,9 @@ app.whenReady().then(async () => {
               tts: document.getElementById('perf-tts').textContent,
               total: document.getElementById('perf-total').textContent,
               hw: document.getElementById('perf-hw').textContent,
-              gpuCap: document.getElementById('cfg-gpu-cap').value
+              gpuCap: document.getElementById('cfg-gpu-cap').value,
+              updVersion: document.getElementById('update-version').textContent,
+              updHint: document.getElementById('update-channel-hint').textContent
             });
           })()`);
           console.log('[ARIA_VERIFY] perf-panel=' + out);
@@ -901,8 +924,12 @@ function routeSidecarMessage(name: SidecarName, msg: Record<string, unknown>): v
 
 app.on('before-quit', async (e) => {
   isQuitting = true; // let the window's close handler actually close
-  e.preventDefault();
   globalShortcut.unregisterAll();
+  // An AppImage self-update is relaunching: electron-updater's beforeInstall hook
+  // already stopped the sidecars, so let the quit proceed normally (a hard
+  // app.exit here would cancel the staged install + relaunch).
+  if (isInstallingUpdate()) return;
+  e.preventDefault();
   await supervisor.stopAll();
   app.exit(0);
 });

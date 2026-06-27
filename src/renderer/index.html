@@ -239,6 +239,37 @@
     }
     .error-banner.visible { display: block; }
 
+    /* Update banner (top of window) — shown when a newer release is available. */
+    .update-banner {
+      display: none; align-items: center; gap: 12px;
+      padding: 10px 16px; margin-bottom: 12px;
+      background: rgba(42, 208, 102, 0.13);
+      border: 1px solid var(--success); border-radius: 8px;
+      color: var(--text); font-size: 13px;
+    }
+    .update-banner.visible { display: flex; }
+    .update-banner .grow { flex: 1; }
+    .update-banner button {
+      -webkit-app-region: no-drag; cursor: pointer; font-size: 12px;
+      padding: 6px 14px; border-radius: 6px; border: none;
+      background: var(--success); color: #04210f; font-weight: 600;
+    }
+    .update-banner button.ghost { background: transparent; border: 1px solid var(--success); color: var(--success); }
+    .update-banner .dismiss { background: transparent; border: none; color: var(--text-muted); padding: 6px 8px; }
+
+    /* Settings → Updates rows */
+    .update-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+    .update-row .ver { font-variant-numeric: tabular-nums; color: var(--text); }
+    #update-status { font-size: 12px; color: var(--text-muted); }
+    #update-status.warn { color: var(--warning); }
+    #update-status.ok { color: var(--success); }
+    .ghost-btn, #update-action-btn {
+      cursor: pointer; font-size: 13px; padding: 7px 14px; border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.15); background: var(--bg); color: var(--text);
+    }
+    .ghost-btn:hover, #update-action-btn:hover { border-color: var(--accent-active); }
+    #update-action-btn { background: var(--success); color: #04210f; border: none; font-weight: 600; }
+
     #settings-btn {
       -webkit-app-region: no-drag;
       background: none;
@@ -590,6 +621,17 @@
         <div class="perf-hw" id="perf-hw">Detecting hardware…</div>
       </section>
 
+      <section>
+        <h3>Updates</h3>
+        <div class="update-row">
+          <span class="ver">ARIA <b id="update-version">…</b></span>
+          <button id="update-check-btn" class="ghost-btn">Check for updates</button>
+          <button id="update-action-btn" style="display:none"></button>
+        </div>
+        <div id="update-status">&nbsp;</div>
+        <p class="hint" id="update-channel-hint"></p>
+      </section>
+
       <div class="settings-footer">
         <button id="settings-save" class="primary">Save</button>
         <span id="settings-saved-msg"></span>
@@ -689,6 +731,11 @@
   </div>
 
   <main>
+    <div class="update-banner" id="update-banner">
+      <span class="grow" id="update-banner-text"></span>
+      <button id="update-banner-action"></button>
+      <button class="dismiss" id="update-banner-dismiss" title="Dismiss">&times;</button>
+    </div>
     <div class="error-banner" id="error-banner"></div>
     <div id="conversation"></div>
     <div class="partial-text" id="partial"></div>

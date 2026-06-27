@@ -995,6 +995,95 @@ if (cfg.gpuCap) {
   });
 }
 
+// --- In-app updates (see src/main/updater.ts) ---
+const upd = {
+  version: document.getElementById('update-version'),
+  checkBtn: document.getElementById('update-check-btn'),
+  actionBtn: document.getElementById('update-action-btn'),
+  status: document.getElementById('update-status'),
+  channelHint: document.getElementById('update-channel-hint'),
+  banner: document.getElementById('update-banner'),
+  bannerText: document.getElementById('update-banner-text'),
+  bannerAction: document.getElementById('update-banner-action'),
+  bannerDismiss: document.getElementById('update-banner-dismiss'),
+};
+let updateChannel = 'dev';
+
+(async function initUpdatesUi() {
+  try {
+    const info = await aria.updates.current();
+    updateChannel = info.channel;
+    upd.version.textContent = info.version;
+    upd.channelHint.textContent =
+      info.channel === 'appimage' ? 'Auto-updates are enabled — a new release downloads in the background and installs on your click.'
+      : info.channel === 'deb' ? 'Installed from a .deb — ARIA will tell you about new releases and open the download page (your package manager owns the install).'
+      : 'Development build — update checks compare against the latest GitHub release.';
+  } catch (e) { /* bridge unavailable */ }
+})();
+
+function setUpdateStatus(text, cls) {
+  if (!upd.status) return;
+  upd.status.textContent = text || ' ';
+  upd.status.className = cls || '';
+}
+function showActionBtn(label, handler) {
+  upd.actionBtn.textContent = label;
+  upd.actionBtn.style.display = '';
+  upd.actionBtn.onclick = handler;
+}
+function hideActionBtn() { upd.actionBtn.style.display = 'none'; upd.actionBtn.onclick = null; }
+
+let updateBannerDismissed = false;
+function showUpdateBanner(text, actionLabel, handler) {
+  if (updateBannerDismissed) return;
+  upd.bannerText.textContent = text;
+  if (actionLabel) {
+    upd.bannerAction.textContent = actionLabel;
+    upd.bannerAction.style.display = '';
+    upd.bannerAction.onclick = handler;
+  } else {
+    upd.bannerAction.style.display = 'none';
+  }
+  upd.banner.classList.add('visible');
+}
+upd.bannerDismiss.addEventListener('click', () => { updateBannerDismissed = true; upd.banner.classList.remove('visible'); });
+
+upd.checkBtn.addEventListener('click', () => {
+  updateBannerDismissed = false; // an explicit check should be allowed to re-banner
+  setUpdateStatus('Checking for updates…');
+  hideActionBtn();
+  aria.updates.check();
+});
+
+aria.updates.onStatus((s) => {
+  const v = s.version ? 'v' + s.version : '';
+  switch (s.state) {
+    case 'checking':
+      setUpdateStatus('Checking for updates…'); hideActionBtn(); break;
+    case 'not-available':
+      setUpdateStatus(`You're on the latest version (v${s.current}).`, 'ok'); hideActionBtn(); break;
+    case 'available':
+      if (s.canAutoInstall) {
+        setUpdateStatus(`${v} found — downloading…`); hideActionBtn();
+        showUpdateBanner(`ARIA ${v} is available and downloading…`, null);
+      } else {
+        setUpdateStatus(`${v} is available.`, 'ok');
+        showActionBtn('View release', () => aria.updates.openRelease(s.url));
+        showUpdateBanner(`ARIA ${v} is available.`, 'View release', () => aria.updates.openRelease(s.url));
+      }
+      break;
+    case 'downloading':
+      setUpdateStatus(`Downloading ${v}… ${s.percent != null ? s.percent + '%' : ''}`); hideActionBtn(); break;
+    case 'downloaded':
+      setUpdateStatus(`${v} downloaded — ready to install.`, 'ok');
+      showActionBtn('Install & Restart', () => aria.updates.install());
+      showUpdateBanner(`ARIA ${v} is ready.`, 'Install & Restart', () => aria.updates.install());
+      break;
+    case 'error':
+      setUpdateStatus(`Update check failed: ${s.message || 'unknown error'}`, 'warn'); hideActionBtn(); break;
+  }
+});
+
 async function loadSettings() {
   cfg.routingMode.value = (await aria.config.get('routing.mode')) || 'auto';
   cfg.llmEndpoint.value = (await aria.config.get('llm.endpoint')) || '';

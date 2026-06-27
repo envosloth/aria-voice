@@ -23,7 +23,8 @@
     "smoke:boot": "npm run build && ARIA_SMOKE=1 electron --no-sandbox dist/main/index.js",
     "smoke:hardware": "npm run build && node scripts/smoke-hardware.js",
     "smoke:perf-panel": "npm run build && node scripts/smoke-perf-panel.js",
-    "smoke:all": "npm run smoke && npm run smoke:tts && npm run smoke:stt && npm run smoke:resilience && npm run smoke:pdeathsig && npm run smoke:memory && npm run smoke:llm && npm run smoke:router && npm run smoke:hardware && npm run smoke:models && npm run smoke:audio && npm run smoke:e2e",
+    "smoke:updater": "npm run build && node scripts/smoke-updater.js",
+    "smoke:all": "npm run smoke && npm run smoke:tts && npm run smoke:stt && npm run smoke:resilience && npm run smoke:pdeathsig && npm run smoke:memory && npm run smoke:llm && npm run smoke:router && npm run smoke:hardware && npm run smoke:updater && npm run smoke:models && npm run smoke:audio && npm run smoke:e2e",
     "package:sidecars": "for s in stt tts wakeword; do bash scripts/package-sidecar.sh $s; done",
     "package:whisper": "bash scripts/stage-whisper.sh",
     "dist": "npm run build && npm run package:sidecars && npm run package:whisper && electron-builder --config electron-builder.yml",
@@ -49,5 +50,8 @@
     "esbuild": "^0.28.1",
     "eslint": "^9.0.0",
     "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

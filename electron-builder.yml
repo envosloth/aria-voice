@@ -10,6 +10,17 @@ appId: com.aria.voice
 productName: ARIA
 copyright: Copyright © 2026
 
+# In-app auto-update source. electron-builder embeds this as app-update.yml inside
+# the AppImage and emits a matching latest-linux.yml next to the artifacts, which
+# electron-updater reads to find newer GitHub Releases (see src/main/updater.ts).
+# `publish` here only configures the update channel — it does NOT auto-upload;
+# releases are still cut with `gh release` (latest-linux.yml must be attached).
+publish:
+  provider: github
+  owner: envosloth
+  repo: aria-voice
+  releaseType: release
+
 directories:
   output: dist-installers
   buildResources: assets

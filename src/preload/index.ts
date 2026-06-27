@@ -82,6 +82,18 @@ const api = {
     info: () => ipcRenderer.invoke(IPC.HARDWARE_INFO),
   },
 
+  // In-app updates (see src/main/updater.ts). `current()` reports the running
+  // version + delivery channel; `check()` looks for a newer release; `install()`
+  // applies a downloaded AppImage update; `openRelease()` opens the download page.
+  updates: {
+    current: () => ipcRenderer.invoke(IPC.UPDATE_CURRENT),
+    check: () => ipcRenderer.send(IPC.UPDATE_CHECK),
+    install: () => ipcRenderer.send(IPC.UPDATE_INSTALL),
+    openRelease: (url?: string) => ipcRenderer.send(IPC.UPDATE_OPEN, url || ''),
+    onStatus: (cb: (s: Record<string, unknown>) => void) =>
+      ipcRenderer.on(IPC.UPDATE_STATUS, (_e, s) => cb(s)),
+  },
+
   sidecar: {
     onStatus: (cb: (info: { name: string; status: string; detail?: string }) => void) =>
       ipcRenderer.on(IPC.SIDECAR_STATUS, (_e, info) => cb(info)),

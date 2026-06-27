@@ -43,6 +43,9 @@ function main() {
       // Hardware line is populated by the real hardware:info IPC round-trip.
       ['hardware line populated', typeof p.hw === 'string' && /tier/.test(p.hw) && /GPU:/.test(p.hw)],
       ['GPU cap control has a numeric value', /^\d+$/.test(String(p.gpuCap || ''))],
+      // Updates panel populated via the update:current IPC round-trip.
+      ['update version shows a semver', /^\d+\.\d+\.\d+/.test(String(p.updVersion || ''))],
+      ['update channel hint populated', typeof p.updHint === 'string' && p.updHint.length > 10],
     ];
     let pass = true;
     console.log('\nChecks:');

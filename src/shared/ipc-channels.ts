@@ -43,4 +43,10 @@ export const IPC = {
   PERF_MARK: 'perf:mark',        // renderer -> main: a latency stage mark to log
 
   HARDWARE_INFO: 'hardware:info', // renderer -> main: detected CPU/RAM/GPU + adaptive perf profile
+
+  UPDATE_CHECK: 'update:check',     // renderer -> main: check GitHub for a newer release
+  UPDATE_INSTALL: 'update:install', // renderer -> main: install a downloaded update + relaunch (AppImage)
+  UPDATE_OPEN: 'update:open',       // renderer -> main: open the release page in the browser (deb/dev)
+  UPDATE_STATUS: 'update:status',   // main -> renderer: checking|available|downloading|downloaded|not-available|error
+  UPDATE_CURRENT: 'update:current', // renderer -> main: current app version + delivery channel
 } as const;
