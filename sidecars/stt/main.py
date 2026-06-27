@@ -108,6 +108,7 @@ class SttSidecar(BaseSidecar):
             tmp.write(wav_bytes)
         try:
             cmd = [self._cli_bin, "-m", self.model_path, "-f", tmp_path, "--no-timestamps", "-l", "en"]
+            cmd += self._thread_args()
             if self._force_cpu or not self.using_vulkan:
                 cmd.append("--no-gpu")
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=self._env())
@@ -124,6 +125,10 @@ class SttSidecar(BaseSidecar):
             "--host", "127.0.0.1", "--port", str(self._server_port),
             "-l", "en", "--no-timestamps",
         ]
+        # Bound CPU thread use to the host-adaptive budget the supervisor computed
+        # (ARIA_STT_THREADS, derived from the machine's cores + the GPU/CPU cap),
+        # so a transcription can't saturate every core and starve the UI/audio.
+        cmd += self._thread_args()
         # Honor a forced-CPU preference (Settings -> STT backend). Without this
         # the server always tries the GPU; --no-gpu gives a deterministic CPU
         # path (the spec's required CPU fallback, and a guard against fighting a
@@ -198,6 +203,21 @@ class SttSidecar(BaseSidecar):
         env = os.environ.copy()
         env["LD_LIBRARY_PATH"] = LIB_DIR + ":" + env.get("LD_LIBRARY_PATH", "")
         return env
+
+    @staticmethod
+    def _thread_args() -> list:
+        """whisper -t N from the supervisor's host-adaptive budget.
+
+        ARIA_STT_THREADS is set by the Electron main process from the detected
+        core count and the GPU/CPU usage cap (see src/main/hardware.ts). Absent or
+        invalid -> no -t flag (whisper picks its own default).
+        """
+        raw = os.environ.get("ARIA_STT_THREADS", "").strip()
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            return []
+        return ["-t", str(n)] if n >= 1 else []
 
     @staticmethod
     def _free_port() -> int:

@@ -41,4 +41,6 @@ export const IPC = {
 
   PERF_ENABLED: 'perf:enabled',  // renderer -> main: is latency instrumentation on?
   PERF_MARK: 'perf:mark',        // renderer -> main: a latency stage mark to log
+
+  HARDWARE_INFO: 'hardware:info', // renderer -> main: detected CPU/RAM/GPU + adaptive perf profile
 } as const;

@@ -2,6 +2,15 @@ import https from 'https';
 import http from 'http';
 import { URL } from 'url';
 
+// Keep-alive connection pools, shared across every request. Without these Node
+// opens a fresh TCP (and, for https providers, a full TLS) connection for EVERY
+// turn — a handshake that adds ~100-400ms of dead time before the model can even
+// start, on top of the model's own latency. Reusing a warm socket removes that
+// per-turn overhead, which is pure win for the "direct LLM should be fast" path.
+// maxSockets is small: ARIA issues one streamed request at a time per target.
+const httpAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 15000, maxSockets: 8 });
+const httpsAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 15000, maxSockets: 8 });
+
 // One fully-assembled tool call the model asked us to run (arguments may stream
 // across many deltas; these are accumulated before being surfaced).
 export interface ToolCall {
@@ -168,6 +177,8 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
       port: url.port || (isHttps ? 443 : 80),
       path: url.pathname + url.search,
       method: 'POST',
+      // Reuse a warm keep-alive socket instead of handshaking per request.
+      agent: isHttps ? httpsAgent : httpAgent,
       headers: {
         'Content-Type': 'application/json',
         // Advertise SSE so OpenAI-compatible servers/proxies stream the response
@@ -253,6 +264,10 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
       });
     },
   );
+
+  // Disable Nagle so the request body (and the server's first SSE bytes) aren't
+  // held back by TCP coalescing — shaves a little more off time-to-first-token.
+  req.on('socket', (socket) => { try { socket.setNoDelay(true); } catch { /* best effort */ } });
 
   req.on('error', (err) => {
     // A cancel() destroy() also surfaces here as ECONNRESET/aborted — cb guards

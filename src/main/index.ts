@@ -8,6 +8,7 @@ import { streamChat } from './llm-stream';
 import { coordinate, cancelCoordination } from './coordinator';
 import { buildManifest, missingModels, downloadModel } from './model-manager';
 import { perfEnabled, setPerfEnabled, perfMark, perfMarkExternal } from './perf';
+import { detectHardware, perfProfile, clampCap } from './hardware';
 import { IPC } from '../shared/ipc-channels';
 import { SidecarName } from '../shared/constants';
 
@@ -209,6 +210,11 @@ function setupIpcHandlers(): void {
       scheduleSidecarReload('tts');
     } else if (key === 'stt.model' || key === 'stt.backend') {
       scheduleSidecarReload('stt');
+    } else if (key === 'ui.gpuCap') {
+      // The GPU cap changes STT's thread budget (and possibly its backend), which
+      // the sidecar only reads at spawn — reload it so the new cap takes effect
+      // live. The orb's quality is applied renderer-side (see app.js).
+      scheduleSidecarReload('stt');
     }
   });
 
@@ -239,6 +245,14 @@ function setupIpcHandlers(): void {
   ipcMain.handle(IPC.PERF_ENABLED, () => perfEnabled());
   ipcMain.on(IPC.PERF_MARK, (_e, m: { turn: string; stage: string; t?: number; extra?: Record<string, unknown> }) => {
     perfMarkExternal(m);
+  });
+
+  // Detected hardware + the adaptive profile for the current GPU cap, so the
+  // Settings → Performance panel can show what ARIA detected and how it adapted.
+  ipcMain.handle(IPC.HARDWARE_INFO, () => {
+    const hw = detectHardware();
+    const cap = clampCap(config.get('ui.gpuCap'));
+    return { hardware: hw, profile: perfProfile(hw, cap) };
   });
 
   // Barge-in: the renderer heard the wake word (or push-to-talk) while a reply
@@ -689,8 +703,18 @@ function migrateConfig(): void {
 
 function applyConfigToEnv(): void {
   migrateConfig();
+
+  // Adaptive, hardware-aware caps. The STT sidecar runs whisper.cpp, the heaviest
+  // on-device GPU/CPU consumer; bound its thread count (and, at a very low cap or
+  // on a weak GPU, push it to the CPU path) so a transcription can't peg the
+  // machine. The user's explicit STT backend choice still wins — we only fill the
+  // thread budget and supply the profile's backend as the default.
+  const hw = detectHardware();
+  const profile = perfProfile(hw, clampCap(config.get('ui.gpuCap')));
+  process.env.ARIA_STT_THREADS = String(profile.sttThreads);
+
   process.env.ARIA_STT_MODEL = (config.get('stt.model') as string) || 'small';
-  process.env.ARIA_STT_BACKEND = (config.get('stt.backend') as string) || 'vulkan';
+  process.env.ARIA_STT_BACKEND = (config.get('stt.backend') as string) || profile.sttBackend;
   process.env.ARIA_TTS_ENGINE = (config.get('tts.engine') as string) || 'kokoro';
   process.env.ARIA_TTS_VOICE = (config.get('tts.voice') as string) || 'bm_george';
   process.env.ARIA_WAKEWORD_MODEL = (config.get('wakeword.phrase') as string) || 'hey_jarvis';

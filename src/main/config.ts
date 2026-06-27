@@ -38,6 +38,10 @@ interface AppConfig {
     globalShortcut: string;
     theme: 'system' | 'light' | 'dark';
     onboarded: boolean;
+    // Cap on ARIA's own GPU work (percent), 20..100. Bounds the orb animation +
+    // on-device STT so a spoken reply can't drive the GPU to 100% and freeze the
+    // desktop on weaker hardware. See hardware.ts/perfProfile.
+    gpuCap: number;
   };
   debug: {
     // When true, emit [ARIA_PERF] latency stage marks (see perf.ts). Off by
@@ -87,6 +91,7 @@ const defaults: AppConfig = {
     globalShortcut: 'Super+Shift+A',
     theme: 'system',
     onboarded: false,
+    gpuCap: 50,
   },
   debug: {
     perf: false,

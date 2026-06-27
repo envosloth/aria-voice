@@ -42,6 +42,24 @@
   let target = STATE_COLORS.idle.slice();
   let accent = [233, 69, 96];
 
+  // Render-quality profiles, selected from the host's hardware tier + the GPU
+  // usage cap (see src/main/hardware.ts, applied via AriaOrb.setQuality). The orb
+  // is the renderer's one continuous GPU consumer, and the shadow-blur pass is by
+  // far its most expensive GPU op — on a weak GPU, full-quality blur at the
+  // speaking frame rate is what pushes the compositor toward 100% and can freeze
+  // the desktop. Lower tiers cap the frame rate and the blur radius (or drop
+  // shadows entirely), which keeps GPU work bounded while the motion still reads.
+  //   stateMs: min ms between frames per state (higher = fewer FPS = less GPU)
+  //   shadows: whether to draw the GPU-costly shadow blur at all
+  //   blurMax: ceiling on shadowBlur radius when shadows are on
+  const QUALITY = {
+    high:   { stateMs: { idle: 33, listening: 33, processing: 33, speaking: 22 }, shadows: true,  blurMax: 26 },
+    medium: { stateMs: { idle: 40, listening: 40, processing: 40, speaking: 28 }, shadows: true,  blurMax: 8 },
+    low:    { stateMs: { idle: 66, listening: 66, processing: 66, speaking: 40 }, shadows: false, blurMax: 0 },
+  };
+  let quality = 'high';
+  function setQuality(q) { if (QUALITY[q]) quality = q; }
+
   function refreshAccent() {
     // The orb's state colours are now fixed + distinct rather than the theme
     // accent (so states stay easy to tell apart in every theme); this only keeps
@@ -231,8 +249,15 @@
     // the alpha floor is high enough that lines passing behind the sphere stay
     // clearly visible (fixes "back lines barely show"). Thicker + round caps
     // give the mesh more body.
-    if (react > 0.04) { ctx.shadowColor = `rgba(${cr},${cg},${cb},${0.6 + react})`; ctx.shadowBlur = 8 + react * 18; }
-    else { ctx.shadowColor = `rgba(${cr},${cg},${cb},0.4)`; ctx.shadowBlur = 4; }
+    // Shadow blur is the orb's most GPU-expensive op — gated + capped by the
+    // active quality profile so a low GPU cap / weak GPU disables it entirely.
+    const q = QUALITY[quality] || QUALITY.high;
+    if (q.shadows) {
+      if (react > 0.04) { ctx.shadowColor = `rgba(${cr},${cg},${cb},${0.6 + react})`; ctx.shadowBlur = Math.min(q.blurMax, 8 + react * 18); }
+      else { ctx.shadowColor = `rgba(${cr},${cg},${cb},0.4)`; ctx.shadowBlur = Math.min(q.blurMax, 4); }
+    } else {
+      ctx.shadowBlur = 0;
+    }
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
@@ -301,6 +326,12 @@
   // fewer frames). speaking gets a higher cap so the voice-driven surface ripple
   // stays smooth. The rotation no longer needs native refresh to look right.
   const STATE_MIN_MS = { idle: 33, listening: 33, processing: 33, speaking: 22 };
+  // The active profile's per-state caps (see QUALITY) override the defaults above
+  // so a lower GPU cap throttles the orb's frame rate. Falls back to STATE_MIN_MS.
+  function stateMinMs(s) {
+    const q = QUALITY[quality];
+    return (q && q.stateMs[s]) || STATE_MIN_MS[s] || 33;
+  }
   // When the window isn't focused (ARIA living in the background, common for a
   // voice assistant) drop to ~5 FPS regardless of state — nobody's watching the
   // orb, so there's no reason to burn CPU repainting it. document.hidden already
@@ -318,7 +349,7 @@
     // keep it smooth even if the window isn't focused. Idle/listening/processing
     // in the background (the always-on drain) drop to 5 FPS.
     const blurred = !windowFocused && state !== 'speaking';
-    const minMs = blurred ? BLUR_MIN_MS : (STATE_MIN_MS[state] || 33);
+    const minMs = blurred ? BLUR_MIN_MS : stateMinMs(state);
     if (now - lastRenderAt >= minMs) {
       lastRenderAt = now;
       // A single bad frame (e.g. a transient state during a resize) must never
@@ -396,7 +427,7 @@
     for (let i = 0; i < frames; i++) { now += 16.67; try { render(now); } catch (e) {} }
   }
 
-  root.AriaOrb = { init, setLevel, setState, measure, benchmark, refreshAccent, toggleFps, pump };
+  root.AriaOrb = { init, setLevel, setState, setQuality, measure, benchmark, refreshAccent, toggleFps, pump };
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);
 })(typeof self !== 'undefined' ? self : this);

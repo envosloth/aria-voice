@@ -8,7 +8,10 @@ const { aria } = window;
 
 // Latency harness (see perf.js / src/main/perf.ts). Safe no-op stub if perf.js
 // didn't load, so instrumenting the hot path never risks a ReferenceError.
-const perf = window.AriaPerf || { newTurn: () => '', mark: () => {}, isEnabled: () => false };
+const perf = window.AriaPerf || {
+  newTurn: () => '', mark: () => {}, isEnabled: () => false,
+  setTurnMeta: () => {}, recentTurns: () => [], lastStages: () => null, onUpdate: () => {},
+};
 // Correlation id for the in-flight turn, shared with main over IPC. Voice turns
 // keep their id from audio_start through TTS playback so STT/LLM/TTS stages line
 // up in one timeline.
@@ -461,7 +464,12 @@ window.addEventListener('keydown', (e) => {
 
 // Which target (LLM vs Agent harness) the coordinator routed to.
 let pendingRoute = null;
-aria.llm.onRoute((info) => { pendingRoute = info; });
+aria.llm.onRoute((info) => {
+  pendingRoute = info;
+  // Tag the in-flight turn so the latency panel can label the LLM/Agent stage
+  // with which target actually answered (and whether it was a fallback).
+  try { perf.setTurnMeta(currentTurnId, { target: info && info.name }); } catch (e) {}
+});
 
 // Token streaming is batched: tokens accumulate in a buffer and the DOM is
 // updated at most once per animation frame (a single text-node write + one
@@ -873,6 +881,7 @@ const cfg = {
   wwEnabled: document.getElementById('cfg-ww-enabled'),
   wwPhrase: document.getElementById('cfg-ww-phrase'),
   theme: document.getElementById('cfg-theme'),
+  gpuCap: document.getElementById('cfg-gpu-cap'),
 };
 
 // Live theme preview while the dropdown changes (persisted on Save).
@@ -912,6 +921,80 @@ function applyHarnessSelection(id, opts) {
 }
 cfg.harness.addEventListener('change', () => applyHarnessSelection(cfg.harness.value, { prefill: true }));
 
+// --- Performance panel: live per-stage latency + hardware-adaptive GPU cap ---
+const perfEls = {
+  stt: document.getElementById('perf-stt'),
+  llm: document.getElementById('perf-llm'),
+  llmLabel: document.getElementById('perf-llm-label'),
+  tts: document.getElementById('perf-tts'),
+  total: document.getElementById('perf-total'),
+  hw: document.getElementById('perf-hw'),
+};
+
+function fmtMs(v) {
+  if (v === null || v === undefined) return '—';
+  return v >= 1000 ? (v / 1000).toFixed(2) + ' s' : Math.round(v) + ' ms';
+}
+
+// Paint the most-recent turn's per-stage timings into the panel. Cheap; called
+// on every perf mark (live) but only does work while the panel is visible.
+function refreshPerfPanel() {
+  if (!perfEls.total || !settingsOverlay.classList.contains('visible')) return;
+  const s = perf.lastStages();
+  if (!s) {
+    perfEls.stt.textContent = perfEls.llm.textContent = '—';
+    perfEls.tts.textContent = perfEls.total.textContent = '—';
+    return;
+  }
+  perfEls.stt.textContent = fmtMs(s.stt);
+  perfEls.llm.textContent = fmtMs(s.llm);
+  perfEls.tts.textContent = fmtMs(s.tts);
+  perfEls.total.textContent = fmtMs(s.total);
+  perfEls.llmLabel.textContent = s.target ? 'LLM / Agent · ' + s.target : 'LLM / Agent';
+  // Flag a slow LLM stage (the "~5s even on the direct LLM" symptom) and a slow
+  // overall turn in the warning colour so the bottleneck is obvious at a glance.
+  perfEls.llm.classList.toggle('warn', typeof s.llm === 'number' && s.llm >= 2500);
+  perfEls.total.classList.toggle('warn', typeof s.total === 'number' && s.total >= 6000);
+}
+try { perf.onUpdate(() => refreshPerfPanel()); } catch (e) {}
+
+// Detected hardware + adaptive profile (from the main process). Cached per cap.
+async function loadHardwareInfo() {
+  try { return await aria.hardware.info(); } catch (e) { return null; }
+}
+function renderHardware(info) {
+  if (!info || !perfEls.hw) return;
+  const hw = info.hardware, p = info.profile;
+  const vram = hw.gpu.vramMB ? (Math.round(hw.gpu.vramMB / 1024 * 10) / 10) + ' GB VRAM' : 'VRAM n/a';
+  // textContent (not innerHTML) — the GPU name comes from system tools; never
+  // interpolate it into markup. .perf-hw uses white-space: pre-line for the breaks.
+  perfEls.hw.textContent =
+    `Detected: ${hw.tier} tier · ${hw.cpuCores} cores · ${hw.totalMemGB} GB RAM\n` +
+    `GPU: ${hw.gpu.name} (${vram})\n` +
+    `Adapting: orb ${p.orbQuality} quality · STT ${p.sttThreads} threads (${p.sttBackend}) · cap ${p.gpuCapPct}%`;
+}
+// Push the profile's orb quality into the renderer so the orb's GPU work is
+// bounded by the cap — called at startup and whenever the cap changes.
+function applyOrbQuality(info) {
+  const q = info && info.profile && info.profile.orbQuality;
+  if (q && window.AriaOrb && window.AriaOrb.setQuality) window.AriaOrb.setQuality(q);
+}
+
+// Bound the orb from the very first frame, before Settings is ever opened.
+loadHardwareInfo().then((info) => applyOrbQuality(info));
+
+// The GPU cap applies live: persist on change (which reloads STT with the new
+// thread budget in main) and re-derive the orb quality + hardware readout.
+if (cfg.gpuCap) {
+  cfg.gpuCap.addEventListener('change', async () => {
+    const v = parseInt(cfg.gpuCap.value, 10) || 50;
+    await aria.config.set('ui.gpuCap', v);
+    const info = await loadHardwareInfo();
+    applyOrbQuality(info);
+    renderHardware(info);
+  });
+}
+
 async function loadSettings() {
   cfg.routingMode.value = (await aria.config.get('routing.mode')) || 'auto';
   cfg.llmEndpoint.value = (await aria.config.get('llm.endpoint')) || '';
@@ -933,6 +1016,11 @@ async function loadSettings() {
   cfg.wwEnabled.checked = !!(await aria.config.get('wakeword.enabled'));
   cfg.wwPhrase.value = (await aria.config.get('wakeword.phrase')) || 'hey_jarvis';
   cfg.theme.value = (await aria.config.get('ui.theme')) || 'midnight';
+  if (cfg.gpuCap) cfg.gpuCap.value = String((await aria.config.get('ui.gpuCap')) || 50);
+
+  // Performance panel: show the latest turn's latency + detected hardware.
+  refreshPerfPanel();
+  loadHardwareInfo().then((info) => { renderHardware(info); applyOrbQuality(info); });
 
   const { backend, safe } = await aria.secure.getBackend();
   if (!safe) {
@@ -975,6 +1063,7 @@ settingsSave.addEventListener('click', async () => {
   await aria.config.set('wakeword.enabled', cfg.wwEnabled.checked);
   await aria.config.set('wakeword.phrase', cfg.wwPhrase.value.trim());
   await aria.config.set('ui.theme', cfg.theme.value);
+  if (cfg.gpuCap) await aria.config.set('ui.gpuCap', parseInt(cfg.gpuCap.value, 10) || 50);
   applyTheme(cfg.theme.value);
 
   // Persist exactly what's in the key fields (they stay populated, not cleared).

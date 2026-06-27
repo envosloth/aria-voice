@@ -76,6 +76,12 @@ const api = {
       ipcRenderer.send(IPC.PERF_MARK, { turn: turnId, stage, t: Date.now(), extra }),
   },
 
+  // Detected host hardware + the adaptive performance profile for the current GPU
+  // cap (see src/main/hardware.ts). Used by the Settings → Performance panel.
+  hardware: {
+    info: () => ipcRenderer.invoke(IPC.HARDWARE_INFO),
+  },
+
   sidecar: {
     onStatus: (cb: (info: { name: string; status: string; detail?: string }) => void) =>
       ipcRenderer.on(IPC.SIDECAR_STATUS, (_e, info) => cb(info)),
