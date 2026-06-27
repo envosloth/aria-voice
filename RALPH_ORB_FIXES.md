@@ -17,8 +17,16 @@ Visual items are verified by tests + code reasoning only; each carries a MANUAL 
 
 ## Release
 All 5 items done + committed per item; pre-existing smoke:hardware failure fixed.
-Full `smoke:all` GREEN (16/16 suites). Released as **v2.5.0**: fast-forward main,
-`chore(release): v2.5.0`, tag `v2.5.0` pushed → CI builds + draft GitHub Release.
+Full `smoke:all` GREEN (16/16 suites). Released as **v2.5.0**.
+
+Also fixed a PRE-EXISTING CI release-build failure (the v2.4.0 / v2.4 release runs
+had failed identically; those releases were made manually): `npm run build` ran
+`cp src/renderer/* dist/renderer/` but nothing creates `dist/renderer/` in a clean
+checkout (tsc only emits dist/main + dist/preload from .ts; the renderer is plain
+.js), so `cp` failed with "target 'dist/renderer/': No such file or directory". It
+passed locally only because dist/renderer/ already existed. Fix: `mkdir -p
+dist/renderer` before the copy. Verified with `rm -rf dist && npm run build` (exit 0,
+dist/renderer populated). v2.5.0 tag points at this fix so CI can build artifacts.
 
 ## Item 2: Orb stays green after the agent finishes speaking
 Status: done
