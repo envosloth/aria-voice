@@ -58,7 +58,13 @@
     low:    { stateMs: { idle: 66, listening: 66, processing: 66, speaking: 40 }, shadows: false, blurMax: 0 },
   };
   let quality = 'high';
-  function setQuality(q) { if (QUALITY[q]) quality = q; }
+  function setQuality(q) {
+    if (!QUALITY[q] || q === quality) return;
+    quality = q;
+    // Re-apply the backing-store resolution cap for the new quality (forces a real
+    // resize even though the element size didn't change).
+    if (canvas && ctx) { lastDpr = -1; resize(); }
+  }
 
   function refreshAccent() {
     // The orb's state colours are now fixed + distinct rather than the theme
@@ -103,6 +109,24 @@
   const TILT = 0.42, SIN_TILT = Math.sin(TILT), COS_TILT = Math.cos(TILT);
   let gradBucket = -1, gradCache = null, gradColKey = '';
 
+  // Backing-store long-edge cap (device px) per quality. THIS is the fullscreen-
+  // shake fix: a fullscreen / hi-DPI canvas otherwise balloons to millions of
+  // pixels (e.g. 5120x2880), making the per-frame whole-canvas glow fills + shadow
+  // blur so expensive that frames arrive unevenly. With time-based motion, uneven
+  // frame delivery shows up as the orb "shaking"/stuttering — but ONLY at large
+  // sizes, which is why it's smooth windowed and shaky fullscreen. Rendering the
+  // soft glow at a bounded resolution and letting CSS scale it up to the element
+  // is visually identical for a glow, but keeps frame time low + steady so motion
+  // stays smooth. Lower quality caps harder (which also bounds GPU work).
+  const MAX_BACKING = { low: 1100, medium: 1500, high: 1920 };
+  // Pure: the effective device-pixel-ratio to use so the longest backing-store
+  // edge never exceeds the current quality's cap. On a small window it's a no-op
+  // (returns rawDpr); at fullscreen / hi-DPI it scales down. Exported for tests.
+  function effectiveDpr(cw, ch, rawDpr) {
+    const cap = MAX_BACKING[quality] || 1920;
+    const longEdge = Math.max(cw, ch) * rawDpr;
+    return longEdge > cap ? rawDpr * (cap / longEdge) : rawDpr;
+  }
   let lastW = -1, lastH = -1, lastDpr = -1;
   function resize() {
     const cw = canvas.clientWidth, ch = canvas.clientHeight;
@@ -110,10 +134,11 @@
     // 0 (or to a pre-layout value) is what left the mesh looking thin/blurry
     // until a window minimize/restore forced a correct resize.
     if (cw < 2 || ch < 2) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const rawDpr = Math.min(window.devicePixelRatio || 1, 2);
+    const dpr = effectiveDpr(cw, ch, rawDpr);
     // No-op if nothing actually changed, so a chatty ResizeObserver doesn't clear
     // the canvas every tick (which would flicker).
-    if (cw === lastW && ch === lastH && dpr === lastDpr) return;
+    if (cw === lastW && ch === lastH && Math.abs(dpr - lastDpr) < 0.001) return;
     lastW = cw; lastH = ch; lastDpr = dpr;
     w = cw; h = ch;
     canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
@@ -427,7 +452,7 @@
     for (let i = 0; i < frames; i++) { now += 16.67; try { render(now); } catch (e) {} }
   }
 
-  root.AriaOrb = { init, setLevel, setState, setQuality, measure, benchmark, refreshAccent, toggleFps, pump };
+  root.AriaOrb = { init, setLevel, setState, setQuality, effectiveDpr, measure, benchmark, refreshAccent, toggleFps, pump, MAX_BACKING };
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);
 })(typeof self !== 'undefined' ? self : this);
