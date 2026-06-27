@@ -118,7 +118,13 @@
   // soft glow at a bounded resolution and letting CSS scale it up to the element
   // is visually identical for a glow, but keeps frame time low + steady so motion
   // stays smooth. Lower quality caps harder (which also bounds GPU work).
-  const MAX_BACKING = { low: 1100, medium: 1500, high: 1920 };
+  // Caps raised from the first optimization pass (1100/1500/1920): the old 'high'
+  // cap of 1920 downsampled a 1440p / 1080p@2x fullscreen canvas and CSS upscaled
+  // it, which read as a blurry, "low-resolution" orb. 2560 renders those displays
+  // natively crisp and still bounds 4K (3840 -> 2560); the dt-scaled motion + the
+  // per-state FPS caps keep frame time steady at the higher resolution, and a weak
+  // GPU is already forced to medium/low (which cap harder) by the GPU usage tier.
+  const MAX_BACKING = { low: 1280, medium: 1920, high: 2560 };
   // Pure: the effective device-pixel-ratio to use so the longest backing-store
   // edge never exceeds the current quality's cap. On a small window it's a no-op
   // (returns rawDpr); at fullscreen / hi-DPI it scales down. Exported for tests.
@@ -127,7 +133,21 @@
     const longEdge = Math.max(cw, ch) * rawDpr;
     return longEdge > cap ? rawDpr * (cap / longEdge) : rawDpr;
   }
-  let lastW = -1, lastH = -1, lastDpr = -1;
+  // Pure: integer backing-store dimensions for a (cw, ch, rawDpr), plus the EXACT
+  // axis scales that map the [0,cw]x[0,ch] drawing space onto [0,bw]x[0,bh]. Using
+  // the raw effectiveDpr in setTransform left drawing coord x=cw landing at cw*dpr
+  // (e.g. 1920.4) while the backing store was only round(cw*dpr)=1920 wide — so the
+  // rightmost fractional strip sampled OUTSIDE the backing store and shimmered. The
+  // left/top edges map to 0 exactly, which is why the jitter was right/bottom only.
+  // Deriving sx=bw/cw, sy=bh/ch makes the right/bottom edges land exactly on the
+  // backing store, killing the edge jitter. Exported for tests.
+  function backingFor(cw, ch, rawDpr) {
+    const dpr = effectiveDpr(cw, ch, rawDpr);
+    const bw = Math.max(1, Math.round(cw * dpr));
+    const bh = Math.max(1, Math.round(ch * dpr));
+    return { bw, bh, sx: bw / cw, sy: bh / ch };
+  }
+  let lastW = -1, lastH = -1, lastBw = -1, lastBh = -1;
   function resize() {
     const cw = canvas.clientWidth, ch = canvas.clientHeight;
     // Skip until the canvas has a real layout size — sizing the backing store to
@@ -135,14 +155,16 @@
     // until a window minimize/restore forced a correct resize.
     if (cw < 2 || ch < 2) return;
     const rawDpr = Math.min(window.devicePixelRatio || 1, 2);
-    const dpr = effectiveDpr(cw, ch, rawDpr);
-    // No-op if nothing actually changed, so a chatty ResizeObserver doesn't clear
-    // the canvas every tick (which would flicker).
-    if (cw === lastW && ch === lastH && Math.abs(dpr - lastDpr) < 0.001) return;
-    lastW = cw; lastH = ch; lastDpr = dpr;
+    const { bw, bh, sx, sy } = backingFor(cw, ch, rawDpr);
+    // No-op if neither the layout size nor the (integer) backing store changed, so
+    // a chatty ResizeObserver doesn't clear the canvas every tick (which flickers).
+    if (cw === lastW && ch === lastH && bw === lastBw && bh === lastBh) return;
+    lastW = cw; lastH = ch; lastBw = bw; lastBh = bh;
     w = cw; h = ch;
-    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    canvas.width = bw; canvas.height = bh;
+    // Exact per-axis scale (≈dpr) so the drawing space fills the backing store with
+    // no fractional overhang on the right/bottom edge — see backingFor().
+    ctx.setTransform(sx, 0, 0, sy, 0, 0);
     cx = w / 2; cy = h / 2;
     baseR = Math.min(w, h) * 0.27;
     gradBucket = -1;
@@ -452,7 +474,7 @@
     for (let i = 0; i < frames; i++) { now += 16.67; try { render(now); } catch (e) {} }
   }
 
-  root.AriaOrb = { init, setLevel, setState, setQuality, effectiveDpr, measure, benchmark, refreshAccent, toggleFps, pump, MAX_BACKING };
+  root.AriaOrb = { init, setLevel, setState, setQuality, effectiveDpr, backingFor, measure, benchmark, refreshAccent, toggleFps, pump, MAX_BACKING };
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);
 })(typeof self !== 'undefined' ? self : this);

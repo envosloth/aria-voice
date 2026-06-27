@@ -11,7 +11,7 @@ Visual items are verified by tests + code reasoning only; each carries a MANUAL 
 - [x] 1. Update progress bar (app self-update)
 - [x] 2. Orb color stage sticks on green after speaking
 - [x] 3. Status dots flaky after first utterance + green too subtle
-- [ ] 4+5. Orb low-res after optimization + fullscreen right-side jitter
+- [x] 4+5. Orb low-res after optimization + fullscreen right-side jitter
 
 ---
 
@@ -83,4 +83,28 @@ a progress bar that advances 0→100% while downloading and an animated sweep wh
 checking/installing, so the update is visibly working.
 
 ## Item 4+5: Orb resolution + fullscreen jitter
-Status: pending
+Status: done  (done together — same orb.js resize/DPR code, opposing forces)
+Root causes (confirmed in code):
+- (4) `MAX_BACKING.high` was 1920, so a 1440p / 1080p@2x fullscreen canvas rendered
+  downsampled and CSS-upscaled → blurry "low resolution" orb after the optimization.
+- (5) `resize()` set `canvas.width = round(cw*dpr)` (e.g. 1920) but `setTransform`
+  used the unrounded `dpr`, so drawing coord x=cw mapped to cw*dpr (e.g. 1920.4) —
+  past the backing store's right edge. The right/bottom fractional strip sampled
+  outside the backing store and shimmered; the left/top map to 0 exactly, which is
+  exactly why the jitter was "right side only". A scrollbar-INclusive `width:100vw`
+  on the canvas could also overhang the viewport's right edge.
+Fix:
+- `src/renderer/orb.js`: raise caps to low/medium/high = 1280/1920/2560 (1440p now
+  native-crisp, 4K still bounded). New pure `backingFor(cw,ch,rawDpr)` returns integer
+  backing dims + EXACT per-axis scales `sx=bw/cw, sy=bh/ch`; `resize()` uses them so
+  [0,cw]×[0,ch] maps exactly onto [0,bw]×[0,bh] (no right/bottom overhang). No-op
+  guard now keyed on the integer backing dims.
+- `src/renderer/index.html`: `#orb-canvas` sized by `inset:0` + `width/height:100%`
+  instead of `100vw/100vh` so it can't overhang the viewport on the right.
+Verify: `scripts/smoke-orb.js` extended — 20/20 PASS, incl. `high.cap.raised`,
+`1440p.high.native`, and `edge.exact.*` at fractional DPRs (1.25/1.5) asserting
+`sx*cw===bw` / `sy*ch===bh` to 1e-9 + integer + deterministic backing. Build clean;
+headless boot reaches `[ARIA_SMOKE] OK`.
+MANUAL CHECK: at fullscreen the orb should (a) look crisp, not blurry, and (b) have
+NO shimmer/jitter on its right edge. Tension noted: higher res = more fill, but the
+RX 9060 XT (high tier) handles 2560 easily and the FPS caps bound it.
