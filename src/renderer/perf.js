@@ -94,6 +94,18 @@
     // system is responsible for, and counting them made "time to first audio" read
     // far larger than what the user actually waits after they finish talking.
     const start = m.audio_end !== undefined ? m.audio_end : m.user_input;
+    // THE number the user feels: start of turn -> first audible audio.
+    const firstAudio = (start !== undefined && m.tts_first_audio !== undefined)
+      ? Math.max(0, Math.round(m.tts_first_audio - start)) : null;
+    // Whole turn ends when the SPOKEN reply finishes playing (tts_done). Fall back
+    // to turn_complete (LLM text done) only when audio wasn't tracked — but text can
+    // finish BEFORE the audio for a short/fast reply, which made total < firstAudio
+    // (the impossible "first audio longer than full reply"). The reply is still
+    // playing until first audio at minimum, so never report a total below firstAudio.
+    const endMark = m.tts_done !== undefined ? m.tts_done : m.turn_complete;
+    let total = (start !== undefined && endMark !== undefined)
+      ? Math.max(0, Math.round(endMark - start)) : null;
+    if (total !== null && firstAudio !== null && total < firstAudio) total = firstAudio;
     return {
       // Speech-to-text: end of speech -> transcript rendered (voice turns only).
       stt: d('audio_end', 'stt_result_render'),
@@ -101,16 +113,8 @@
       llm: d('dispatch', 'first_token_render'),
       // Text-to-speech synthesis only: first synth request -> first audio sample.
       tts: d('tts_first_request', 'tts_first_audio'),
-      // THE number the user actually feels: from the start of the turn (end of
-      // speech / pressing enter) to the first audible audio. This is the real
-      // "how long until I hear something" — NOT the full-turn total below, which
-      // keeps running for seconds while the rest of the reply streams + speaks.
-      firstAudio: start !== undefined && m.tts_first_audio !== undefined
-        ? Math.max(0, Math.round(m.tts_first_audio - start)) : null,
-      // Whole turn: first user action -> reply finished streaming (much larger
-      // than firstAudio for any multi-sentence reply; shown as a secondary stat).
-      total: start !== undefined && m.turn_complete !== undefined
-        ? Math.max(0, Math.round(m.turn_complete - start)) : null,
+      firstAudio,
+      total,
       target: tl.target,
       kind: tl.kind,
     };

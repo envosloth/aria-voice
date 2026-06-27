@@ -427,7 +427,11 @@
   function init() {
     canvas = document.getElementById('orb-canvas');
     if (!canvas) return;
-    ctx = canvas.getContext('2d', { alpha: true, desynchronized: true });
+    // NOT desynchronized: the low-latency desync path tears/jitters on the right &
+    // bottom edges on some Linux compositors, and raising the orb to native refresh
+    // made that shimmer visible again. The vsync'd path is tear-free; an ambient orb
+    // doesn't need the latency win.
+    ctx = canvas.getContext('2d', { alpha: true });
     refreshAccent();
     resize();
     window.addEventListener('resize', resize);

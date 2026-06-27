@@ -120,5 +120,28 @@ check('perf.text.total', s2 && s2.total === 400, s2 && String(s2.total));
 // No tts_first_audio mark on this turn -> first-audio is null (not 0).
 check('perf.text.firstAudio-null', s2 && s2.firstAudio === null, s2 && String(s2.firstAudio));
 
+// Short/fast voice reply where LLM text finishes BEFORE the audio plays. Without a
+// tts_done mark this used to report total(turn_complete) < firstAudio(tts_first_audio)
+// — the impossible "first audio longer than full reply". (a) clamp guarantees
+// total >= firstAudio; (b) when tts_done IS present, total is measured to it.
+const t3 = AriaPerf.newTurn('voice');
+at(6000, () => AriaPerf.mark(t3, 'audio_end'));
+at(6100, () => AriaPerf.mark(t3, 'dispatch'));
+at(6200, () => AriaPerf.mark(t3, 'first_token_render'));
+at(6300, () => AriaPerf.mark(t3, 'turn_complete'));        // text done at +300
+at(6500, () => AriaPerf.mark(t3, 'tts_first_audio'));      // audio STARTS at +500
+const s3 = AriaPerf.lastStages();
+check('perf.inv.firstAudio', s3 && s3.firstAudio === 500, s3 && String(s3.firstAudio));
+check('perf.inv.no-inversion', s3 && s3.total >= s3.firstAudio, s3 && `total=${s3.total} firstAudio=${s3.firstAudio}`);
+const t4 = AriaPerf.newTurn('voice');
+at(7000, () => AriaPerf.mark(t4, 'audio_end'));
+at(7100, () => AriaPerf.mark(t4, 'dispatch'));
+at(7200, () => AriaPerf.mark(t4, 'first_token_render'));
+at(7300, () => AriaPerf.mark(t4, 'turn_complete'));
+at(7500, () => AriaPerf.mark(t4, 'tts_first_audio'));
+at(8200, () => AriaPerf.mark(t4, 'tts_done'));             // audio finishes at +1200
+const s4 = AriaPerf.lastStages();
+check('perf.ttsdone.total', s4 && s4.total === 1200, s4 && String(s4.total)); // to tts_done, not turn_complete(300)
+
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

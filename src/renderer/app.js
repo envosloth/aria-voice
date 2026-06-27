@@ -704,7 +704,14 @@ function armIdleAtAudioEnd() {
   if (!ttsSynthDone) return;
   const remainMs = audioCtx ? Math.max(0, (nextPlayTime - audioCtx.currentTime) * 1000) : 0;
   clearTimeout(idleTimer);
-  idleTimer = setTimeout(() => { if (orbStateName === 'speaking') orbState('idle'); }, remainMs + 250);
+  idleTimer = setTimeout(() => {
+    if (orbStateName !== 'speaking') return;
+    orbState('idle');
+    // The spoken reply has now finished playing — mark the true end of the turn so
+    // the latency panel's "full reply" is measured to here (not to turn_complete,
+    // which is only when the LLM text finished and can precede the audio).
+    try { perf.mark(currentTurnId, 'tts_done'); } catch (e) {}
+  }, remainMs + 250);
 }
 
 function getAudioCtx() {
