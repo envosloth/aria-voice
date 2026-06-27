@@ -141,8 +141,15 @@ class SttSidecar(BaseSidecar):
             env=self._env(), text=True,
         )
 
-        # Read startup log to detect Vulkan and wait for readiness
+        # Read startup log to detect the GPU backend and wait for readiness. The
+        # "using Vulkan backend" line is printed during model load, BEFORE the HTTP
+        # "listening" line — but the two can interleave/buffer such that we'd break
+        # on "listening" first and miss it (the old bug that reported backend=cpu
+        # while the server was really on the GPU). So we keep reading briefly past
+        # readiness, and the drain thread below keeps detecting too.
         deadline = time.time() + 30
+        ready = False
+        ready_grace = None
         while time.time() < deadline:
             if self._server_proc.poll() is not None:
                 self._emit_status("warning", "whisper-server exited during startup; will use CLI fallback")
@@ -150,27 +157,47 @@ class SttSidecar(BaseSidecar):
                 return
             line = self._server_proc.stdout.readline()
             if line:
+                if self._detect_gpu_line(line):
+                    break  # GPU confirmed + (by ordering) load is essentially done
                 low = line.lower()
-                # whisper-server enumerates the Vulkan device even under --no-gpu,
-                # so only treat Vulkan as in-use when GPU wasn't forced off.
-                if not self._force_cpu and ("vulkan" in low or "ggml_vulkan" in low):
-                    self.using_vulkan = True
                 if "listening" in low or "http server" in low or "server is listening" in low:
-                    break
-            if self._port_open(self._server_port):
+                    ready = True
+                    ready_grace = time.time() + 0.4  # keep reading a touch for the GPU line
+            if not ready and self._port_open(self._server_port):
+                ready = True
+                ready_grace = time.time() + 0.4
+            if ready and (self.using_vulkan or (ready_grace and time.time() >= ready_grace)):
                 break
-            time.sleep(0.05)
+            time.sleep(0.02)
 
-        # Drain server stdout in the background so it doesn't block
+        # Drain server stdout in the background so it doesn't block — and keep
+        # detecting the GPU backend in case the line arrives after startup.
         threading.Thread(target=self._drain_server_log, daemon=True).start()
+
+    def _detect_gpu_line(self, line: str) -> bool:
+        """Set using_vulkan when a server log line confirms the GPU backend.
+
+        whisper-server enumerates the Vulkan device even under --no-gpu, so we only
+        trust the definitive "using Vulkan ... backend" / GPU-init lines, and never
+        when the user forced CPU. Returns True the first time it confirms."""
+        if self._force_cpu or self.using_vulkan:
+            return False
+        low = line.lower()
+        if ("using vulkan" in low or "init_gpu" in low or "vulkan0 backend" in low
+                or "ggml_vulkan: 0" in low):
+            self.using_vulkan = True
+            self._emit_status("info", "STT backend: Vulkan GPU")
+            return True
+        return False
 
     def _drain_server_log(self) -> None:
         proc = self._server_proc
         if not proc or not proc.stdout:
             return
-        for _ in proc.stdout:
+        for line in proc.stdout:
             if not self._running:
                 break
+            self._detect_gpu_line(line)
 
     # ---- helpers ----
 

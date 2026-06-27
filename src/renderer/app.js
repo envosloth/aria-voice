@@ -365,7 +365,7 @@ async function startMicCapture() {
   }
 }
 
-// Energy-based endpointing for hands-free (wake-word) utterances: after ~800ms
+// Energy-based endpointing for hands-free (wake-word) utterances: after ~550ms
 // of silence (once speech has been seen) the utterance ends. Logic lives in the
 // shared, unit-tested VadEndpointer; here we just drive it and cap the duration.
 let vadActive = false;
@@ -414,7 +414,11 @@ function beginUtterance(opts) {
   // VAD endpointing only for hands-free (wake-word) turns; push-to-talk ends on
   // button release.
   vadActive = !!(opts && opts.vad);
-  vad = vadActive ? new window.AriaAudio.VadEndpointer({ frameMs: 20 }) : null;
+  // Endpoint after ~550ms of silence (not the old 800ms) so transcription starts
+  // sooner once the user stops talking — the single biggest perceived-latency win
+  // for hands-free turns. Still long enough to ride over a natural mid-sentence
+  // pause; the 8s hard cap below bounds a stuck utterance.
+  vad = vadActive ? new window.AriaAudio.VadEndpointer({ frameMs: 20, hangMs: 550 }) : null;
   clearTimeout(vadSafetyTimer);
   if (vadActive) vadSafetyTimer = setTimeout(endUtterance, 8000); // hard cap
 }
