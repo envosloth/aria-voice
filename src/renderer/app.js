@@ -376,8 +376,12 @@ function updateVad(samples) {
   if (vad && vad.pushFrame(samples)) endUtterance();
 }
 
-// Drive the orb's visual state through the conversation pipeline.
-function orbState(s) { if (window.AriaOrb) window.AriaOrb.setState(s); }
+// Drive the orb's visual state through the conversation pipeline. `orbStateName`
+// mirrors the orb's current state in the renderer so the TTS-drain logic can tell
+// whether it's still "speaking" before flipping back to idle (so a barge-in that
+// already moved us to 'listening' is never clobbered by a late audio-end).
+let orbStateName = 'idle';
+function orbState(s) { orbStateName = s; if (window.AriaOrb) window.AriaOrb.setState(s); }
 
 // Barge-in: the user started talking to ARIA (wake word, global/in-window
 // shortcut, or push-to-talk) while it was still thinking or speaking. Stop the
@@ -685,6 +689,22 @@ let audioCtx = null;
 let nextPlayTime = 0;
 let ttsSources = [];      // currently scheduled buffer sources (this utterance)
 let idleTimer = null;
+// True once the TTS sidecar has reported 'done' for the current reply (no more
+// audio chunks coming). The orb may only return to idle once synthesis is done
+// AND all scheduled audio has finished — tracked together so neither a late
+// chunk nor a missed onended can strand the orb in the green 'speaking' state.
+let ttsSynthDone = false;
+
+// Return the orb to idle once the current reply has fully finished speaking.
+// Driven from BOTH the last source's onended (snappy) and a wall-clock backstop
+// (resilient): if an onended never fires, the backstop still releases the orb.
+// Gated on orbStateName so a barge-in that moved us to 'listening'/'processing'
+// is never overridden.
+function ttsMaybeGoIdle() {
+  if (orbStateName === 'speaking' && ttsSynthDone && ttsSources.length === 0) {
+    orbState('idle');
+  }
+}
 
 function getAudioCtx() {
   if (!audioCtx) {
@@ -713,6 +733,8 @@ function stopPlayback(cancelSidecar) {
   for (const s of ttsSources) { try { s.onended = null; s.stop(); } catch (e) {} }
   ttsSources = [];
   nextPlayTime = 0;
+  ttsSynthDone = false;   // a fresh turn is not done until its 'done' state arrives
+  clearTimeout(idleTimer); idleTimer = null;
   // Drop any PCM still in flight from the interrupted utterance until the next
   // intentional ttsPlay() re-arms playback — otherwise the sidecar's already-
   // emitted tail would leak out after we've "stopped".
@@ -792,6 +814,9 @@ aria.tts.onAudio((pcmArrayBuffer) => {
     source.onended = () => {
       const i = ttsSources.indexOf(source);
       if (i >= 0) ttsSources.splice(i, 1);
+      // The real end of audio — release the orb the instant the last chunk of a
+      // finished reply stops playing (well before the wall-clock backstop).
+      ttsMaybeGoIdle();
     };
   } catch (e) {
     // One bad audio segment must never kill the renderer — drop it and continue.
@@ -808,11 +833,19 @@ aria.tts.onState((state) => {
     if (state.index === 0 && idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
   }
   if (state.state === 'done') {
-    // Return to idle only after ALL buffered audio has finished — including the
-    // final chunk's full tail (no early cutoff). +250ms guard.
+    // Synthesis finished: no more chunks coming. The orb returns to idle once all
+    // scheduled audio has also drained — normally via the last source's onended
+    // (see above), with this wall-clock timer as a backstop. The backstop is NOT
+    // gated on ttsSources being empty (a missed/late onended used to strand the
+    // orb green here); by nextPlayTime + a guard, all scheduled audio has finished
+    // by wall clock, so releasing the orb is correct even if an onended never fired.
+    ttsSynthDone = true;
     const remainMs = audioCtx ? Math.max(0, (nextPlayTime - audioCtx.currentTime) * 1000) : 0;
     clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => { if (ttsSources.length === 0) orbState('idle'); }, remainMs + 250);
+    idleTimer = setTimeout(() => {
+      ttsSources = [];          // any source still listed by now has finished playing
+      ttsMaybeGoIdle();
+    }, remainMs + 250);
     // NOTE: do NOT reset nextPlayTime here — that previously let the tail be
     // overwritten/clipped. It's reset by stopPlayback() when the next turn starts.
   }
