@@ -73,6 +73,8 @@ check('perf.stt', s && s.stt === 400, s && String(s.stt));
 check('perf.llm', s && s.llm === 700, s && String(s.llm));
 check('perf.tts', s && s.tts === 150, s && String(s.tts));
 check('perf.total', s && s.total === 2600, s && String(s.total));
+// Time to first audible audio = tts_first_audio(2900) - audio_start(1000) = 1900.
+check('perf.firstAudio', s && s.firstAudio === 1900, s && String(s.firstAudio));
 check('perf.target', s && s.target === 'LLM', s && String(s.target));
 
 // A typed turn (no audio_*) -> STT is null but LLM/total still compute.
@@ -85,6 +87,8 @@ const s2 = AriaPerf.lastStages();
 check('perf.text.stt-null', s2 && s2.stt === null, s2 && String(s2.stt));
 check('perf.text.llm', s2 && s2.llm === 290, s2 && String(s2.llm));
 check('perf.text.total', s2 && s2.total === 400, s2 && String(s2.total));
+// No tts_first_audio mark on this turn -> first-audio is null (not 0).
+check('perf.text.firstAudio-null', s2 && s2.firstAudio === null, s2 && String(s2.firstAudio));
 
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

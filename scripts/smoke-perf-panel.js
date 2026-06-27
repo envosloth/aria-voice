@@ -36,7 +36,8 @@ function main() {
       ['panel reported back', !!marks['perf-panel']],
       // A typed turn has no audio stage -> STT shows the em-dash placeholder.
       ['STT row is "—" for a text turn', p.stt === '—'],
-      // LLM + total stages must show a real measured duration (not a dash).
+      // The headline "time to first audio" + LLM + total show real durations.
+      ['first-audio row shows a duration', isMs(p.firstAudio)],
       ['LLM row shows a duration', isMs(p.llm)],
       ['Total row shows a duration', isMs(p.total)],
       ['LLM label names the target', typeof p.llmLabel === 'string' && /LLM/.test(p.llmLabel)],

@@ -489,6 +489,7 @@ app.whenReady().then(async () => {
             document.getElementById('settings-btn').click();
             await new Promise(function(r){setTimeout(r,500);});
             return JSON.stringify({
+              firstAudio: document.getElementById('perf-first-audio').textContent,
               stt: document.getElementById('perf-stt').textContent,
               llm: document.getElementById('perf-llm').textContent,
               llmLabel: document.getElementById('perf-llm-label').textContent,

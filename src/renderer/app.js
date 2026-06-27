@@ -923,6 +923,7 @@ cfg.harness.addEventListener('change', () => applyHarnessSelection(cfg.harness.v
 
 // --- Performance panel: live per-stage latency + hardware-adaptive GPU cap ---
 const perfEls = {
+  firstAudio: document.getElementById('perf-first-audio'),
   stt: document.getElementById('perf-stt'),
   llm: document.getElementById('perf-llm'),
   llmLabel: document.getElementById('perf-llm-label'),
@@ -942,19 +943,20 @@ function refreshPerfPanel() {
   if (!perfEls.total || !settingsOverlay.classList.contains('visible')) return;
   const s = perf.lastStages();
   if (!s) {
-    perfEls.stt.textContent = perfEls.llm.textContent = '—';
+    perfEls.firstAudio.textContent = perfEls.stt.textContent = perfEls.llm.textContent = '—';
     perfEls.tts.textContent = perfEls.total.textContent = '—';
     return;
   }
+  perfEls.firstAudio.textContent = fmtMs(s.firstAudio);
   perfEls.stt.textContent = fmtMs(s.stt);
   perfEls.llm.textContent = fmtMs(s.llm);
   perfEls.tts.textContent = fmtMs(s.tts);
   perfEls.total.textContent = fmtMs(s.total);
-  perfEls.llmLabel.textContent = s.target ? 'LLM / Agent · ' + s.target : 'LLM / Agent';
-  // Flag a slow LLM stage (the "~5s even on the direct LLM" symptom) and a slow
-  // overall turn in the warning colour so the bottleneck is obvious at a glance.
+  perfEls.llmLabel.textContent = s.target ? '· LLM / Agent · ' + s.target : '· LLM / Agent';
+  // Flag a slow time-to-first-audio (what the user feels) and a slow LLM stage in
+  // the warning colour so the bottleneck is obvious at a glance.
+  perfEls.firstAudio.classList.toggle('warn', typeof s.firstAudio === 'number' && s.firstAudio >= 2000);
   perfEls.llm.classList.toggle('warn', typeof s.llm === 'number' && s.llm >= 2500);
-  perfEls.total.classList.toggle('warn', typeof s.total === 'number' && s.total >= 6000);
 }
 try { perf.onUpdate(() => refreshPerfPanel()); } catch (e) {}
 

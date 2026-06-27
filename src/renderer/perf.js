@@ -94,9 +94,16 @@
       stt: d('audio_end', 'stt_result_render'),
       // LLM/agent time-to-first-token: request dispatched -> first token shown.
       llm: d('dispatch', 'first_token_render'),
-      // Text-to-speech: first synth request -> first audio sample played.
+      // Text-to-speech synthesis only: first synth request -> first audio sample.
       tts: d('tts_first_request', 'tts_first_audio'),
-      // Whole turn: first user action -> reply finished streaming.
+      // THE number the user actually feels: from the start of the turn (end of
+      // speech / pressing enter) to the first audible audio. This is the real
+      // "how long until I hear something" — NOT the full-turn total below, which
+      // keeps running for seconds while the rest of the reply streams + speaks.
+      firstAudio: start !== undefined && m.tts_first_audio !== undefined
+        ? Math.max(0, Math.round(m.tts_first_audio - start)) : null,
+      // Whole turn: first user action -> reply finished streaming (much larger
+      // than firstAudio for any multi-sentence reply; shown as a secondary stat).
       total: start !== undefined && m.turn_complete !== undefined
         ? Math.max(0, Math.round(m.turn_complete - start)) : null,
       target: tl.target,

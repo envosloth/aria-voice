@@ -373,7 +373,13 @@
     }
     .perf-row span { color: var(--text-muted); }
     .perf-row b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
-    .perf-row.perf-total b { color: var(--accent-active); }
+    /* The headline "time to first audio" is the number that matters most. */
+    .perf-row.perf-headline { padding: 11px 12px; background: rgba(42,208,102,0.10); }
+    .perf-row.perf-headline span { color: var(--text); font-weight: 600; }
+    .perf-row.perf-headline b { color: var(--success); font-size: 16px; }
+    /* Its breakdown rows, slightly indented + dimmer. */
+    .perf-row.perf-sub { padding-top: 6px; padding-bottom: 6px; font-size: 12px; }
+    .perf-row.perf-sub span { padding-left: 6px; }
     .perf-row b.warn { color: var(--warning); }
     .perf-hw {
       font-size: 11px; color: var(--text-muted); line-height: 1.6;
@@ -601,12 +607,13 @@
       <section>
         <h3>Performance <span class="hint">(latency &amp; hardware)</span></h3>
         <div class="perf-latency" id="perf-latency">
-          <div class="perf-row"><span>Speech-to-text</span><b id="perf-stt">—</b></div>
-          <div class="perf-row"><span id="perf-llm-label">LLM / Agent</span><b id="perf-llm">—</b></div>
-          <div class="perf-row"><span>Text-to-speech (first audio)</span><b id="perf-tts">—</b></div>
-          <div class="perf-row perf-total"><span>Total turn</span><b id="perf-total">—</b></div>
+          <div class="perf-row perf-headline"><span>Time to first audio <span class="hint">(what you hear)</span></span><b id="perf-first-audio">—</b></div>
+          <div class="perf-row perf-sub"><span>· Speech-to-text</span><b id="perf-stt">—</b></div>
+          <div class="perf-row perf-sub"><span id="perf-llm-label">· LLM / Agent</span><b id="perf-llm">—</b></div>
+          <div class="perf-row perf-sub"><span>· Text-to-speech synthesis</span><b id="perf-tts">—</b></div>
+          <div class="perf-row"><span>Full reply <span class="hint">(until it finishes speaking)</span></span><b id="perf-total">—</b></div>
         </div>
-        <p class="hint" id="perf-hint">Times from your most recent voice or text turn appear here. Dashes mean a stage didn't run that turn (e.g. STT is blank for a typed message).</p>
+        <p class="hint" id="perf-hint">From your most recent turn. <b>Time to first audio</b> is the delay you actually feel before ARIA starts talking; the · rows under it are its breakdown. <b>Full reply</b> is the whole turn (it keeps running for seconds while the rest streams + speaks). Dashes mean a stage didn't run (e.g. speech-to-text is blank for a typed message).</p>
 
         <label>GPU usage cap
           <select id="cfg-gpu-cap">
