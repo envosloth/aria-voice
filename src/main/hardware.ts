@@ -99,27 +99,64 @@ function nvidiaVramMB(): number | null {
   return m ? parseInt(m[1], 10) : null;
 }
 
+// Windows: Win32_VideoController via PowerShell CIM (wmic is deprecated/removed
+// on recent Windows). One invocation prints Name then AdapterRAM on two lines.
+function detectGpuWindows(): { name: string; vramMB: number | null } {
+  const psCmd = '$g = Get-CimInstance Win32_VideoController | Select-Object -First 1; $g.Name; $g.AdapterRAM';
+  const out = safeExec('powershell', ['-NoProfile', '-NonInteractive', '-Command', psCmd], 4000);
+  const lines = out.split('\n').map((s) => s.trim()).filter(Boolean);
+  const name = lines[0] || '';
+  // AdapterRAM is a uint32 that saturates near 4 GB — a floor, not exact; the
+  // name-based discrete heuristic is the primary signal.
+  const ramBytes = parseInt(lines[1] || '', 10);
+  const vramMB = Number.isFinite(ramBytes) && ramBytes > 0 ? Math.round(ramBytes / (1024 * 1024)) : null;
+  return { name, vramMB };
+}
+
+// macOS: system_profiler reports "Chipset Model" and (on dGPUs) "VRAM (Total)".
+function detectGpuMac(): { name: string; vramMB: number | null } {
+  const out = safeExec('system_profiler', ['SPDisplaysDataType'], 4000);
+  const nameM = out.match(/Chipset Model:\s*(.+)/);
+  const name = nameM ? nameM[1].trim() : '';
+  const vramM = out.match(/VRAM[^:]*:\s*(\d+)\s*(MB|GB)/i);
+  let vramMB: number | null = null;
+  if (vramM) {
+    const v = parseInt(vramM[1], 10);
+    vramMB = /gb/i.test(vramM[2]) ? v * 1024 : v;
+  }
+  return { name, vramMB };
+}
+
 function detectGpu(): GpuInfo {
   let name = '';
+  let vramMB: number | null = null;
 
-  // 1) Vulkan is the backend ARIA's STT uses, so vulkaninfo is the most relevant
-  //    probe — and it names the device ARIA will actually run on.
-  const vk = safeExec('vulkaninfo', ['--summary']);
-  if (vk) {
-    const m = vk.match(/deviceName\s*=\s*(.+)/);
-    if (m) name = m[1].trim();
-  }
+  if (process.platform === 'win32') {
+    ({ name, vramMB } = detectGpuWindows());
+  } else if (process.platform === 'darwin') {
+    ({ name, vramMB } = detectGpuMac());
+  } else {
+    // Linux (unchanged):
+    // 1) Vulkan is the backend ARIA's STT uses, so vulkaninfo is the most relevant
+    //    probe — and it names the device ARIA will actually run on.
+    const vk = safeExec('vulkaninfo', ['--summary']);
+    if (vk) {
+      const m = vk.match(/deviceName\s*=\s*(.+)/);
+      if (m) name = m[1].trim();
+    }
 
-  // 2) Fallback: lspci VGA/3D line (works without any Vulkan loader installed).
-  if (!name) {
-    const pci = safeExec('sh', ['-c', "lspci 2>/dev/null | grep -Ei 'vga|3d|display'"]);
-    const line = pci.split('\n').find(Boolean) || '';
-    const after = line.split(':').slice(2).join(':').trim();
-    if (after) name = after;
+    // 2) Fallback: lspci VGA/3D line (works without any Vulkan loader installed).
+    if (!name) {
+      const pci = safeExec('sh', ['-c', "lspci 2>/dev/null | grep -Ei 'vga|3d|display'"]);
+      const line = pci.split('\n').find(Boolean) || '';
+      const after = line.split(':').slice(2).join(':').trim();
+      if (after) name = after;
+    }
+
+    vramMB = readDrmVramMB();
   }
 
   const vendor = vendorOf(name);
-  let vramMB = readDrmVramMB();
   if (vramMB === null && vendor === 'nvidia') vramMB = nvidiaVramMB();
 
   // "Discrete" heuristic: a known dGPU family name, or >= 3 GB of dedicated VRAM.

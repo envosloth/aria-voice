@@ -45,6 +45,11 @@ function piperVoiceBase(voice: string): string {
 export const MODELS_DIR =
   process.env.ARIA_MODELS_DIR || path.join(os.homedir(), '.local', 'share', 'aria', 'models');
 
+// Make the effective models dir visible to spawned sidecars (the STT sidecar's
+// model lookup reads ARIA_MODELS_DIR) — including when we fell back to the
+// default above, so the two never disagree on any OS.
+process.env.ARIA_MODELS_DIR = MODELS_DIR;
+
 /**
  * Build the manifest of models needed for the given STT model + TTS engine/voice.
  * Kokoro (default) ships one shared model + a voices pack covering every voice;

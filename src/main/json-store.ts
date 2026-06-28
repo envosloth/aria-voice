@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { app } from 'electron';
 
@@ -7,7 +8,10 @@ export class JsonStore<T extends Record<string, any>> {
   private data: T;
 
   constructor(name: string, defaults: T) {
-    const userDataPath = app?.getPath?.('userData') ?? path.join(process.env.HOME ?? '/tmp', '.aria');
+    // app.getPath('userData') is the real location in the packaged app; the
+    // fallback only fires outside Electron (e.g. unit tests). os.homedir()/tmpdir()
+    // are cross-platform (USERPROFILE on Windows, HOME on POSIX).
+    const userDataPath = app?.getPath?.('userData') ?? path.join(os.homedir() || os.tmpdir(), '.aria');
     this.filePath = path.join(userDataPath, `${name}.json`);
     this.data = { ...defaults };
     this.load();

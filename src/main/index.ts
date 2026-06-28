@@ -142,7 +142,20 @@ function applyAppMenu(): void {
 }
 
 function createTray(): void {
-  const icon = nativeImage.createEmpty();
+  // An empty image is invisible in the Windows tray and the macOS menu bar (where
+  // the tray is a primary way to reach ARIA), so load the real icon there. Linux
+  // keeps its existing behavior. icon.png is bundled via electron-builder `files`,
+  // so the same ../../assets path resolves in dev and inside the asar.
+  let icon = nativeImage.createEmpty();
+  if (process.platform !== 'linux') {
+    try {
+      const img = nativeImage.createFromPath(path.join(__dirname, '..', '..', 'assets', 'icon.png'));
+      if (!img.isEmpty()) {
+        // macOS menu-bar icons want a small ~18px glyph; Windows scales the tray icon itself.
+        icon = process.platform === 'darwin' ? img.resize({ width: 18, height: 18 }) : img;
+      }
+    } catch { /* fall back to the empty image */ }
+  }
   tray = new Tray(icon);
 
   const contextMenu = Menu.buildFromTemplate([

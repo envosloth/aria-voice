@@ -35,11 +35,20 @@ class BaseSidecar(ABC):
 
     def run(self) -> None:
         parser = argparse.ArgumentParser()
-        parser.add_argument("--socket", required=True, help="UDS path for the PCM data channel")
+        parser.add_argument("--socket", required=True, help="PCM data channel: a UDS path (POSIX) or tcp://host:port (Windows)")
         args = parser.parse_args()
 
-        signal.signal(signal.SIGTERM, self._handle_signal)
-        signal.signal(signal.SIGINT, self._handle_signal)
+        # SIGTERM/SIGINT exist everywhere; SIGBREAK is Windows-only (Ctrl-Break).
+        # On Windows SIGTERM isn't delivered cross-process (the supervisor force-
+        # terminates via taskkill), but registering is harmless. Guard defensively
+        # so a platform/thread quirk can't crash startup.
+        for _signame in ("SIGTERM", "SIGINT", "SIGBREAK"):
+            _sig = getattr(signal, _signame, None)
+            if _sig is not None:
+                try:
+                    signal.signal(_sig, self._handle_signal)
+                except (ValueError, OSError):
+                    pass  # not registerable on this platform/thread
         self._set_parent_death_signal()
 
         self._running = True
@@ -60,31 +69,77 @@ class BaseSidecar(ABC):
             self._running = False
 
     def _set_parent_death_signal(self) -> None:
-        """Linux backstop: ask the kernel to SIGTERM this process if the parent
-        (the Electron supervisor) dies. Covers the case where the parent is
-        hard-killed (SIGKILL) and can't run its normal tree-kill cleanup — without
-        this the sidecar (and its grandchildren) would orphan. Complements, not
-        replaces, the supervisor's process-group tree-kill on graceful quit."""
-        if sys.platform != "linux":
+        """Backstop so a sidecar doesn't orphan if the supervisor is hard-killed
+        (SIGKILL / TerminateProcess) and can't run its normal tree-kill cleanup —
+        without this the sidecar (and its grandchildren) would linger. Complements,
+        not replaces, the supervisor's tree-kill on graceful quit.
+
+        Linux uses the kernel's PR_SET_PDEATHSIG (immediate). macOS/Windows have no
+        equivalent, so a daemon thread polls the parent and self-exits when it
+        disappears."""
+        if sys.platform == "linux":
+            try:
+                import ctypes
+                PR_SET_PDEATHSIG = 1
+                libc = ctypes.CDLL("libc.so.6", use_errno=True)
+                libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0)
+                # Guard against a race: if the parent already died before prctl ran,
+                # exit now rather than linger as an orphan.
+                if os.getppid() == 1:
+                    self._running = False
+                    os._exit(0)
+            except Exception:
+                pass  # best-effort backstop; tree-kill remains the primary mechanism
             return
+
+        # Non-Linux backstop: watch the parent on a daemon thread.
+        initial_ppid = os.getppid()
+        watcher = self._watch_parent_windows if sys.platform == "win32" else self._watch_parent_posix
+        threading.Thread(target=watcher, args=(initial_ppid,), daemon=True).start()
+
+    def _watch_parent_posix(self, initial_ppid: int) -> None:
+        """macOS/BSD: an orphaned child is reparented (to launchd/init), so a
+        changed parent PID means the supervisor died — exit to avoid orphaning."""
+        while self._running:
+            if os.getppid() != initial_ppid:
+                os._exit(0)
+            time.sleep(2.0)
+
+    def _watch_parent_windows(self, initial_ppid: int) -> None:
+        """Windows doesn't reparent, so poll whether the parent PID is still
+        alive via the Win32 API and exit once it isn't."""
         try:
             import ctypes
-            PR_SET_PDEATHSIG = 1
-            libc = ctypes.CDLL("libc.so.6", use_errno=True)
-            libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM, 0, 0, 0)
-            # Guard against a race: if the parent already died before prctl ran,
-            # exit now rather than linger as an orphan.
-            if os.getppid() == 1:
-                self._running = False
-                os._exit(0)
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, initial_ppid)
+            if not handle:
+                return  # can't observe the parent; rely on supervisor taskkill /T
+            while self._running:
+                code = ctypes.c_ulong()
+                ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+                if not ok or code.value != STILL_ACTIVE:
+                    os._exit(0)  # parent gone -> don't orphan
+                time.sleep(2.0)
         except Exception:
-            pass  # best-effort backstop; tree-kill remains the primary mechanism
+            pass  # best-effort; tree-kill remains the primary mechanism
 
     # ---- socket (PCM) ----
 
     def _connect_socket(self, socket_path: str) -> None:
-        self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self._socket.connect(socket_path)
+        # The supervisor encodes the transport in the address string: a
+        # "tcp://host:port" URL means a loopback TCP channel (Windows, where
+        # Node can't serve a UDS file path); anything else is a filesystem Unix
+        # domain socket path (Linux/macOS). AF_UNIX is never referenced on
+        # Windows, where some Python builds lack it.
+        if socket_path.startswith("tcp://"):
+            host, _, port = socket_path[len("tcp://"):].rpartition(":")
+            self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._socket.connect((host, int(port)))
+        else:
+            self._socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self._socket.connect(socket_path)
 
     def send_pcm(self, data: bytes) -> None:
         """Write raw PCM bytes to the socket (used by TTS)."""

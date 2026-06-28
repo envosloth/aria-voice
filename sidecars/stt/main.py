@@ -234,7 +234,15 @@ class SttSidecar(BaseSidecar):
 
     def _env(self) -> dict:
         env = os.environ.copy()
-        env["LD_LIBRARY_PATH"] = LIB_DIR + ":" + env.get("LD_LIBRARY_PATH", "")
+        # Point the dynamic loader at the bundled whisper libs. The variable and
+        # separator differ per OS: LD_LIBRARY_PATH (Linux, ":"), DYLD_LIBRARY_PATH
+        # (macOS, ":"), and PATH (Windows, ";"; DLLs load from PATH + the exe dir).
+        if sys.platform == "win32":
+            env["PATH"] = LIB_DIR + os.pathsep + env.get("PATH", "")
+        elif sys.platform == "darwin":
+            env["DYLD_LIBRARY_PATH"] = LIB_DIR + os.pathsep + env.get("DYLD_LIBRARY_PATH", "")
+        else:
+            env["LD_LIBRARY_PATH"] = LIB_DIR + os.pathsep + env.get("LD_LIBRARY_PATH", "")
         return env
 
     @staticmethod
@@ -270,28 +278,34 @@ class SttSidecar(BaseSidecar):
 
     def _find_binary(self, name: str) -> str:
         import shutil
+        # whisper.cpp binaries carry the platform exe suffix (.exe on Windows).
+        exe = name + (".exe" if sys.platform == "win32" else "")
         bundled = os.environ.get("ARIA_WHISPER_BIN_DIR", "")
         candidates = [
             os.environ.get(f"{name.upper().replace('-', '_')}_BIN", ""),
-            os.path.join(bundled, name) if bundled else "",   # packaged app: bundled whisper
-            os.path.expanduser(f"~/.local/bin/{name}"),
-            f"/usr/local/bin/{name}",
+            os.path.join(bundled, exe) if bundled else "",   # packaged app: bundled whisper
+            os.path.expanduser(f"~/.local/bin/{exe}"),
+            f"/usr/local/bin/{exe}",                          # harmless no-op on Windows
         ]
         for c in candidates:
             if c and os.path.isfile(c):
                 return c
-        return shutil.which(name) or ""
+        return shutil.which(exe) or shutil.which(name) or ""
 
     def _find_model(self) -> str:
         model_name = os.environ.get("ARIA_STT_MODEL", "base.en")
         model_file = f"ggml-{model_name}.bin"
+        # ARIA_MODELS_DIR is the authoritative location the main process downloads
+        # to (set per-OS via os.homedir()); the rest are dev/legacy fallbacks.
+        models_dir = os.environ.get("ARIA_MODELS_DIR", "")
         search_paths = [
+            os.path.join(models_dir, model_file) if models_dir else "",
             os.path.join(os.path.dirname(__file__), "..", "..", "models", model_file),
             os.path.expanduser(f"~/.local/share/aria/models/{model_file}"),
             os.path.expanduser(f"~/.cache/whisper/{model_file}"),
         ]
         for p in search_paths:
-            if os.path.isfile(p):
+            if p and os.path.isfile(p):
                 return p
         raise FileNotFoundError(f"Whisper model '{model_file}' not found. Run the model download script first.")
 

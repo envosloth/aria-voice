@@ -30,6 +30,9 @@ files:
   - dist/**/*
   - package.json
   - "!**/*.map"
+  # Runtime tray icon (Windows tray / macOS menu bar); buildResources `icon.png`
+  # is build-time only. Lands at <asar>/assets/icon.png (see createTray).
+  - assets/icon.png
 
 # PyInstaller-frozen sidecars shipped alongside the app (unpacked, executable).
 # Lands at <resources>/sidecars/<name>/<name>, which the supervisor resolves via

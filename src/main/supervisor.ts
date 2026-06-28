@@ -80,11 +80,6 @@ export class Supervisor {
     // until the new process emits 'ready'.
     this.resetReadyLatch(state);
 
-    const socketPath = path.join(SOCKET_DIR, `${name}.sock`);
-    fs.mkdirSync(SOCKET_DIR, { recursive: true });
-
-    try { fs.unlinkSync(socketPath); } catch {}
-
     const server = net.createServer((conn) => {
       state.socket = conn;
       conn.on('data', (data) => this.handleSidecarData(name, data));
@@ -92,17 +87,43 @@ export class Supervisor {
       conn.on('close', () => { state.socket = null; });
     });
 
-    await new Promise<void>((resolve, reject) => {
-      server.listen(socketPath, () => resolve());
-      server.on('error', reject);
-    });
+    // PCM data channel. The address string handed to the sidecar via --socket
+    // encodes the transport: a filesystem path => Unix domain socket (POSIX),
+    // a "tcp://host:port" URL => loopback TCP (Windows, which can't listen on a
+    // UDS file path through Node's net).
+    let socketArg: string;
+    if (process.platform === 'win32') {
+      // Windows: loopback TCP on an ephemeral port. Bind to 127.0.0.1 only so
+      // the channel is never reachable off-host; the kernel assigns the port.
+      await new Promise<void>((resolve, reject) => {
+        server.listen(0, '127.0.0.1', () => resolve());
+        server.on('error', reject);
+      });
+      const addr = server.address();
+      const port = typeof addr === 'object' && addr ? addr.port : 0;
+      socketArg = `tcp://127.0.0.1:${port}`;
+    } else {
+      // POSIX (Linux/macOS): filesystem Unix domain socket (unchanged).
+      const socketPath = path.join(SOCKET_DIR, `${name}.sock`);
+      fs.mkdirSync(SOCKET_DIR, { recursive: true });
+      try { fs.unlinkSync(socketPath); } catch {}
+      await new Promise<void>((resolve, reject) => {
+        server.listen(socketPath, () => resolve());
+        server.on('error', reject);
+      });
+      socketArg = socketPath;
+    }
 
     state.server = server;
 
     const { bin, args: binArgs } = this.resolveSidecarCommand(name);
-    const child = spawn(bin, [...binArgs, '--socket', socketPath], {
+    const child = spawn(bin, [...binArgs, '--socket', socketArg], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      detached: true,
+      // POSIX: own process group so killSidecar can tree-kill via negative PID.
+      // Windows has no process groups here; taskkill /T walks the tree instead,
+      // and detaching would spawn a stray console — so detach POSIX-only.
+      detached: process.platform !== 'win32',
+      windowsHide: true,
     });
 
     child.stdout?.on('data', (data: Buffer) => {
@@ -340,8 +361,8 @@ export class Supervisor {
     if (!state.process?.pid) return;
 
     try {
-      // Kill the entire process group
-      process.kill(-state.process.pid, 'SIGTERM');
+      // Kill the entire process group / tree
+      this.killTree(state.process.pid, false);
     } catch {
       try { state.process.kill('SIGKILL'); } catch {}
     }
@@ -349,7 +370,7 @@ export class Supervisor {
     await new Promise<void>((resolve) => {
       if (!state.process) return resolve();
       const timeout = setTimeout(() => {
-        try { process.kill(-state.process!.pid!, 'SIGKILL'); } catch {}
+        try { this.killTree(state.process!.pid!, true); } catch {}
         resolve();
       }, 5000);
       state.process.once('exit', () => {
@@ -361,6 +382,24 @@ export class Supervisor {
     state.process = null;
   }
 
+  /**
+   * Kill a sidecar's whole process tree, cross-platform.
+   * POSIX: signal the detached process group via negative PID (SIGTERM, then
+   * SIGKILL when `force`). Windows: `taskkill /T` walks the child tree by PID;
+   * it has no graceful signal, so it always terminates (the /F force flag is
+   * harmless for the non-force call and required for stuck processes).
+   */
+  private killTree(pid: number, force: boolean): void {
+    if (process.platform === 'win32') {
+      try {
+        const tk = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+        tk.unref();
+      } catch { /* best-effort; child.kill() in the caller is the fallback */ }
+      return;
+    }
+    process.kill(-pid, force ? 'SIGKILL' : 'SIGTERM');
+  }
+
   private resolveSidecarCommand(name: SidecarName): { bin: string; args: string[] } {
     // Frozen-binary dirs to check, in priority order: an explicit override
     // (for testing packaged binaries pre-install), then the bundled resources
@@ -370,19 +409,26 @@ export class Supervisor {
       process.resourcesPath ? path.join(process.resourcesPath, 'sidecars') : undefined,
     ].filter(Boolean) as string[];
 
+    // PyInstaller names the onedir entry binary with the platform's exe suffix.
+    const exe = process.platform === 'win32' ? '.exe' : '';
     for (const dir of frozenDirs) {
-      const frozen = path.join(dir, name, name);
+      const frozen = path.join(dir, name, name + exe);
       if (fs.existsSync(frozen)) {
         return { bin: frozen, args: [] };
       }
     }
 
     // Dev: run main.py with the sidecar's own venv Python if it exists,
-    // otherwise fall back to the system python3.
+    // otherwise fall back to the system Python. venv layout + interpreter name
+    // differ on Windows (Scripts/python.exe vs bin/python; `python` vs `python3`).
     const sidecarDir = path.join(__dirname, '..', '..', 'sidecars', name);
     const devPath = path.join(sidecarDir, 'main.py');
-    const venvPython = path.join(sidecarDir, 'venv', 'bin', 'python');
-    const bin = fs.existsSync(venvPython) ? venvPython : 'python3';
+    const venvPython = process.platform === 'win32'
+      ? path.join(sidecarDir, 'venv', 'Scripts', 'python.exe')
+      : path.join(sidecarDir, 'venv', 'bin', 'python');
+    const bin = fs.existsSync(venvPython)
+      ? venvPython
+      : (process.platform === 'win32' ? 'python' : 'python3');
     return { bin, args: [devPath] };
   }
 

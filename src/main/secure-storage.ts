@@ -5,7 +5,14 @@ const store = new JsonStore<Record<string, string>>('aria-secure', {});
 
 export function getSecureBackend(): string {
   if (!safeStorage.isEncryptionAvailable()) return 'unavailable';
-  return safeStorage.getSelectedStorageBackend();
+  // getSelectedStorageBackend() is Linux-only; on Windows/macOS the OS-backed
+  // store (DPAPI / Keychain) is always used when encryption is available.
+  if (process.platform === 'win32') return 'dpapi';
+  if (process.platform === 'darwin') return 'keychain';
+  if (typeof safeStorage.getSelectedStorageBackend === 'function') {
+    return safeStorage.getSelectedStorageBackend();
+  }
+  return 'os_crypt';
 }
 
 export function isSecureBackendSafe(): boolean {

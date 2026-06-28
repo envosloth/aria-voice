@@ -25,7 +25,7 @@ const REPO_OWNER = 'envosloth';
 const REPO_NAME = 'aria-voice';
 const RELEASES_LATEST_PAGE = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
 
-export type UpdateChannel = 'appimage' | 'deb' | 'dev';
+export type UpdateChannel = 'appimage' | 'deb' | 'win' | 'mac' | 'dev';
 
 export interface UpdateStatus {
   state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'installing' | 'installed' | 'not-available' | 'error';
@@ -35,7 +35,7 @@ export interface UpdateStatus {
   url?: string;             // release page url
   percent?: number;         // download progress 0..100
   message?: string;         // error detail
-  canAutoInstall?: boolean; // true when ARIA can install it itself (AppImage OR .deb via pkexec)
+  canAutoInstall?: boolean; // true when ARIA can install it itself (electron-updater on AppImage/Windows/macOS, or .deb via pkexec)
 }
 
 interface DebInfo { version: string; url: string; sha512?: string; }
@@ -52,8 +52,19 @@ let pendingDeb: DebInfo | null = null;
 /** Which install medium are we running as — decides auto-install vs notify. */
 export function deliveryChannel(): UpdateChannel {
   if (!app.isPackaged) return 'dev';
+  // Windows (NSIS) and macOS (dmg/zip) self-update through electron-updater,
+  // same as the Linux AppImage. Checked before APPIMAGE so the Linux branches
+  // below stay linux-only and unchanged.
+  if (process.platform === 'win32') return 'win';
+  if (process.platform === 'darwin') return 'mac';
   if (process.env.APPIMAGE) return 'appimage';
   return 'deb';
+}
+
+/** Channels whose installer is driven by electron-updater (vs. the .deb/notify path). */
+function usesElectronUpdater(): boolean {
+  const ch = deliveryChannel();
+  return ch === 'appimage' || ch === 'win' || ch === 'mac';
 }
 
 export function currentVersion(): string {
@@ -202,10 +213,10 @@ export function initUpdater(window: BrowserWindow, opts: { beforeInstall?: () =>
   win = window;
   beforeInstall = opts.beforeInstall || null;
 
-  if (deliveryChannel() !== 'appimage') return; // notify-only path needs no autoUpdater
+  if (!usesElectronUpdater()) return; // .deb/dev notify-only path needs no autoUpdater
 
   try {
-    // Lazy require so non-AppImage builds never load it.
+    // Lazy require so the .deb/dev builds never load it.
     const mod = require('electron-updater') as typeof import('electron-updater');
     autoUpdater = mod.autoUpdater;
     autoUpdater.autoDownload = true;          // fetch in the background once found
