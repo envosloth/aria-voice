@@ -54,7 +54,7 @@ fi
   --workpath "$SIDECAR_DIR/build" \
   --specpath "$SIDECAR_DIR" \
   --noconfirm \
-  "${EXTRA_ARGS[@]}" \
+  "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" \
   "$SIDECAR_DIR/main.py"
 
 echo
