@@ -14,14 +14,29 @@ const TARGET_NAMES: Record<Target, string> = { llm: 'LLM', harness: 'Agent' };
 // receive the same running transcript, so context is preserved across a handoff
 // (e.g. the harness asks "where are you?", the user answers, and the answer is
 // delivered with the full prior context regardless of which target it routes to).
-const SYSTEM_PROMPT =
+//
+// The two targets get DIFFERENT system prompts. The conversational LLM has no
+// tools (routing decides tool use up front, see router.ts), so it's told to just
+// answer from knowledge. The agent harness runs its OWN tool loop server-side;
+// giving it ARIA's old "be concise … use your tools to answer directly" prompt
+// made it role-play tool use — it asserted "Done / the file's in place" without a
+// tool ever running (hallucinated tool calls). The harness prompt below keeps only
+// the voice context and adds the anti-confabulation rule: report a result only
+// after a tool actually returned it.
+const LLM_SYSTEM_PROMPT =
   'You are ARIA, a local-first voice assistant. You are spoken to and your ' +
-  'replies are read aloud, so be concise and natural. You have access to live ' +
-  'tools and the user\'s system — when asked for real-time information (weather, ' +
-  'news, the time, what is on screen, etc.) use your tools to answer directly. ' +
-  'Never tell the user to ask another assistant or open another app; you are the ' +
-  'assistant. If you need a detail (such as the user\'s location), ask one brief ' +
-  'follow-up question.';
+  'replies are read aloud, so be concise and natural. Answer from your own ' +
+  'knowledge and reasoning. Never tell the user to ask another assistant or open ' +
+  'another app; you are the assistant. If you need a detail (such as the user\'s ' +
+  'location), ask one brief follow-up question.';
+
+const HARNESS_SYSTEM_PROMPT =
+  'You are reached through ARIA, a voice assistant: the user\'s message is ' +
+  'transcribed speech and your reply is read aloud, so keep your final summary ' +
+  'short and natural. Use your tools to actually carry out the request. Only say ' +
+  'that something was created, changed, or done after a tool call has actually ' +
+  'returned success — never claim a file, folder, or action succeeded unless it ' +
+  'really did. If a tool fails or you cannot do something, say so plainly.';
 
 const MAX_TURNS = 24; // cap history (messages, excluding system) to bound payload
 let history: ChatMessage[] = [];
@@ -141,7 +156,13 @@ export async function coordinate(
     // pre-invocation router (see router.ts), which runs the tools server-side and
     // weaves the result into its own reply. The harness path therefore handles all
     // tool use; this path is conversation/reasoning/knowledge only.
-    const messages: ChatMessage[] = [{ role: 'system', content: SYSTEM_PROMPT }, ...history];
+    // ponytail: history stores only assistant TEXT, so the harness's real
+    // tool_calls/results aren't replayed on later turns. Faithful replay would
+    // need ARIA to capture server-side tool results (it only sees streamed tool
+    // events today) — a real refactor. Add it if multi-turn agent tasks still
+    // drift after the prompt split.
+    const systemContent = target === 'harness' ? HARNESS_SYSTEM_PROMPT : LLM_SYSTEM_PROMPT;
+    const messages: ChatMessage[] = [{ role: 'system', content: systemContent }, ...history];
     // Attach the screen-share frame to the final (current) user message as an
     // OpenAI-vision content array so the agent can see the desktop.
     if (withImage && opts.image) {
