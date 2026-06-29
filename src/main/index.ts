@@ -385,9 +385,21 @@ app.whenReady().then(async () => {
   try {
     const { session, desktopCapturer } = require('electron');
     session.defaultSession.setDisplayMediaRequestHandler((_request: unknown, callback: (arg: unknown) => void) => {
-      desktopCapturer.getSources({ types: ['screen'] }).then((sources: unknown[]) => {
-        callback(sources.length ? { video: sources[0] } : undefined);
-      }).catch(() => callback(undefined));
+      // Don't restrict by `types` to a single value on every OS: Windows enumerates
+      // displays as 'screen' sources, same as Linux/macOS, but if none come back we
+      // must know WHY (a permission/enumeration failure is the likely "screen share
+      // doesn't work on Windows" cause) instead of silently handing back undefined.
+      desktopCapturer.getSources({ types: ['screen'] }).then((sources: { id: string; name: string }[]) => {
+        if (!sources.length) {
+          console.error('[ARIA] screen share: desktopCapturer returned no screen sources (check OS screen-recording permission).');
+          callback(undefined);
+          return;
+        }
+        callback({ video: sources[0] });
+      }).catch((err: unknown) => {
+        console.error('[ARIA] screen share: getSources failed:', (err as Error).message);
+        callback(undefined);
+      });
     }, { useSystemPicker: false });
   } catch (e) {
     console.error('[ARIA] display-media handler setup failed:', (e as Error).message);

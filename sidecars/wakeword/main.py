@@ -61,6 +61,13 @@ class WakewordSidecar(BaseSidecar):
 
         self._np = np
         model_paths = self._resolve_model_paths(openwakeword)
+        # NOTE (Windows wake word): we deliberately do NOT pass inference_framework
+        # here — this openWakeWord version forwards it to AudioFeatures, which
+        # rejects it. The bundled models are .onnx and onnxruntime is the only
+        # runtime we ship (cross-platform, has Windows wheels), so the onnx path is
+        # selected identically on every OS. If wake word still fails on Windows,
+        # capture the sidecar's stderr from a real Windows run — the failure is not
+        # reproducible/identifiable from Linux.
         self.model = Model(
             wakeword_model_paths=model_paths,
             enable_speex_noise_suppression=False,
