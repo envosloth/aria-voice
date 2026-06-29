@@ -69,17 +69,17 @@ check('presets-distinct', JSON.stringify(ps) !== JSON.stringify(mp) && JSON.stri
 check('isPerfPreset', isPerfPreset('auto') && isPerfPreset('power-saver') && !isPerfPreset('nope') && !isPerfPreset(5),
   'preset type guard');
 
-// Power saver now ships a good-sounding MALE Piper voice (en_US-ryan-high) so the
+// Power saver ships a clear British male Piper voice (en_GB-alan-medium) so the
 // lightweight CPU engine still sounds natural.
-check('power-saver.voice-male', ps.ttsVoice === 'en_US-ryan-high', ps.ttsVoice);
+check('power-saver.voice-male', ps.ttsVoice === 'en_GB-alan-medium', ps.ttsVoice);
 
 // The per-voice Piper download path is derived generically from the voice id
 // (<group>/<lang>/<speaker>/<quality>/), not hardcoded to one voice.
 const { buildManifest } = require('../dist/main/model-manager');
-const piperManifest = buildManifest('tiny.en', 'en_US-ryan-high', 'piper');
-const ryan = piperManifest.find((s) => s.id === 'tts:en_US-ryan-high');
-check('piper.manifest.voice', !!ryan, JSON.stringify(piperManifest.map((s) => s.id)));
-check('piper.url.path', ryan && ryan.url.endsWith('/en/en_US/ryan/high/en_US-ryan-high.onnx'), ryan && ryan.url);
+const piperManifest = buildManifest('tiny.en', 'en_GB-alan-medium', 'piper');
+const alan = piperManifest.find((s) => s.id === 'tts:en_GB-alan-medium');
+check('piper.manifest.voice', !!alan, JSON.stringify(piperManifest.map((s) => s.id)));
+check('piper.url.path', alan && alan.url.endsWith('/en/en_GB/alan/medium/en_GB-alan-medium.onnx'), alan && alan.url);
 const lessac = buildManifest('tiny.en', 'en_US-lessac-medium', 'piper').find((s) => s.id === 'tts:en_US-lessac-medium');
 check('piper.url.generic', lessac && lessac.url.endsWith('/en/en_US/lessac/medium/en_US-lessac-medium.onnx'), lessac && lessac.url);
 

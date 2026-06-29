@@ -5,10 +5,10 @@ MODELS_DIR="${ARIA_MODELS_DIR:-$HOME/.local/share/aria/models}"
 mkdir -p "$MODELS_DIR" "$MODELS_DIR/wakeword"
 
 WHISPER_BASE="https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
-# Most natural-sounding MALE Piper voice; used by the power-saver preset's
-# lightweight CPU engine. piper-voices is laid out as <group>/<lang>/<speaker>/<quality>/.
-PIPER_VOICE="en_US-ryan-high"
-PIPER_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/ryan/high"
+# Clear British male Piper voice; used by the power-saver preset's lightweight
+# CPU engine. piper-voices is laid out as <group>/<lang>/<speaker>/<quality>/.
+PIPER_VOICE="en_GB-alan-medium"
+PIPER_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium"
 
 declare -A WHISPER_MODELS=(
   ["base.en"]="ggml-base.en.bin"
