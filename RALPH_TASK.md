@@ -1,4 +1,4 @@
-# Ralph Loop Task: Fix Settings, Setup, and Chat UX Issues
+# Ralph Loop Task: Fix Voice-Filler Cutoff, Screen-Share Delay, and Add Audio Sliders
 
 You are running in a loop. Each iteration: read this file, read `RALPH_PROGRESS.md` in
 the repo root (create it if missing), pick the next unfinished item below in order,
@@ -9,7 +9,7 @@ is verified. If you get stuck on an item after 3 attempts, write down why in
 looping forever on it.
 
 When every item below is `done` or `blocked` (after its 3 attempts) AND the overall
-success bar is met, output the completion promise `RALPH-ARIA-ALL-ITEMS-VERIFIED-DONE`
+success bar is met, output the completion promise `RALPH-ARIA-UX-3-ITEMS-VERIFIED-DONE`
 to end the loop. Never output it otherwise.
 
 ## Standing constraints (apply to every item, every iteration)
@@ -24,37 +24,22 @@ instincts (e.g. "add a debounce", "batch these calls") wherever they'd conflict.
 - UI interactions must feel instantaneous. Never block the UI/main thread on network
   calls, disk I/O, or LLM/STT/TTS work — push it to a worker/background thread/async
   task and confirm the UI thread isn't waiting on it.
-- Voice input (STT) processing should begin as soon as audio is received, not after
-  some buffering window — check for any "wait for N ms of audio" or "wait for full
-  utterance" pattern that could be replaced with streaming/incremental processing.
 - TTS playback should start as soon as enough audio is available to play, not after
-  the full response is synthesized — check whether TTS is being requested in
-  streaming chunks tied to LLM output, or only after the full text response lands.
-- Tool execution should be async/non-blocking relative to the UI and to other
-  in-flight work, unless a specific tool call has a genuine ordering dependency.
+  the full response is synthesized. The incremental TTS path (speak each clause as
+  the LLM streams it) must stay intact — do not regress eager first-chunk playback.
 - The app must stay responsive with STT, TTS, LLM inference, and background agents
   all running at once — test concurrently, not just each in isolation.
+- Linux is the reference platform and must stay byte-for-byte working. Any Windows/Mac
+  branches you touch must not change Linux behavior.
 
-When making any change anywhere in this loop:
-- Never trade responsiveness for lower CPU/memory usage. If you're tempted to add
-  batching, buffering, debouncing, or scheduling delays "to be efficient," check the
-  latency impact first. If it pushes end-to-end latency up, don't make that tradeoff
-  — find a different approach instead.
-- Measure before and after every change that could plausibly affect latency, not just
-  changes explicitly about performance. A "small" change to settings-loading or
-  message rendering can still add latency on the hot path.
-- Prefer fixes with real-world latency impact over micro-optimizations you can't
-  measure a difference from. If you can't measure a change, don't claim it helped.
+Use the EXISTING latency harness — do not build a new one. It is already in the app:
+`src/renderer/perf.js` (per-turn stage marks), the Settings → Performance panel, the
+`ARIA_VERIFY_PERF` injection path in `src/main/index.ts`, and `npm run smoke:perf-panel`.
+Measure before/after with it for any change that could touch the hot path.
 
-Overall success bar for the app (track in RALPH_PROGRESS.md as you go, not just at
-the end):
-- Stable under sustained use, no crashes you could have avoided.
-- Memory growth stays minimal over a long session (note any steady upward creep).
-- Idle CPU stays low — STT/TTS/agents shouldn't spin or poll aggressively when idle.
-- No UI freezes/stutters, including while STT, TTS, LLM inference, and background
-  agents all run together.
-- Response latency stays consistently under 500ms under normal (non-degraded)
-  conditions.
+Before/after every iteration that builds, run at minimum `npm run smoke:boot` and the
+smoke tests relevant to what you touched (`smoke:tts`, `smoke:perf-panel`, etc.). Run
+`npm run smoke:all` before marking the final item done.
 
 ## Progress tracking format (RALPH_PROGRESS.md)
 
@@ -64,183 +49,137 @@ For each item below, maintain a section:
 Status: not-started | in-progress | done | blocked
 Findings: <root cause once known>
 Fix: <what changed, files touched>
-Verification: <how you confirmed it's fixed>
+Verification: <how you confirmed it's fixed, with before/after numbers where relevant>
 ```
 
 ---
 
-## Item 0: Build a latency measurement harness (do this first, reuse everywhere)
+## Item 1: Slow-reply "hold on" filler gets cut off by the real reply, and arrives too late
 
-Before touching Items 1-8, establish how end-to-end latency is actually measured in
-this app, since "under 500ms" is unverifiable without it and several items below
-depend on it.
+When a reply is slow (agent/tool tasks can take seconds), ARIA speaks a short
+contextual "hold on" filler so the user isn't left in silence. Two problems:
 
-- Identify the key stages of a typical interaction and add timestamps/logging at each
-  boundary, for both the text-chat path and the voice path:
-  - User input received (keystroke send / audio start) -> request dispatched ->
-    first byte/token received from LLM -> first audio frame played (TTS) or first
-    text rendered (chat) -> interaction visually "complete."
-- Output this as structured logging (timestamps + stage name) that can be diffed
-  before/after a change, not just console.log noise — e.g. a simple ring buffer or
-  log line format you grep for, whichever fits the existing logging setup.
-- Record a baseline: run a handful of typical interactions (text chat, voice
-  round-trip, tool-call round-trip) and capture current end-to-end numbers in
-  RALPH_PROGRESS.md before any other item is "fixed." This baseline is what every
-  later "did this help or hurt" comparison gets measured against.
-- This harness should stay in the app (behind a debug flag/verbose log level if
-  needed) rather than being ripped out after use — later iterations of this loop and
-  future debugging need it too.
-- Verify: baseline numbers for text-chat and voice paths are written down in
-  RALPH_PROGRESS.md with enough detail (stage-by-stage breakdown, not just one final
-  number) to know where time is going.
+1. **It gets truncated.** The filler is frequently interrupted mid-word by the first
+   chunk of the real reply, so the user hears half a sentence then a hard cut.
+2. **It arrives too late / not at all for borderline-slow replies.** The user wants to
+   be kept in the loop FASTER when a turn is going to take a while.
 
-## Item 1: Settings changes require app restart to take effect
+Root cause to start from (verify it yourself, don't trust this blindly):
+`armThinkingHold()` in `src/renderer/app.js` arms a single `setTimeout` of **3800ms**
+that calls `speakOnly(phrase)` → `ttsPlay()` → `stopPlayback(true)`. When the first
+real token/chunk arrives, `cancelThinkingHold()` runs and the streaming path
+(`speakChunk` → `stopPlayback(true)` / barge-in) cuts the audio sink immediately —
+truncating the filler that is still playing. The filler and the real reply share one
+audio sink with no "let the current short filler finish before starting the reply"
+handoff.
 
-Clicking "Apply" in Settings does not actually apply the change live — the user has
-to fully quit and relaunch the app for it to take effect.
+Fix direction (pick the simplest that actually works — root cause, not a band-aid):
+- **Don't truncate the filler mid-utterance.** When the real reply's first chunk is
+  ready but the filler is still playing, either (a) let the short filler finish and
+  then start the reply audio, or (b) only start the filler if no reply is imminent.
+  A barge-in from the USER (wake word / push-to-talk / stop) must STILL interrupt
+  immediately — only the system's own reply should wait for the filler, never the user.
+- **Speak sooner.** 3800ms is too long for "keep me in the loop faster." Lower the
+  threshold (and/or make it adaptive — e.g. a short first nudge, escalating to a
+  fuller "still working on it" for genuinely long agent tasks) so the user hears
+  something within ~1.5-2s of silence. Don't fire it for replies that start almost
+  immediately (no filler if first token lands before the threshold).
+- Keep it spoken-only (no transcript line), keep the contextual phrasing in
+  `holdOnPhrase()`.
 
-- Find where Settings -> Apply is wired up. Identify which settings are read once at
-  startup (cached in memory, read into a singleton/config object at boot) vs. read
-  fresh each time they're needed.
-- For each setting that doesn't take effect live, either:
-  (a) make the consuming code re-read config on change (e.g. subscribe to a config
-      change event/store), or
-  (b) if a setting genuinely requires restart (e.g. it changes a native module init),
-      explicitly tell the user that in the UI ("Restart required") instead of silently
-      requiring it.
-- Verify: change a setting, confirm the behavior change is visible without restarting,
-  for every setting in the Settings panel — not just one.
+Watch the interaction with the incremental-TTS path (`speakChunk`, `ttsTurnSpeaking`,
+`resetTtsStream`, `appendStreamToken`) and the barge-in path (`bargeIn`,
+`stopPlayback`, `interruptedTtsEpoch` / the post-barge-in gate). The fix must not let a
+stale filler leak past a real user barge-in, and must not delay the real reply audio by
+more than the brief tail of an already-playing short filler.
 
-## Item 2: Setup guide is missing direct LLM provider configuration
+Verify:
+- A slow reply (simulate by delaying first token) plays the filler to completion, THEN
+  the real reply, with no mid-word cut.
+- A fast reply (<threshold) plays no filler.
+- A user barge-in during the filler still stops it instantly.
+- `npm run smoke:tts` and `npm run smoke:boot` pass. Add/extend one assert-level check
+  for the "filler not truncated by reply" logic if it can be unit-tested in the
+  renderer logic (keep it minimal — no new framework).
 
-The onboarding/setup guide doesn't walk the user through configuring a direct LLM
-provider (i.e. user-supplied API key/endpoint rather than only a built-in option).
+## Item 2: Reduce latency while screen sharing is on
 
-- Find the setup/onboarding flow.
-- Add a step (or section) for configuring a direct LLM provider: provider selection,
-  API key/endpoint entry, model selection, and a "test connection" action.
-- Verify: a fresh setup run-through reaches a working direct-provider configuration
-  without needing to dig into Settings after the fact.
+Screen-share turns are noticeably slower than normal turns. Some optimization already
+exists in `src/renderer/app.js` (background-cached frame off the send path, 768px @ 0.45
+JPEG, and `shouldAttachScreen()` skipping the vision path for clearly non-visual asks).
+Build on that — measure where the remaining time actually goes, then cut it.
 
-## Item 3: No support for fully local LLM providers (Ollama, LM Studio, vLLM)
+- Use the Item-0 harness (perf.js / Performance panel) to break down a screen-share
+  turn vs. a normal turn: frame capture/encode time, payload size, time-to-first-token
+  with the image attached, and full-reply time. Write the baseline numbers in
+  RALPH_PROGRESS.md BEFORE changing anything.
+- Likely levers (measure each, don't assume):
+  - **Vision-model cost dominates** (token/processing cost scales with image pixels).
+    Test a smaller frame (e.g. 640px, or quality 0.4) and confirm the agent can still
+    read typical screen content — note the latency vs. legibility tradeoff.
+  - **Frame freshness vs. cost:** the background refresh interval (`setInterval(..., 1500)`)
+    and `captureScreenFrame()` 600ms first-grab race. Make sure no turn ever blocks on a
+    capture, and that we don't re-encode a frame that hasn't changed.
+  - **Over-attaching:** confirm `shouldAttachScreen()` isn't sending the frame on turns
+    that don't need it (every attached frame forces the slow vision path). Tighten the
+    heuristic only if it measurably helps without dropping genuinely visual asks.
+  - **Don't send the same frame to history / don't double-encode** — verify the frame is
+    only attached to the current turn (it already is per coordinator.ts; confirm).
+- Do NOT add buffering/batching that increases perceived latency. The goal is lower
+  time-to-first-audio on screen-share turns, not lower CPU.
 
-Direct LLM provider options don't include locally hosted setups.
+Verify: before/after stage-by-stage numbers in RALPH_PROGRESS.md showing a real
+reduction in screen-share turn latency, with confirmation the agent can still read the
+screen. `npm run smoke:boot` passes.
 
-- Determine what the existing "direct provider" abstraction looks like (likely an
-  OpenAI-compatible client, since Ollama/LM Studio/vLLM all expose OpenAI-compatible
-  `/v1/chat/completions` endpoints).
-- Add provider presets (or a generic "OpenAI-compatible / custom base URL" option)
-  for:
-  - Ollama (default `http://localhost:11434/v1`)
-  - LM Studio (default `http://localhost:1234/v1`)
-  - vLLM (user-supplied base URL, OpenAI-compatible)
-- These should not require an API key (or should accept a dummy/placeholder one,
-  since local servers often ignore it).
-- Verify: connect to a locally running Ollama (or LM Studio) instance and confirm a
-  chat message round-trips successfully.
+## Item 3: Add a volume slider and a voice-speed slider to Settings
 
-## Item 4: Remove "File, Edit, View, Window" menu bar items
+Settings has no control for output volume or TTS speaking rate. Add both, persisted,
+and applied LIVE (no app restart — match how other settings apply).
 
-Top-left application menu currently shows File / Edit / View / Window. Remove these
-menu items (or the whole menu bar, if nothing else lives there) from the app.
+- **Voice speed:** the TTS sidecar already supports speed — `sidecars/tts/main.py` reads
+  `ARIA_TTS_SPEED` into `self.speed` and passes it to both Piper and Kokoro
+  `synthesize(...)`. Wire a runtime speed control end-to-end: a Settings slider →
+  persisted config → applied to the running sidecar. Prefer a control message to the
+  sidecar (so it applies without respawn) over only an env var read at boot; if a
+  respawn is genuinely required, apply it live by restarting just the TTS sidecar, not
+  the app. Sensible range ~0.5x–2.0x, default 1.0, with the numeric value shown.
+- **Volume:** the renderer already plays TTS PCM through a WebAudio graph with a gain
+  node (`sink.gain.value` in `src/renderer/app.js`). The lazy correct path is a master
+  output gain controlled by the slider (0–100% → gain 0.0–1.0), persisted, applied
+  instantly. Do NOT change volume by re-synthesizing or by altering PCM in the sidecar.
+  Make sure the gain you set isn't clobbered by the existing barge-in/`stopPlayback`
+  gain-ducking logic (it sets `sink.gain.value = 0` to mute the tail — your master
+  volume must be restored, not overwritten, when playback resumes).
+- **UI:** add two `<input type="range">` rows to the Settings panel
+  (`src/renderer/index.html`), following the existing settings-panel styling/markup
+  pattern. Show the current value. Persist via the same config store/IPC the other
+  settings use (`src/main/config.ts`, preload, IPC channels) — reuse the existing
+  save/apply path, don't invent a new one.
+- Live-apply: changing either slider takes effect on the very next spoken output (and
+  ideally mid-stream for volume) without restarting the app.
 
-- Find the native menu construction (likely `Menu.buildFromTemplate` or equivalent
-  if this is Electron).
-- Remove the listed menus. Check first whether any of them carry functionality the
-  app depends on (e.g. Edit menu often carries copy/paste/undo keyboard shortcuts on
-  some platforms) — if so, keep the underlying accelerators/shortcuts working via
-  another mechanism (e.g. `role` shortcuts still registered, or app-level keybindings)
-  even after removing the visible menu.
-- Verify: launch app, confirm menu bar no longer shows these items, confirm copy/paste
-  and any other previously-menu-driven shortcuts still work.
-
-## Item 5: Large response delay even with direct LLM provider
-
-Latency is high even when using a direct LLM provider (i.e. not the case where
-overhead might be excused by a slower routed/proxy path).
-
-- Do not guess. Use the latency harness from Item 0 (don't build a separate one) to
-  measure: request construction -> network call -> first token received -> stream
-  completion.
-  - Determine where the time is actually going: is it network latency to the
-    provider, time-to-first-token from the model itself, client-side buffering before
-    rendering, or something app-side (e.g. waiting on an unrelated synchronous task
-    before the request is even sent)?
-- Common culprits to check specifically:
-  - Is streaming actually enabled/used, or is the client waiting for the full
-    response before displaying anything?
-  - Is there an unnecessary delay/await before the request fires (e.g. waiting on a
-    settings re-read, a redundant auth check, a UI animation)?
-  - Is the request being retried/duplicated?
-- Fix the actual bottleneck found. Do not add arbitrary timeouts or "optimizations"
-  without first identifying where time is spent.
-- Verify: log/measure latency before and after, report both numbers in
-  RALPH_PROGRESS.md.
-
-## Item 6: Chat messages should only show timestamp on hover
-
-Currently timestamps are presumably always visible (or absent) — they should only
-render when the user hovers over a given message.
-
-- Find the message component/template.
-- Add hover-only timestamp display (CSS `:hover` reveal, or equivalent in whatever UI
-  framework is used) scoped to the individual message, not the whole message list.
-- Verify: timestamp is hidden by default, appears on hover over a specific message,
-  and hovering one message doesn't reveal timestamps on others.
-
-## Item 7: Screen share causes chat to duplicate/repeat the first message
-
-When screen share is activated, the chat behaves incorrectly: it appears to repeat
-the first message in the conversation, attributed as if it were what the user said
-in their most recent turn.
-
-- This smells like a state bug, not a rendering bug — likely one of:
-  - Screen-share activation triggers a re-render/re-init of the chat state that
-    re-seeds from message index 0 instead of preserving current state.
-  - A duplicate event listener gets attached each time screen share is toggled on,
-    causing the original first message's send-handler to fire again.
-  - The "user said X" payload sent when screen share starts is hardcoded to the
-    first message in the history rather than the current/most recent one.
-- Find where screen-share activation is wired up and what side effects it triggers
-  in chat state (does it reset/reinitialize the message list, message store, or
-  websocket connection?).
-- Reproduce deliberately: send 3+ messages, then activate screen share, and check
-  exactly which message gets duplicated and how it's attributed.
-- Fix the root cause (likely deduplicate the event listener, or stop re-seeding chat
-  state on screen-share toggle).
-- Verify: repeat the reproduction steps above after the fix; activate/deactivate
-  screen share multiple times in one session to confirm it doesn't recur.
-
-## Item 8: Direct LLM doesn't know it can delegate to tools / agent harness
-
-When using a direct LLM provider (vs. the built-in/routed path), the model doesn't
-seem aware that it can hand off work to a tool-use harness — i.e. it isn't being told
-about available tools, or tool-calling isn't wired up for the direct-provider path.
-
-- Compare the system prompt / tool definitions sent on the built-in path vs. the
-  direct-provider path. It's likely the direct path is missing the tools array,
-  tool-use instructions, or both.
-- Confirm whether the chosen direct provider/model actually supports tool calling at
-  the API level (not all local models do) — if not, this may need a capability flag
-  and a fallback message rather than a fix.
-- Wire up tool definitions and tool-result handling for the direct-provider path so
-  it matches the built-in path's behavior, gated on the provider/model supporting it.
-- Verify: with a tool-calling-capable direct provider configured, prompt something
-  that requires a tool and confirm the model actually invokes it instead of trying to
-  answer from text alone.
+Verify:
+- Move the volume slider → next TTS playback is audibly louder/quieter; 0% is silent;
+  setting persists across restart.
+- Move the speed slider → next TTS playback is faster/slower at the same pitch
+  (changing speed in the sidecar preserves pitch; do not fake it with renderer
+  playbackRate, which chipmunks the voice); setting persists across restart.
+- `npm run smoke:tts` and `npm run smoke:boot` pass. Then run `npm run smoke:all`
+  before marking this final item done.
 
 ---
 
 ## General rules for every item
 
 - Don't mark something "done" without a concrete verification step you actually
-  performed — describe it in RALPH_PROGRESS.md.
-- Every change is also subject to the "Standing constraints" section above — a fix
-  that resolves its own item but regresses latency, blocks the UI thread, or adds
-  buffering/batching delay is not actually done. Re-measure with the Item 0 harness
-  if there's any chance a change touched the hot path.
-- Prefer fixing root cause over papering over symptoms.
+  performed — describe it in RALPH_PROGRESS.md, with before/after latency numbers for
+  anything that touches the hot path.
+- Prefer fixing root cause over papering over symptoms. Fix shared functions once
+  (where all callers route through), not per-caller.
+- Keep changes minimal and in keeping with the surrounding code style. No new
+  dependencies for what a few lines can do. No speculative abstractions.
+- Keep commits scoped to one item each. Use a clear `fix(...)`/`feat(...)` message.
+- Linux behavior must remain byte-for-byte working; smoke suite stays green.
 - If fixing one item reveals a closely related bug not listed here, note it in
-  RALPH_PROGRESS.md under "Found but not in scope" rather than silently expanding
-  scope.
-- Keep commits scoped to one item each.
+  RALPH_PROGRESS.md under "Found but not in scope" rather than silently expanding scope.

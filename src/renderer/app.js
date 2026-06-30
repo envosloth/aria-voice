@@ -131,8 +131,21 @@ async function submitUserMessage(rawText, existingTurnId) {
 // If a reply is slow (agent tasks can take a while), speak a short, contextual
 // "hold on" so the user isn't left in silence. Cancelled as soon as the first
 // token arrives. Spoken only — not added to the transcript.
+//
+// Two stages so the user is kept in the loop both FAST and during genuinely long
+// agent/tool runs:
+//   - first nudge at HOLD_FIRST_MS (short silence -> "we heard you, working on it"),
+//   - an escalation at HOLD_ESCALATE_MS so a 20s+ tool run isn't dead silence.
+// The filler must never be cut off mid-word by the real reply: `fillerSpeaking`
+// tells speakChunk() to queue the reply serially BEHIND the filler (gapless via the
+// sidecar synth queue) instead of hard-stopping it. A real USER barge-in still
+// interrupts instantly (bargeIn -> stopPlayback clears the flag).
 let thinkingTimer = null;
+let thinkingTimer2 = null;
 let awaitingFirstToken = false;
+let fillerSpeaking = false;
+const HOLD_FIRST_MS = 2000;
+const HOLD_ESCALATE_MS = 12000;
 
 function holdOnPhrase(text) {
   const t = text.toLowerCase();
@@ -145,19 +158,33 @@ function holdOnPhrase(text) {
   return 'One moment, let me get that for you.';
 }
 
+// Speak a spoken-only filler and protect it: the real reply will queue behind it
+// rather than truncate it. `speakOnly` runs stopPlayback first (which clears the
+// flag), so set the flag AFTER it.
+function speakFiller(phrase) {
+  speakOnly(phrase);
+  fillerSpeaking = true;
+}
+
 function armThinkingHold(text) {
   clearTimeout(thinkingTimer);
+  clearTimeout(thinkingTimer2);
   awaitingFirstToken = true;
   const phrase = holdOnPhrase(text);
   thinkingTimer = setTimeout(() => {
-    if (awaitingFirstToken) speakOnly(phrase);
-  }, 3800);
+    if (awaitingFirstToken) speakFiller(phrase);
+  }, HOLD_FIRST_MS);
+  thinkingTimer2 = setTimeout(() => {
+    if (awaitingFirstToken) speakFiller('Still working on it — hang tight.');
+  }, HOLD_ESCALATE_MS);
 }
 
 function cancelThinkingHold() {
   awaitingFirstToken = false;
   clearTimeout(thinkingTimer);
+  clearTimeout(thinkingTimer2);
   thinkingTimer = null;
+  thinkingTimer2 = null;
 }
 
 textInput.addEventListener('keydown', (e) => {
@@ -585,7 +612,17 @@ const TTS_LATER_MAX = 220;  // hard cap for subsequent chunks
 function speakChunk(text) {
   if (!text) return;
   if (!ttsTurnSpeaking) {
-    stopPlayback(true);   // cut any prior/filler audio once, at turn start
+    if (fillerSpeaking) {
+      // A "hold on" filler is mid-flight — let the reply queue serially behind it
+      // (gapless, via the sidecar synth queue) instead of cutting it off mid-word.
+      // Just stop the filler's pending 'done' from dropping the orb to idle before
+      // the reply, which is queued after it, starts playing.
+      clearTimeout(idleTimer); idleTimer = null;
+      ttsSynthDone = false;
+      fillerSpeaking = false;
+    } else {
+      stopPlayback(true); // cut any prior/leftover audio once, at turn start
+    }
     orbState('speaking'); // agent is about to talk -> dynamic motion
     ttsTurnSpeaking = true;
   }
@@ -742,6 +779,7 @@ function stopPlayback(cancelSidecar) {
   for (const s of ttsSources) { try { s.onended = null; s.stop(); } catch (e) {} }
   ttsSources = [];
   nextPlayTime = 0;
+  fillerSpeaking = false; // audio is being hard-stopped: no filler left to protect
   ttsSynthDone = false;   // a fresh turn is not done until its 'done' state arrives
   clearTimeout(idleTimer); idleTimer = null;
   // Drop any PCM still in flight from the interrupted utterance until the next
