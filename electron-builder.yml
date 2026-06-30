@@ -55,10 +55,13 @@ linux:
       arch: [x64]
     - target: deb        # Debian / Ubuntu / Mint / Pop!_OS
       arch: [x64]
-    # rpm dropped: it needs the `rpmbuild` system tool (not present here), and
-    # its failure aborted `npm run dist` even after the .deb/.AppImage built.
-    # Re-add `- target: rpm` (and `apt-get install rpm`) if a Fedora/RHEL build
-    # is ever needed.
+    # rpm (Fedora / RHEL / openSUSE) is intentionally NOT listed here: it needs
+    # the `rpmbuild` system tool, which a dev box may lack, and its failure would
+    # abort the whole local `npm run dist`. The release workflow builds it on CI
+    # instead — it installs rpmbuild and passes `--linux AppImage deb rpm`
+    # explicitly (see .github/workflows/release.yml). The rpm: block below still
+    # configures that CI build. To build rpm locally: `apt-get install rpm` then
+    # `npx electron-builder --linux rpm`.
   category: Utility
   synopsis: GPU-accelerated local voice assistant
   description: >

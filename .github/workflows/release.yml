@@ -23,12 +23,18 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Linux targets are listed explicitly (not from electron-builder.yml) so
+          # CI builds the Fedora/RHEL .rpm too, while a local `npm run dist` stays
+          # deb+AppImage only (no rpmbuild needed on a dev box).
           - os: ubuntu-latest
             platform: linux
+            ebargs: --linux AppImage deb rpm
           - os: windows-latest
             platform: win
+            ebargs: --win
           - os: macos-latest
             platform: mac
+            ebargs: --mac
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -41,6 +47,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
+      # electron-builder's rpm target shells out to rpmbuild, which ubuntu runners
+      # don't ship. Without it the .rpm step fails the whole Linux build.
+      - name: Install rpm tooling (Linux)
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y rpm
 
       - name: Install JS deps
         run: npm ci
@@ -77,7 +89,7 @@ jobs:
       - name: Package installers
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --${{ matrix.platform }} --config electron-builder.yml --publish onTagOrDraft
+        run: npx electron-builder ${{ matrix.ebargs }} --config electron-builder.yml --publish onTagOrDraft
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
