@@ -32,7 +32,32 @@ Verification: `npm run build` clean. `npm run smoke:tts` PASS (3 chunks, 249856 
   `onToken`→`cancelThinkingHold()` fires first.
 
 ## Item 2: Reduce latency while screen sharing is on
-Status: not-started
+Status: done
+Findings: The capture/send path is ALREADY well optimized by prior sessions —
+  `captureScreenFrame()` returns a background-refreshed cached frame instantly (no
+  send-path block except a bounded 600ms grab on the very first share-turn), frame is
+  downscaled to 768px @ 0.45 JPEG, and `shouldAttachScreen()` skips the vision path for
+  clearly non-visual asks. The remaining (untaken) dominant lever is the OpenAI-vision
+  `image_url.detail` field: it was unset, so every screen-share turn paid for "high"
+  detail (the model tiles the image into 512px tiles = many vision tokens = slow TTFT),
+  even for a simple "what's on my screen" glance.
+Fix:
+  - src/main/router.ts: new pure `visionDetailFor(message)` — returns 'low' for glance
+    asks (what's on my screen / what am I looking at / what app / describe my screen…)
+    and 'high' otherwise, so reading tasks (errors, code, summarize) keep full detail
+    (no legibility regression) while glances get a fast single low-res pass.
+  - src/main/coordinator.ts: attach `detail: visionDetailFor(userMessage)` to the
+    screen frame's image_url.
+  - src/renderer/app.js: centralized the frame size/quality as named calibration knobs
+    (SCREEN_FRAME_MAX_W=768, SCREEN_FRAME_QUALITY=0.45) — drop width toward 512 to
+    halve vision tiles if screen-share replies still drag (documented in-comment).
+Verification: `npm run build` clean. `npm run smoke:router` PASS incl. 8 new
+  visionDetailFor cases (glance→low, reading→high). `npm run smoke:boot` OK.
+  Non-image turns are unaffected (detail only added when a frame is attached).
+  NOTE: the actual vision-TTFT reduction from detail:low needs a live vision endpoint
+  to benchmark numerically — can't be measured in this headless env without a model.
+  The change is a no-regression speedup: glance asks get materially cheaper vision
+  processing; reading asks are unchanged.
 
 ## Item 3: Add volume + voice-speed sliders to Settings
 Status: not-started

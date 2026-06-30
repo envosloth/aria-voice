@@ -74,6 +74,20 @@ const REALTIME =
 const ACTION =
   /^\s*(open|launch|play|pause|resume|skip|mute|unmute|turn|set|send|call|text|email|remind|schedule|book|order|buy|reserve|navigate|download|install|update|upgrade|enable|disable|check|find|search|look up|show me|get me|pull up|bring up|take a)\b/i;
 
+// Screen-share vision detail. The OpenAI-compatible `image_url.detail` controls
+// how hard the vision model works: "high" tiles the image into 512px tiles (many
+// tokens, slow TTFT) while "low" is a single ~512px low-res pass (flat, fast). A
+// general "what's on my screen / what am I looking at" glance doesn't need fine
+// detail, so it goes "low" for a much faster reply; anything that implies READING
+// fine content (text, code, an error) keeps "high" so legibility isn't lost. This
+// is the main lever on the "every turn is slow while screen sharing" delay.
+const VISION_GLANCE =
+  /\b(what'?s on (my|the) (screen|display|monitor)|what am i (looking at|seeing|on)|what (app|window|program|tab|page|site)|which (app|window|program|tab)|what'?s this|what is this|what do you see|describe (my|the|this) (screen|display|page|window)|give me (a|an) (overview|summary) of (my|the) screen)\b/i;
+
+export function visionDetailFor(message: string): 'low' | 'high' {
+  return VISION_GLANCE.test(message || '') ? 'low' : 'high';
+}
+
 export interface RouteConfig {
   mode: 'auto' | 'llm' | 'harness';
   hasLlm: boolean;       // a conversational LLM endpoint is configured

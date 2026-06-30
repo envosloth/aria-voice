@@ -201,6 +201,12 @@ let screenStream = null, screenTrack = null, screenGrabber = null, screenVideo =
 // on a capture (the "slow response in screen-share mode" fix).
 let screenFrameCache = null, screenFrameTimer = null;
 const screenCanvas = document.createElement('canvas');
+// Calibration knobs for the desktop frame sent to the vision model. Width drives
+// the vision tile count (the dominant cost): 768 -> 2 tiles wide. Drop toward 512
+// for ~half the tiles (faster, less legible) if screen-share replies still drag.
+// Server-side `detail` (router.ts) is the other half of this lever.
+const SCREEN_FRAME_MAX_W = 768;
+const SCREEN_FRAME_QUALITY = 0.45;
 const screenShareBtn = document.getElementById('screen-btn');
 
 function isSharing() { return !!screenStream; }
@@ -269,14 +275,13 @@ async function grabFrameDataUrl() {
     } else if (screenVideo && screenVideo.videoWidth) {
       srcW = screenVideo.videoWidth; srcH = screenVideo.videoHeight; drawable = screenVideo;
     } else { return null; }
-    const maxW = 768;
-    const scale = Math.min(1, maxW / srcW);
+    const scale = Math.min(1, SCREEN_FRAME_MAX_W / srcW);
     const cw = Math.max(1, Math.round(srcW * scale));
     const ch = Math.max(1, Math.round(srcH * scale));
     screenCanvas.width = cw; screenCanvas.height = ch;
     screenCanvas.getContext('2d').drawImage(drawable, 0, 0, cw, ch);
     if (drawable.close) drawable.close(); // free the ImageBitmap
-    return screenCanvas.toDataURL('image/jpeg', 0.45);
+    return screenCanvas.toDataURL('image/jpeg', SCREEN_FRAME_QUALITY);
   } catch (e) {
     return null;
   }

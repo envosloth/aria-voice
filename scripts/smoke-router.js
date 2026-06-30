@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /* Unit test for the LLM<->harness router. */
-const { route } = require('../dist/main/router');
+const { route, visionDetailFor } = require('../dist/main/router');
 const both = { mode: 'auto', hasLlm: true, hasHarness: true };
 let pass = true;
 function check(name, got, want) {
@@ -69,6 +69,16 @@ check('how-today', route('how are you today', both), 'llm');
 check('opinion', route('what do you think about jazz music', both), 'llm');
 check('explain', route('explain how photosynthesis works', both), 'llm');
 check('in-order-to', route('in order to learn, what should I read about history', both), 'llm');
+
+// --- Screen-share vision detail: glance -> low (fast), reading -> high (legible) ---
+check('vd-whats-on-screen', visionDetailFor("what's on my screen"), 'low');
+check('vd-what-am-i-looking-at', visionDetailFor('what am I looking at'), 'low');
+check('vd-what-app', visionDetailFor('what app is this'), 'low');
+check('vd-describe-screen', visionDetailFor('describe my screen'), 'low');
+check('vd-read-error', visionDetailFor('help me fix this error'), 'high');
+check('vd-read-code', visionDetailFor('what does this code do'), 'high');
+check('vd-summarize-doc', visionDetailFor('summarize this document for me'), 'high');
+check('vd-default-high', visionDetailFor('is this design any good'), 'high');
 
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

@@ -1,7 +1,7 @@
 import { config } from './config';
 import { getSecret } from './secure-storage';
 import { streamChat, LlmCallbacks, ChatMessage, ChatHandle } from './llm-stream';
-import { route, Target } from './router';
+import { route, visionDetailFor, Target } from './router';
 import { perfMark } from './perf';
 
 export interface CoordinatorCallbacks extends LlmCallbacks {
@@ -173,7 +173,9 @@ export async function coordinate(
           role: 'user',
           content: [
             { type: 'text', text: (typeof last.content === 'string' ? last.content : userMessage) || 'Here is my screen.' },
-            { type: 'image_url', image_url: { url: opts.image } },
+            // detail:"low" for a quick glance, "high" when the ask needs to read fine
+            // content — the main lever on screen-share reply latency. See router.ts.
+            { type: 'image_url', image_url: { url: opts.image, detail: visionDetailFor(userMessage) } },
           ],
         };
       }
