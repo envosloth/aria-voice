@@ -10,6 +10,7 @@ interface AppConfig {
   tts: {
     engine: 'piper' | 'kokoro';
     voice: string;
+    speed: number; // speaking rate multiplier, 0.5..2.0 (1.0 = normal)
   };
   wakeword: {
     enabled: boolean;
@@ -33,6 +34,7 @@ interface AppConfig {
   audio: {
     inputDevice: string;
     outputDevice: string;
+    volume: number; // TTS output volume, 0.0..1.0 (applied renderer-side)
   };
   ui: {
     globalShortcut: string;
@@ -64,6 +66,7 @@ const defaults: AppConfig = {
   tts: {
     engine: 'kokoro',
     voice: 'bm_george', // "Jarvis" — refined British male
+    speed: 1.0,
   },
   wakeword: {
     enabled: true,
@@ -91,6 +94,7 @@ const defaults: AppConfig = {
   audio: {
     inputDevice: 'default',
     outputDevice: 'default',
+    volume: 1.0,
   },
   ui: {
     globalShortcut: 'Super+Shift+A',

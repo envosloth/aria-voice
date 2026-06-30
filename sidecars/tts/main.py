@@ -179,6 +179,14 @@ class TtsSidecar(BaseSidecar):
             # Tag the request with the current epoch and hand it to the worker;
             # the stdin thread stays free to receive a 'stop' mid-synthesis.
             self._synth_queue.put((self._current_epoch(), msg.get("text", "")))
+        elif mtype == "set_speed":
+            # Live speaking-rate change (Settings slider) — applied to the next
+            # synthesized utterance, no model reload. Float assignment is atomic
+            # under the GIL, so the synth worker just reads the new value.
+            try:
+                self.speed = max(0.5, min(2.0, float(msg.get("speed", 1.0))))
+            except (TypeError, ValueError):
+                pass
         elif mtype == "stop":
             # Bump the epoch (cancels the in-progress + queued synthesis) and
             # drop anything already queued so the next turn starts clean.
@@ -270,7 +278,11 @@ class TtsSidecar(BaseSidecar):
         self.send_pcm(pcm)
 
     def _emit_piper(self, sentence: str, index: int, total: int, item_epoch: int) -> None:
-        for chunk in self._voice.synthesize(sentence):
+        from piper import SynthesisConfig
+        # Piper's length_scale stretches duration: it's the inverse of speed
+        # (length_scale 2.0 = half speed). Kokoro takes `speed` directly (see above).
+        syn = SynthesisConfig(length_scale=1.0 / self.speed) if self.speed and self.speed != 1.0 else None
+        for chunk in self._voice.synthesize(sentence, syn_config=syn):
             if item_epoch != self._current_epoch():
                 break
             pcm = chunk.audio_int16_bytes

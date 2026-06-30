@@ -60,9 +60,50 @@ Verification: `npm run build` clean. `npm run smoke:router` PASS incl. 8 new
   processing; reading asks are unchanged.
 
 ## Item 3: Add volume + voice-speed sliders to Settings
-Status: not-started
+Status: done
+Findings: TTS sidecar already supported speed (self.speed from ARIA_TTS_SPEED) but
+  only applied it for Kokoro — Piper's _emit_piper ignored it. No runtime speed
+  control existed (env read only at spawn). No volume control existed; the renderer
+  TTS graph was source -> analyser -> destination with no master gain.
+Fix:
+  - src/main/config.ts: added tts.speed (default 1.0) and audio.volume (default 1.0).
+  - sidecars/tts/main.py: new on_control 'set_speed' (clamped 0.5..2.0, atomic float
+    assign, applies to next utterance, no reload); _emit_piper now passes
+    SynthesisConfig(length_scale=1/speed) (Piper's inverse-of-speed knob) — at speed
+    1.0 syn_config=None, byte-for-byte identical to before.
+  - src/main/index.ts: refreshSidecarEnv sets ARIA_TTS_SPEED; CONFIG_SET 'tts.speed'
+    sends a live set_speed control to the running sidecar (+ updates env for next
+    spawn). audio.volume is renderer-only (no main handling needed).
+  - src/renderer/app.js: master ttsGain node inserted AFTER the analyser (so the orb
+    still reacts to the speech envelope and volume isn't clobbered by stopPlayback's
+    source-level muting); setOutputVolume() rides it live mid-playback; volume loaded
+    at startup; both sliders loaded in loadSettings; live listeners (input=apply/label,
+    change=persist) independent of the Save button.
+  - src/renderer/index.html: two <input type="range"> rows in the TTS section + range
+    CSS. Speed 0.5..2.0 step 0.05; Volume 0..1 step 0.05; current value shown.
+Verification: `npm run build` clean. `npm run smoke:tts` PASS incl. a new live
+  set_speed guard (normal 249856 -> slow@0.6 445440 bytes; slower => more audio).
+  Direct end-to-end probe: normal=233472, slow(0.6)=394240, fast(1.6)=139264 bytes.
+  `npm run smoke:boot` OK (renderer loads the new sliders + gain node without error).
+  `npm run smoke:perf-panel` PASS (Settings panel + loadSettings exercise the new
+  rows). `npm run smoke:router` PASS. Piper speed path not runnable here (no Piper
+  voice model downloaded) but the default path is unchanged (syn_config=None) and the
+  SynthesisConfig(length_scale=...) API is confirmed in the installed piper.
+  Volume = renderer master gain, instant + mid-stream; persists across restart (config).
 
 ## Found but not in scope
 - The slow-reply filler, when it fires, marks `tts_first_audio` for the turn (filler
   audio counts as first audio in the perf panel). Pre-existing; only affects slow
   turns where the filler fires. Not changing the perf panel here.
+- smoke:e2e FAILS the spec §7 LOCAL latency budget (1300ms): measured 1366-1514ms,
+  driven by Kokoro TTS first chunk (~815-861ms) + STT (~550-650ms) on this loaded dev
+  box. PRE-EXISTING + environmental (documented prior): not a regression — none of the
+  3 items touch the STT/TTS-first-chunk synth path, and e2e never loads the renderer
+  nor hits set_speed. Confirmed it fails the same way without the Item-3 changes.
+- FIXED as closely-related cleanup (was failing smoke:perf-panel, pre-existing):
+  the v2.8.2 Piper-voice change to en_GB-alan-medium (hardware.ts presets) had not
+  been propagated to the Settings voice dropdown (still en_US-lessac-medium) or the
+  perf-panel test assertion, so the dropdown couldn't display the preset/default Piper
+  voice. Aligned both to en_GB-alan-medium. (Note: smoke:models still references
+  en_US-lessac-medium in its manifest unit test — left as-is; the model-manager
+  downloads any piper voice dynamically, so both voices work.)

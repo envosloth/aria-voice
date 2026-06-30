@@ -225,6 +225,12 @@ function setupIpcHandlers(): void {
       scheduleWakewordReload();
     } else if (key === 'tts.voice' || key === 'tts.engine') {
       markCustomIfManaged(); scheduleSidecarReload('tts');
+    } else if (key === 'tts.speed') {
+      // Speaking rate applies live via a control message — no model reload. If the
+      // sidecar isn't running yet, the refreshed ARIA_TTS_SPEED env covers its next
+      // spawn.
+      supervisor.sendToSidecar('tts', { type: 'set_speed', speed: Number(value) });
+      process.env.ARIA_TTS_SPEED = String(Number(value));
     } else if (key === 'stt.model' || key === 'stt.backend') {
       markCustomIfManaged(); scheduleSidecarReload('stt');
     } else if (key === 'ui.gpuCap') {
@@ -910,6 +916,7 @@ function applyConfigToEnv(): void {
   process.env.ARIA_STT_BACKEND = (config.get('stt.backend') as string) || profile.sttBackend;
   process.env.ARIA_TTS_ENGINE = (config.get('tts.engine') as string) || 'kokoro';
   process.env.ARIA_TTS_VOICE = (config.get('tts.voice') as string) || 'bm_george';
+  process.env.ARIA_TTS_SPEED = String((config.get('tts.speed') as number) ?? 1.0);
   process.env.ARIA_WAKEWORD_MODEL = (config.get('wakeword.phrase') as string) || 'hey_jarvis';
   const wwThreshold = config.get('wakeword.threshold');
   if (typeof wwThreshold === 'number') process.env.ARIA_WAKEWORD_THRESHOLD = String(wwThreshold);

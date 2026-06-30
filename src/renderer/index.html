@@ -395,6 +395,9 @@
     .settings-panel input:focus, .settings-panel select:focus {
       border-color: var(--accent-active);
     }
+    .settings-panel input[type="range"] {
+      width: 100%; margin-top: 6px; accent-color: var(--accent-active);
+    }
     .checkbox-label { display: flex !important; align-items: center; gap: 8px; }
     .checkbox-label input { width: auto !important; margin: 0 !important; }
 
@@ -628,10 +631,16 @@
             <option value="af_bella">Bella — expressive female, Kokoro (US)</option>
             <option value="am_michael">Michael — clear male, Kokoro (US)</option>
             <option value="bf_emma">Emma — British female, Kokoro</option>
-            <option value="en_US-lessac-medium">Piper — fast &amp; light (lowest latency, more robotic)</option>
+            <option value="en_GB-alan-medium">Piper — fast &amp; light (lowest latency, more robotic)</option>
           </select>
         </label>
         <p class="hint">Kokoro-82M neural voices are natural but heavier to first audio; the Piper voice is small &amp; very low-latency. Both run locally on CPU.</p>
+        <label>Speaking speed <span class="hint" id="cfg-tts-speed-val">1.00×</span>
+          <input type="range" id="cfg-tts-speed" min="0.5" max="2" step="0.05" value="1">
+        </label>
+        <label>Volume <span class="hint" id="cfg-volume-val">100%</span>
+          <input type="range" id="cfg-volume" min="0" max="1" step="0.05" value="1">
+        </label>
       </section>
 
       <section>

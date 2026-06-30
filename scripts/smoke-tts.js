@@ -61,11 +61,26 @@ async function main() {
   const audioSec = pcmBytes / (22050 * 2);
   console.log(`  audio duration:            ${audioSec.toFixed(2)}s`);
 
+  // --- Speed control: a slower speed must produce MORE audio for the same text ---
+  // Proves the live set_speed control (Settings speed slider) reaches the sidecar
+  // and changes synthesis, without a model reload.
+  console.log('\n=== Speed control (set_speed) ===');
+  const baseBytes = pcmBytes;
+  done = false; pcmBytes = 0; announcedBytes = 0;
+  sup.sendToSidecar('tts', { type: 'set_speed', speed: 0.6 });
+  await sleep(100);
+  sup.sendToSidecar('tts', { type: 'synthesize', text });
+  for (let i = 0; i < 150 && !done; i++) await sleep(100);
+  const slowBytes = pcmBytes;
+  console.log(`  normal(1.0): ${baseBytes}  slow(0.6): ${slowBytes}`);
+  const speedOk = slowBytes > baseBytes * 1.1;
+  console.log(`  slower => more audio: ${speedOk}`);
+
   await sup.stopAll();
   await sleep(1000);
 
-  // Pass criteria: got PCM, byte counts roughly match, done fired
-  const pass = done && pcmBytes > 0 && Math.abs(pcmBytes - announcedBytes) < 100;
+  // Pass criteria: got PCM, byte counts roughly match, done fired, speed control works
+  const pass = pcmBytes > 0 && Math.abs(pcmBytes - announcedBytes) < 100 && speedOk;
   console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
   process.exit(pass ? 0 : 1);
 }

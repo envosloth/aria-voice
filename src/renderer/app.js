@@ -35,6 +35,7 @@ function applyTheme(id) {
 // Apply the saved theme as early as possible to avoid a flash.
 (async () => {
   try { applyTheme((await aria.config.get('ui.theme')) || 'midnight'); } catch (e) {}
+  try { const v = await aria.config.get('audio.volume'); if (typeof v === 'number') setOutputVolume(v); } catch (e) {}
 })();
 
 const conversationEl = document.getElementById('conversation');
@@ -764,7 +765,13 @@ function getAudioCtx() {
       ttsAnalyser = audioCtx.createAnalyser();
       ttsAnalyser.fftSize = 1024;
       ttsAnalyser.smoothingTimeConstant = 0.6;
-      ttsAnalyser.connect(audioCtx.destination);
+      // Master output gain (the volume slider). After the analyser so the orb
+      // reacts to the speech envelope regardless of volume; nothing else touches
+      // this node, so it isn't clobbered by stopPlayback's source-level muting.
+      ttsGain = audioCtx.createGain();
+      ttsGain.gain.value = outputVolume;
+      ttsAnalyser.connect(ttsGain);
+      ttsGain.connect(audioCtx.destination);
       // The level poll is started on demand by startTtsLevelPoll() when audio is
       // actually scheduled (see onAudio), and stops itself when playback drains.
     } catch (e) {
@@ -795,6 +802,14 @@ function stopPlayback(cancelSidecar) {
 }
 
 let ttsAnalyser = null;
+let ttsGain = null;
+let outputVolume = 1.0; // TTS master volume 0..1 (audio.volume); applied to ttsGain
+// Set the TTS output volume live (slider). Takes effect mid-playback because it
+// rides the persistent master gain node, not the per-utterance sources.
+function setOutputVolume(v) {
+  outputVolume = Math.max(0, Math.min(1, Number(v)));
+  if (ttsGain) ttsGain.gain.value = outputVolume;
+}
 let ttsLevelRaf = null;
 const _analyserBuf = new Float32Array(1024);
 
@@ -973,11 +988,30 @@ const cfg = {
   sttModel: document.getElementById('cfg-stt-model'),
   sttBackend: document.getElementById('cfg-stt-backend'),
   ttsVoice: document.getElementById('cfg-tts-voice'),
+  ttsSpeed: document.getElementById('cfg-tts-speed'),
+  ttsSpeedVal: document.getElementById('cfg-tts-speed-val'),
+  volume: document.getElementById('cfg-volume'),
+  volumeVal: document.getElementById('cfg-volume-val'),
   wwEnabled: document.getElementById('cfg-ww-enabled'),
   wwPhrase: document.getElementById('cfg-ww-phrase'),
   theme: document.getElementById('cfg-theme'),
   perfPreset: document.getElementById('cfg-perf-preset'),
 };
+
+// Volume + speed are live sliders (not gated behind the Save button): volume rides
+// the master gain node so it changes mid-playback; speed persists to config, which
+// main forwards to the TTS sidecar as a set_speed control (next utterance, no
+// reload). input = live/label, change = persist.
+if (cfg.volume) {
+  const showVol = () => { if (cfg.volumeVal) cfg.volumeVal.textContent = Math.round(cfg.volume.value * 100) + '%'; };
+  cfg.volume.addEventListener('input', () => { setOutputVolume(parseFloat(cfg.volume.value)); showVol(); });
+  cfg.volume.addEventListener('change', () => { aria.config.set('audio.volume', parseFloat(cfg.volume.value)); });
+}
+if (cfg.ttsSpeed) {
+  const showSpeed = () => { if (cfg.ttsSpeedVal) cfg.ttsSpeedVal.textContent = parseFloat(cfg.ttsSpeed.value).toFixed(2) + '×'; };
+  cfg.ttsSpeed.addEventListener('input', showSpeed);
+  cfg.ttsSpeed.addEventListener('change', () => { aria.config.set('tts.speed', parseFloat(cfg.ttsSpeed.value)); });
+}
 
 // Live theme preview while the dropdown changes (persisted on Save).
 cfg.theme.addEventListener('change', () => applyTheme(cfg.theme.value));
@@ -1276,6 +1310,16 @@ async function loadSettings() {
   cfg.sttModel.value = (await aria.config.get('stt.model')) || 'small';
   cfg.sttBackend.value = (await aria.config.get('stt.backend')) || 'vulkan';
   cfg.ttsVoice.value = (await aria.config.get('tts.voice')) || 'bm_george';
+  if (cfg.ttsSpeed) {
+    const sp = await aria.config.get('tts.speed');
+    cfg.ttsSpeed.value = (typeof sp === 'number' ? sp : 1.0);
+    if (cfg.ttsSpeedVal) cfg.ttsSpeedVal.textContent = parseFloat(cfg.ttsSpeed.value).toFixed(2) + '×';
+  }
+  if (cfg.volume) {
+    const vol = await aria.config.get('audio.volume');
+    cfg.volume.value = (typeof vol === 'number' ? vol : 1.0);
+    if (cfg.volumeVal) cfg.volumeVal.textContent = Math.round(cfg.volume.value * 100) + '%';
+  }
   cfg.wwEnabled.checked = !!(await aria.config.get('wakeword.enabled'));
   cfg.wwPhrase.value = (await aria.config.get('wakeword.phrase')) || 'hey_jarvis';
   // Legacy/free-text values (e.g. "hey jarvis" with a space, or an unsupported

@@ -61,7 +61,7 @@ function main() {
       // Picking "power-saver" must REALLY change the STT model + voice (the core
       // P0 complaint: presets that did nothing).
       ['preset applied -> STT model = tiny.en', p.psSttModel === 'tiny.en'],
-      ['preset applied -> Piper voice', p.psTtsVoice === 'en_US-lessac-medium'],
+      ['preset applied -> Piper voice', p.psTtsVoice === 'en_GB-alan-medium'],
       ['preset dropdown reflects power-saver', p.psPreset === 'power-saver'],
       // Hand-editing a managed setting flips the preset to custom.
       ['manual STT edit -> preset becomes custom', p.customPreset === 'custom'],
