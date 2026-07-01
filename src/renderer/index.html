@@ -8,118 +8,145 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
-    /* Default theme: Midnight */
+    /* ── Themes: refined obsidian palettes ── */
     :root, html[data-theme="midnight"] {
-      --bg: #1a1a2e;
-      --surface: #16213e;
-      --text: #e0e0e0;
-      --text-muted: #8888aa;
-      --accent: #0f3460;
-      --accent-active: #e94560;
-      --accent-rgb: 233, 69, 96;
-      --success: #2ecc71;
-      --warning: #f39c12;
-      --error: #e74c3c;
+      --bg: #0a0a0f;
+      --surface: #121218;
+      --surface-hover: #1a1a22;
+      --border: rgba(255, 255, 255, 0.06);
+      --text: #f4f4f5;
+      --text-muted: #8b8b96;
+      --accent: #1a1a22;
+      --accent-active: #6366f1;
+      --accent-rgb: 99, 102, 241;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --error: #ef4444;
+      --glow: rgba(99, 102, 241, 0.12);
     }
     html[data-theme="nord"] {
-      --bg: #2e3440; --surface: #3b4252; --text: #eceff4; --text-muted: #8a93a5;
-      --accent: #434c5e; --accent-active: #88c0d0; --accent-rgb: 136, 192, 208;
+      --bg: #1e222a; --surface: #242933; --surface-hover: #2e3540;
+      --border: rgba(255, 255, 255, 0.06); --text: #eceff4; --text-muted: #9ba3b2;
+      --accent: #2e3540; --accent-active: #88c0d0; --accent-rgb: 136, 192, 208;
       --success: #a3be8c; --warning: #ebcb8b; --error: #bf616a;
+      --glow: rgba(136, 192, 208, 0.10);
     }
     html[data-theme="solarized"] {
-      --bg: #002b36; --surface: #073642; --text: #eee8d5; --text-muted: #93a1a1;
+      --bg: #001b24; --surface: #073642; --surface-hover: #0d4a5a;
+      --border: rgba(255, 255, 255, 0.06); --text: #eee8d5; --text-muted: #93a1a1;
       --accent: #094f5a; --accent-active: #2aa198; --accent-rgb: 42, 161, 152;
       --success: #859900; --warning: #b58900; --error: #dc322f;
+      --glow: rgba(42, 161, 152, 0.10);
     }
     html[data-theme="synthwave"] {
-      --bg: #1a1033; --surface: #261748; --text: #f5e6ff; --text-muted: #9d7bc4;
-      --accent: #3a1f6e; --accent-active: #ff4ecd; --accent-rgb: 255, 78, 205;
+      --bg: #14082a; --surface: #1e1138; --surface-hover: #2a1850;
+      --border: rgba(255, 255, 255, 0.07); --text: #f5e6ff; --text-muted: #9d7bc4;
+      --accent: #2a1850; --accent-active: #ff4ecd; --accent-rgb: 255, 78, 205;
       --success: #36f9c5; --warning: #ffcc66; --error: #ff5277;
+      --glow: rgba(255, 78, 205, 0.12);
     }
     html[data-theme="forest"] {
-      --bg: #14201a; --surface: #1d2e26; --text: #e3f0e7; --text-muted: #7fa08c;
+      --bg: #0f1814; --surface: #18261f; --surface-hover: #1f3528;
+      --border: rgba(255, 255, 255, 0.06); --text: #e3f0e7; --text-muted: #7fa08c;
       --accent: #1f4032; --accent-active: #4caf7d; --accent-rgb: 76, 175, 125;
       --success: #6fcf97; --warning: #e0b15b; --error: #d96c6c;
+      --glow: rgba(76, 175, 125, 0.10);
     }
     html[data-theme="light"] {
-      --bg: #f4f5f9; --surface: #ffffff; --text: #1c1f26; --text-muted: #6b7280;
-      --accent: #e2e8f0; --accent-active: #e94560; --accent-rgb: 233, 69, 96;
+      --bg: #f4f5f9; --surface: #ffffff; --surface-hover: #f0f1f5;
+      --border: rgba(0, 0, 0, 0.08); --text: #1c1f26; --text-muted: #6b7280;
+      --accent: #e2e8f0; --accent-active: #6366f1; --accent-rgb: 99, 102, 241;
       --success: #16a34a; --warning: #d97706; --error: #dc2626;
+      --glow: rgba(99, 102, 241, 0.08);
     }
 
+    /* ── Global typography & base ── */
     body {
-      font-family: system-ui, -apple-system, sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
       background: var(--bg);
       color: var(--text);
       height: 100vh;
       display: flex;
       flex-direction: column;
+      letter-spacing: -0.01em;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      overflow: hidden;
     }
 
-    /* Reactive mesh-orb background canvas, behind all UI */
+    /* ── Custom scrollbars ── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 999px;
+    }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.18); }
+
+    /* ── Orb canvas (unchanged sizing) ── */
     #orb-canvas {
       position: fixed;
       inset: 0;
-      /* Size to the inset:0 box, NOT 100vw/100vh. 100vw is scrollbar-INclusive, so
-         it can overhang the viewport's right edge and make the canvas's right strip
-         repaint inconsistently (a contributor to the fullscreen right-side jitter).
-         inset:0 + 100% fills exactly the visible viewport box. */
       width: 100%;
       height: 100%;
       z-index: 0;
       pointer-events: none;
     }
     header, main, .input-area { position: relative; z-index: 1; }
-    /* Let the orb show through the conversation area */
     main { background: transparent; }
 
+    /* ── Glassmorphic header ── */
     header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 20px;
-      background: color-mix(in srgb, var(--surface) 70%, transparent);
-      backdrop-filter: blur(16px) saturate(1.3);
-      -webkit-backdrop-filter: blur(16px) saturate(1.3);
-      border-bottom: 1px solid rgba(255,255,255,0.07);
+      padding: 14px 24px;
+      background: color-mix(in srgb, var(--surface) 72%, transparent);
+      backdrop-filter: blur(20px) saturate(1.4);
+      -webkit-backdrop-filter: blur(20px) saturate(1.4);
+      border-bottom: 1px solid var(--border);
       -webkit-app-region: drag;
     }
 
-    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand { display: flex; align-items: center; gap: 12px; }
     .brand-mark { flex: none; display: block; }
     .brand-name {
-      font-size: 16px; font-weight: 700; letter-spacing: 0.22em;
-      background: linear-gradient(90deg, var(--text), var(--accent-active));
+      font-size: 15px; font-weight: 700; letter-spacing: 0.24em;
+      background: linear-gradient(135deg, var(--text), var(--accent-active));
       -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
     }
 
     .status-bar {
       display: flex;
-      gap: 12px;
+      gap: 14px;
+      align-items: center;
       -webkit-app-region: no-drag;
     }
 
+    /* ── Status dots with breathing glow ── */
     .status-dot {
-      width: 9px;
-      height: 9px;
+      width: 8px;
+      height: 8px;
       border-radius: 50%;
       background: var(--text-muted);
-      transition: background 0.2s ease, box-shadow 0.2s ease;
+      transition: background 0.3s ease, box-shadow 0.3s ease;
     }
-    /* "Online" must read at a glance — a brighter fill plus a coloured halo/ring,
-       far more visible than the old flat 8px dot. Uses the theme --success token so
-       it stays correct across all themes. */
     .status-dot.active {
       background: var(--success);
-      box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 35%, transparent),
-                  0 0 9px 1px var(--success);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 30%, transparent),
+                  0 0 10px 1px var(--success);
+      animation: breathe 2.5s ease-in-out infinite;
     }
     .status-dot.error {
       background: var(--error);
-      box-shadow: 0 0 7px 0 var(--error);
+      box-shadow: 0 0 8px 0 var(--error);
     }
     .status-dot.loading { background: var(--warning); animation: pulse 1.5s infinite; }
 
+    @keyframes breathe {
+      0%, 100% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 30%, transparent), 0 0 8px 1px var(--success); }
+      50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 20%, transparent), 0 0 14px 2px var(--success); }
+    }
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.4; }
@@ -129,15 +156,18 @@
       display: flex;
       align-items: center;
       gap: 6px;
-      font-size: 12px;
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.03em;
       color: var(--text-muted);
     }
 
+    /* ── Conversation area ── */
     main {
       flex: 1;
       display: flex;
       flex-direction: column;
-      padding: 20px;
+      padding: 20px 24px;
       overflow-y: auto;
     }
 
@@ -145,123 +175,158 @@
       flex: 1;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 14px;
       overflow-y: auto;
       padding-bottom: 20px;
+      scroll-behavior: smooth;
     }
 
+    /* ── Refined message bubbles ── */
     .message {
-      max-width: 80%;
-      padding: 12px 16px;
-      border-radius: 12px;
+      max-width: 82%;
+      padding: 13px 18px;
+      border-radius: 16px;
       font-size: 14px;
-      line-height: 1.5;
+      line-height: 1.55;
       position: relative;
+      transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
     }
     .message.user {
       align-self: flex-end;
-      background: var(--accent);
+      background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent-active) 40%, var(--accent)));
+      border: 1px solid color-mix(in srgb, var(--accent-active) 25%, transparent);
+      border-bottom-right-radius: 5px;
+      color: var(--text);
     }
     .message.assistant {
       align-self: flex-start;
-      background: var(--surface);
+      background: color-mix(in srgb, var(--surface) 80%, transparent);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid var(--border);
+      border-left: 2px solid var(--accent-active);
+      border-bottom-left-radius: 5px;
     }
-    /* Timestamp: hidden by default, revealed only while hovering THIS message
-       (scoped via .message:hover — hovering one bubble never reveals others).
-       Shown in the empty gutter beside the bubble so it never overlaps text.
-       Fed from data-time via a pseudo-element so it stays out of textContent. */
+    .message.assistant:hover {
+      background: color-mix(in srgb, var(--surface-hover) 80%, transparent);
+    }
+    /* Timestamp hover reveal */
     .message::after {
       content: attr(data-time);
       position: absolute;
       bottom: 4px;
-      font-size: 11px;
+      font-size: 10px;
+      font-weight: 500;
       color: var(--text-muted);
       white-space: nowrap;
       opacity: 0;
-      transition: opacity 0.12s ease;
+      transition: opacity 0.15s ease;
       pointer-events: none;
     }
     .message.user::after { right: 100%; margin-right: 8px; }
     .message.assistant::after { left: 100%; margin-left: 8px; }
     .message:hover::after { opacity: 1; }
 
+    /* ── Floating glass input bar ── */
     .input-area {
       display: flex;
       gap: 10px;
-      padding: 16px 20px;
-      background: color-mix(in srgb, var(--surface) 70%, transparent);
-      backdrop-filter: blur(16px) saturate(1.3);
-      -webkit-backdrop-filter: blur(16px) saturate(1.3);
-      border-top: 1px solid rgba(255,255,255,0.07);
+      padding: 12px 16px;
+      background: color-mix(in srgb, var(--surface) 75%, transparent);
+      backdrop-filter: blur(20px) saturate(1.4);
+      -webkit-backdrop-filter: blur(20px) saturate(1.4);
+      border-top: 1px solid var(--border);
     }
 
     #text-input {
       flex: 1;
-      padding: 12px 18px;
-      background: color-mix(in srgb, var(--bg) 60%, transparent);
-      border: 1px solid rgba(255,255,255,0.1);
+      padding: 12px 20px;
+      background: color-mix(in srgb, var(--bg) 50%, transparent);
+      border: 1px solid var(--border);
       border-radius: 999px;
       color: var(--text);
       font-size: 14px;
+      font-family: inherit;
       outline: none;
-      transition: border-color 0.2s, box-shadow 0.2s;
+      transition: border-color 0.25s ease, box-shadow 0.25s ease, background 0.25s ease;
     }
     #text-input::placeholder { color: var(--text-muted); }
     #text-input:focus {
-      border-color: var(--accent-active);
-      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-active) 22%, transparent);
+      border-color: color-mix(in srgb, var(--accent-active) 50%, transparent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-active) 15%, transparent),
+                  0 0 20px -5px var(--glow);
+      background: color-mix(in srgb, var(--bg) 40%, transparent);
     }
 
+    /* ── Circular icon buttons ── */
     #mic-btn {
-      width: 44px;
-      height: 44px;
+      width: 42px;
+      height: 42px;
       border-radius: 50%;
-      border: none;
-      background: var(--accent);
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--accent) 60%, transparent);
       color: var(--text);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background 0.2s;
+      flex-shrink: 0;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
-    #mic-btn:hover { background: var(--accent-active); }
-    #mic-btn.listening { background: var(--accent-active); animation: pulse 1s infinite; }
+    #mic-btn:hover {
+      background: var(--accent-active);
+      border-color: var(--accent-active);
+      transform: scale(1.05);
+    }
+    #mic-btn.listening {
+      background: var(--accent-active);
+      border-color: var(--accent-active);
+      animation: pulse 1s infinite;
+      box-shadow: 0 0 16px -2px var(--glow);
+    }
 
     #screen-btn {
-      width: 44px;
-      height: 44px;
+      width: 42px;
+      height: 42px;
       border-radius: 50%;
-      border: 1px solid var(--border, rgba(255,255,255,0.12));
+      border: 1px solid var(--border);
       background: transparent;
       color: var(--text-muted);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background 0.2s, color 0.2s, border-color 0.2s;
       flex-shrink: 0;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
-    #screen-btn:hover { color: var(--text); border-color: var(--accent); }
-    #screen-btn.active {
-      background: var(--accent);
+    #screen-btn:hover {
       color: var(--text);
-      border-color: var(--accent);
+      border-color: color-mix(in srgb, var(--accent-active) 40%, transparent);
+      background: color-mix(in srgb, var(--accent-active) 8%, transparent);
+    }
+    #screen-btn.active {
+      background: color-mix(in srgb, var(--accent-active) 20%, transparent);
+      color: var(--accent-active);
+      border-color: var(--accent-active);
       animation: pulse 1.6s infinite;
     }
 
     .partial-text {
       font-style: italic;
       color: var(--text-muted);
-      padding: 8px 16px;
+      padding: 6px 16px;
       font-size: 13px;
+      opacity: 0.8;
     }
 
+    /* ── Error banner ── */
     .error-banner {
       padding: 10px 16px;
-      background: rgba(231, 76, 60, 0.15);
-      border: 1px solid var(--error);
-      border-radius: 8px;
+      background: color-mix(in srgb, var(--error) 12%, transparent);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid color-mix(in srgb, var(--error) 40%, transparent);
+      border-radius: 10px;
       color: var(--error);
       font-size: 13px;
       margin-bottom: 12px;
@@ -269,76 +334,82 @@
     }
     .error-banner.visible { display: block; }
 
-    /* Update banner (top of window) — shown when a newer release is available. */
+    /* ── Update banner ── */
     .update-banner {
       display: none; align-items: center; gap: 12px; flex-wrap: wrap;
       padding: 10px 16px; margin-bottom: 12px;
-      background: rgba(42, 208, 102, 0.13);
-      border: 1px solid var(--success); border-radius: 8px;
+      background: color-mix(in srgb, var(--success) 10%, transparent);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid color-mix(in srgb, var(--success) 35%, transparent);
+      border-radius: 10px;
       color: var(--text); font-size: 13px;
     }
     .update-banner.visible { display: flex; }
     .update-banner .grow { flex: 1; }
     .update-banner button {
       -webkit-app-region: no-drag; cursor: pointer; font-size: 12px;
-      padding: 6px 14px; border-radius: 6px; border: none;
+      padding: 6px 14px; border-radius: 8px; border: none;
       background: var(--success); color: #04210f; font-weight: 600;
+      transition: opacity 0.2s ease;
     }
+    .update-banner button:hover { opacity: 0.88; }
     .update-banner button.ghost { background: transparent; border: 1px solid var(--success); color: var(--success); }
     .update-banner .dismiss { background: transparent; border: none; color: var(--text-muted); padding: 6px 8px; }
-    /* Download progress: a slim bar on its own row so the user can see the update
-       actually moving (determinate via percent) instead of wondering if it hung.
-       Drops to a full-width second row via flex-basis 100% + the banner's wrap. */
+    .update-banner .dismiss:hover { color: var(--text); opacity: 1; }
     .update-progress {
-      flex: 1 0 100%; width: 100%; height: 6px; margin: 2px 0 0 0;
+      flex: 1 0 100%; width: 100%; height: 4px; margin: 2px 0 0 0;
       border: none; border-radius: 999px; overflow: hidden;
       -webkit-appearance: none; appearance: none;
-      background: rgba(255,255,255,0.12);
+      background: rgba(255,255,255,0.08);
     }
-    .update-progress::-webkit-progress-bar { background: rgba(255,255,255,0.12); border-radius: 999px; }
+    .update-progress::-webkit-progress-bar { background: rgba(255,255,255,0.08); border-radius: 999px; }
     .update-progress::-webkit-progress-value { background: var(--success); border-radius: 999px; transition: width 0.2s ease; }
-    /* Indeterminate (checking / installing — no percent): an animated sweep so the
-       bar still signals "working". A value-less <progress> renders no value part,
-       so we animate the bar background instead. */
     .update-progress.indeterminate {
       background:
         linear-gradient(90deg, transparent 0%, var(--success) 50%, transparent 100%)
-        rgba(255,255,255,0.12);
+        rgba(255,255,255,0.08);
       background-size: 38% 100%; background-repeat: no-repeat;
       animation: update-indet 1.1s linear infinite;
     }
     @keyframes update-indet { 0% { background-position: -40% 0; } 100% { background-position: 140% 0; } }
 
-    /* Settings → Updates rows */
+    /* ── Settings → Updates rows ── */
     .update-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
     .update-row .ver { font-variant-numeric: tabular-nums; color: var(--text); }
     #update-status { font-size: 12px; color: var(--text-muted); }
     #update-status.warn { color: var(--warning); }
     #update-status.ok { color: var(--success); }
     .ghost-btn, #update-action-btn {
-      cursor: pointer; font-size: 13px; padding: 7px 14px; border-radius: 6px;
-      border: 1px solid rgba(255,255,255,0.15); background: var(--bg); color: var(--text);
+      cursor: pointer; font-size: 13px; padding: 7px 14px; border-radius: 8px;
+      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+      transition: border-color 0.2s ease, background 0.2s ease;
     }
-    .ghost-btn:hover, #update-action-btn:hover { border-color: var(--accent-active); }
+    .ghost-btn:hover, #update-action-btn:hover { border-color: color-mix(in srgb, var(--accent-active) 50%, transparent); }
     #update-action-btn { background: var(--success); color: #04210f; border: none; font-weight: 600; }
 
+    /* ── Settings button ── */
     #settings-btn {
       -webkit-app-region: no-drag;
       background: none;
       border: none;
       color: var(--text-muted);
       cursor: pointer;
-      padding: 4px;
+      padding: 6px;
       display: flex;
       align-items: center;
-      border-radius: 6px;
+      border-radius: 8px;
+      transition: color 0.2s ease, background 0.2s ease;
     }
-    #settings-btn:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+    #settings-btn:hover { color: var(--text); background: rgba(255,255,255,0.06); }
 
+    /* ── Settings overlay: glass modal ── */
     .settings-overlay {
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.6);
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
       display: none;
       align-items: center;
       justify-content: center;
@@ -347,14 +418,17 @@
     .settings-overlay.visible { display: flex; }
 
     .settings-panel {
-      background: var(--surface);
+      background: color-mix(in srgb, var(--surface) 92%, transparent);
+      backdrop-filter: blur(24px) saturate(1.3);
+      -webkit-backdrop-filter: blur(24px) saturate(1.3);
       width: 90%;
       max-width: 520px;
       max-height: 85vh;
       overflow-y: auto;
-      border-radius: 12px;
+      border-radius: 16px;
+      border: 1px solid var(--border);
       padding: 0 24px 24px;
-      box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+      box-shadow: 0 20px 60px -15px rgba(0,0,0,0.7), 0 0 0 1px var(--border);
     }
 
     .settings-header {
@@ -363,22 +437,26 @@
       justify-content: space-between;
       position: sticky;
       top: 0;
-      background: var(--surface);
-      padding: 20px 0 12px;
-      border-bottom: 1px solid rgba(255,255,255,0.08);
+      background: color-mix(in srgb, var(--surface) 95%, transparent);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      padding: 20px 0 14px;
+      border-bottom: 1px solid var(--border);
       margin-bottom: 16px;
+      z-index: 10;
     }
-    .settings-header h2 { font-size: 18px; }
+    .settings-header h2 { font-size: 17px; font-weight: 600; letter-spacing: -0.02em; }
     #settings-close {
       background: none; border: none; color: var(--text-muted);
-      font-size: 28px; cursor: pointer; line-height: 1;
+      font-size: 24px; cursor: pointer; line-height: 1;
+      transition: color 0.2s ease;
     }
     #settings-close:hover { color: var(--text); }
 
-    .settings-panel section { margin-bottom: 20px; }
+    .settings-panel section { margin-bottom: 22px; }
     .settings-panel h3 {
-      font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em;
-      color: var(--text-muted); margin-bottom: 10px;
+      font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--text-muted); margin-bottom: 12px;
     }
     .settings-panel label {
       display: block; font-size: 13px; margin-bottom: 12px; color: var(--text);
@@ -388,12 +466,15 @@
     .settings-panel input[type="text"],
     .settings-panel input[type="password"],
     .settings-panel select {
-      width: 100%; margin-top: 4px; padding: 8px 12px;
-      background: var(--bg); border: 1px solid rgba(255,255,255,0.1);
-      border-radius: 6px; color: var(--text); font-size: 14px; outline: none;
+      width: 100%; margin-top: 5px; padding: 9px 14px;
+      background: color-mix(in srgb, var(--bg) 60%, transparent);
+      border: 1px solid var(--border); border-radius: 10px;
+      color: var(--text); font-size: 14px; font-family: inherit; outline: none;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
     .settings-panel input:focus, .settings-panel select:focus {
-      border-color: var(--accent-active);
+      border-color: color-mix(in srgb, var(--accent-active) 50%, transparent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-active) 12%, transparent);
     }
     .settings-panel input[type="range"] {
       width: 100%; margin-top: 6px; accent-color: var(--accent-active);
@@ -403,57 +484,60 @@
 
     .settings-warning {
       display: none; padding: 10px 14px; margin-bottom: 16px;
-      background: rgba(243, 156, 18, 0.15); border: 1px solid var(--warning);
-      border-radius: 8px; color: var(--warning); font-size: 12px;
+      background: color-mix(in srgb, var(--warning) 12%, transparent);
+      border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+      border-radius: 10px; color: var(--warning); font-size: 12px;
     }
     .settings-warning.visible { display: block; }
 
     .settings-footer { display: flex; align-items: center; gap: 12px; }
     button.primary {
       background: var(--accent-active); color: white; border: none;
-      padding: 10px 24px; border-radius: 8px; cursor: pointer; font-size: 14px;
+      padding: 10px 28px; border-radius: 10px; cursor: pointer; font-size: 14px;
+      font-weight: 600; letter-spacing: -0.01em;
+      transition: opacity 0.2s ease, transform 0.15s ease;
     }
-    button.primary:hover { opacity: 0.9; }
+    button.primary:hover { opacity: 0.9; transform: translateY(-1px); }
+    button.primary:active { transform: translateY(0); }
     #settings-saved-msg { color: var(--success); font-size: 13px; }
 
-    /* Performance panel: per-stage latency readout + detected hardware. */
+    /* ── Performance panel ── */
     .perf-latency {
       display: flex; flex-direction: column; gap: 1px;
-      background: rgba(255,255,255,0.04); border-radius: 8px;
+      background: var(--border); border-radius: 10px;
       overflow: hidden; margin-bottom: 12px;
     }
     .perf-row {
       display: flex; justify-content: space-between; align-items: baseline;
-      padding: 8px 12px; font-size: 13px; background: var(--bg);
+      padding: 9px 14px; font-size: 13px; background: var(--bg);
     }
     .perf-row span { color: var(--text-muted); }
     .perf-row b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
-    /* The headline "time to first audio" is the number that matters most. */
-    .perf-row.perf-headline { padding: 11px 12px; background: rgba(42,208,102,0.10); }
+    .perf-row.perf-headline { padding: 12px 14px; background: color-mix(in srgb, var(--success) 8%, var(--bg)); }
     .perf-row.perf-headline span { color: var(--text); font-weight: 600; }
     .perf-row.perf-headline b { color: var(--success); font-size: 16px; }
-    /* Its breakdown rows, slightly indented + dimmer. */
-    .perf-row.perf-sub { padding-top: 6px; padding-bottom: 6px; font-size: 12px; }
+    .perf-row.perf-sub { padding-top: 7px; padding-bottom: 7px; font-size: 12px; }
     .perf-row.perf-sub span { padding-left: 6px; }
     .perf-row b.warn { color: var(--warning); }
     .perf-hw {
       font-size: 11px; color: var(--text-muted); line-height: 1.6;
-      padding: 10px 12px; background: rgba(255,255,255,0.03); border-radius: 8px;
+      padding: 12px 14px; background: color-mix(in srgb, var(--bg) 50%, transparent);
+      border: 1px solid var(--border); border-radius: 10px;
       white-space: pre-line;
     }
     .perf-hw .tier { color: var(--text); font-weight: 600; text-transform: capitalize; }
 
+    /* ── Route badges ── */
     .route-badge {
-      display: inline-block; font-size: 10px; font-weight: 600;
-      text-transform: uppercase; letter-spacing: 0.04em;
-      padding: 2px 7px; border-radius: 5px; margin-right: 8px;
+      display: inline-block; font-size: 9px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      padding: 3px 8px; border-radius: 6px; margin-right: 8px;
       vertical-align: middle; color: #fff;
     }
     .route-llm { background: var(--accent); }
     .route-harness { background: var(--accent-active); }
 
-    /* Tool-usage row: shows which tools the agent harness invoked, above the
-       reply text. */
+    /* ── Tool chips ── */
     .msg-tools {
       display: flex; flex-wrap: wrap; gap: 6px;
       margin: 2px 0 8px;
@@ -461,47 +545,60 @@
     .tool-chip {
       display: inline-flex; align-items: center; gap: 5px;
       font-size: 11px; font-weight: 600; line-height: 1;
-      padding: 4px 8px; border-radius: 6px;
-      background: rgba(var(--accent-rgb), 0.16);
-      border: 1px solid rgba(var(--accent-rgb), 0.4);
+      padding: 5px 9px; border-radius: 7px;
+      background: color-mix(in srgb, var(--accent-active) 14%, transparent);
+      border: 1px solid color-mix(in srgb, var(--accent-active) 30%, transparent);
       color: var(--text);
     }
     .tool-chip-icon { font-size: 11px; filter: grayscale(0.2); }
-    .tool-chip-count { opacity: 0.7; font-weight: 700; }
+    .tool-chip-count { opacity: 0.6; font-weight: 700; }
 
-    /* Onboarding */
+    /* ── Onboarding ── */
     .onboard-overlay {
       position: fixed; inset: 0; background: var(--bg);
+      backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
       display: none; align-items: center; justify-content: center; z-index: 200;
     }
     .onboard-overlay.visible { display: flex; }
     .onboard-panel {
-      width: 90%; max-width: 460px; background: var(--surface);
-      border-radius: 16px; padding: 32px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+      width: 90%; max-width: 460px;
+      background: color-mix(in srgb, var(--surface) 95%, transparent);
+      backdrop-filter: blur(24px) saturate(1.3);
+      -webkit-backdrop-filter: blur(24px) saturate(1.3);
+      border: 1px solid var(--border);
+      border-radius: 20px; padding: 36px;
+      box-shadow: 0 24px 70px -20px rgba(0,0,0,0.7);
     }
-    .onboard-steps { display: flex; gap: 8px; justify-content: center; margin-bottom: 24px; }
+    .onboard-steps { display: flex; gap: 8px; justify-content: center; margin-bottom: 28px; }
     .onboard-steps .dot {
-      width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.15);
+      width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,0.12);
       transition: background 0.3s, width 0.3s;
     }
-    .onboard-steps .dot.active { background: var(--accent-active); width: 22px; border-radius: 4px; }
+    .onboard-steps .dot.active { background: var(--accent-active); width: 24px; border-radius: 4px; }
     .onboard-steps .dot.done { background: var(--success); }
     .onboard-step { text-align: center; min-height: 220px; }
-    .onboard-step h2 { font-size: 22px; margin-bottom: 12px; }
+    .onboard-step h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 12px; }
     .onboard-step p { color: var(--text-muted); font-size: 14px; line-height: 1.6; margin-bottom: 18px; }
     .onboard-step label { display: block; text-align: left; font-size: 13px; margin-bottom: 14px; }
     .onboard-step input, .onboard-step select {
-      width: 100%; margin-top: 5px; padding: 10px 12px; background: var(--bg);
-      border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
-      color: var(--text); font-size: 14px; outline: none;
+      width: 100%; margin-top: 5px; padding: 10px 14px;
+      background: color-mix(in srgb, var(--bg) 60%, transparent);
+      border: 1px solid var(--border); border-radius: 10px;
+      color: var(--text); font-size: 14px; font-family: inherit; outline: none;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
     }
-    .onboard-step input:focus, .onboard-step select:focus { border-color: var(--accent-active); }
-    .onboard-logo { font-size: 56px; margin-bottom: 8px; }
+    .onboard-step input:focus, .onboard-step select:focus {
+      border-color: color-mix(in srgb, var(--accent-active) 50%, transparent);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-active) 12%, transparent);
+    }
+    .onboard-logo { font-size: 52px; margin-bottom: 8px; }
     .onboard-secondary {
-      background: var(--accent); color: var(--text); border: none;
-      padding: 9px 18px; border-radius: 8px; cursor: pointer; font-size: 13px;
+      background: var(--accent); color: var(--text); border: 1px solid var(--border);
+      padding: 9px 18px; border-radius: 10px; cursor: pointer; font-size: 13px;
+      font-weight: 500;
+      transition: background 0.2s ease, border-color 0.2s ease;
     }
-    .onboard-secondary:hover { background: var(--accent-active); }
+    .onboard-secondary:hover { background: var(--surface-hover); border-color: color-mix(in srgb, var(--accent-active) 40%, transparent); }
     .onboard-secondary:disabled { opacity: 0.5; cursor: default; }
     #onb-test-result, #onb-mic-result { margin-left: 10px; font-size: 13px; }
     .ok-msg { color: var(--success); }
@@ -512,6 +609,7 @@
     .onboard-ghost {
       background: none; border: none; color: var(--text-muted);
       cursor: pointer; font-size: 13px; padding: 8px;
+      transition: color 0.2s ease;
     }
     .onboard-ghost:hover { color: var(--text); }
     #onb-skip { margin-left: auto; }
@@ -568,7 +666,7 @@
             <option value="harness">Always the agent harness</option>
           </select>
         </label>
-        <p class="hint" style="margin:-6px 0 0;">Auto sends coding/tool/file requests to the agent harness and everyday chat to the LLM. Say “use the agent…” to force the harness.</p>
+        <p class="hint" style="margin:-6px 0 0;">Auto sends coding/tool/file requests to the agent harness and everyday chat to the LLM. Say "use the agent…" to force the harness.</p>
       </section>
 
       <section>
