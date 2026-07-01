@@ -104,13 +104,23 @@ check('san-keeps-unicode-words', S('café déjà vu') === 'café déjà vu', `go
 
 // 12. Symbol-name phrase strip: the LLM sometimes explains a stray character
 //     ("a circumflex", "called a caret", "the tilde means"). The voice should
-//     not read those explanations. The strip is intentionally NARROW — common
-//     English ("a ring", "a stroke", "pipe down", "the hash browns", "a grave
-//     concern", "an acute pain") MUST be preserved.
+//     not read those explanations. The strip has TWO layers:
+//       (a) ALWAYS-STRIP — words that NEVER appear in normal English (the
+//           "A circumflex" reported bug). Unconditional strip.
+//       (b) CONTEXT-STRIP — words that are common English but also have a
+//           symbol meaning. Only stripped in definitional context.
 check('san-defn-circumflex', !/\bcircumflex\b/i.test(S('that symbol, called a circumflex, marks a vowel')), `got "${S('that symbol, called a circumflex, marks a vowel')}"`);
 check('san-defn-caret', !/\bcaret\b/i.test(S('the symbol, known as caret, points up')), `got "${S('the symbol, known as caret, points up')}"`);
 check('san-defn-tilde', !/\btilde\b/i.test(S('a tilde means "approximately"')), `got "${S('a tilde means \"approximately\"')}"`);
 check('san-defn-backtick-caret', !/\bcaret\b/i.test(S('use `(caret)` for the cursor')), `got "${S('use \`(caret)\` for the cursor')}"`);
+// Layer (a): always-strip — "A circumflex" is THE reported bug. These words
+// are NEVER in normal English, so unconditional stripping is safe.
+check('san-always-circumflex', !/\bcircumflex\b/i.test(S('a circumflex is the answer')), `got "${S('a circumflex is the answer')}"`);
+check('san-always-the-circumflex', !/\bcircumflex\b/i.test(S('the circumflex is above')), `got "${S('the circumflex is above')}"`);
+check('san-always-umlaut', !/\bumlaut\b/i.test(S('an umlaut appears on the vowel')), `got "${S('an umlaut appears on the vowel')}"`);
+check('san-always-cedilla', !/\bcedilla\b/i.test(S('the cedilla is under the c')), `got "${S('the cedilla is under the c')}"`);
+check('san-always-macron', !/\bmacron\b/i.test(S('a macron is over the letter')), `got "${S('a macron is over the letter')}"`);
+check('san-always-dieresis', !/\bdiaeresis\b/i.test(S('a diaeresis goes on the second vowel')), `got "${S('a diaeresis goes on the second vowel')}"`);
 // Negative cases: common English must survive.
 check('san-keeps-ring', S('give me a ring when you arrive') === 'give me a ring when you arrive', `got "${S('give me a ring when you arrive')}"`);
 check('san-keeps-stroke', S('he had a stroke yesterday') === 'he had a stroke yesterday', `got "${S('he had a stroke yesterday')}"`);
@@ -119,6 +129,10 @@ check('san-keeps-hash-browns', S('the hash browns are ready') === 'the hash brow
 check('san-keeps-grave-concern', S('I have grave concerns') === 'I have grave concerns', `got "${S('I have grave concerns')}"`);
 check('san-keeps-acute-pain', S('an acute pain in her side') === 'an acute pain in her side', `got "${S('an acute pain in her side')}"`);
 check('san-keeps-ring-fire', S('the ring of fire is beautiful') === 'the ring of fire is beautiful', `got "${S('the ring of fire is beautiful')}"`);
+// Context-stripped words in NON-definitional use must survive (the LLM might
+// genuinely use "caret" in a sentence without it being a definition). Here
+// "caret" is part of the user's actual ask and should be kept.
+check('san-keeps-caret-standalone', /\bcaret\b/i.test(S('put the caret at the end of the line')), `got "${S('put the caret at the end of the line')}"`);
 
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

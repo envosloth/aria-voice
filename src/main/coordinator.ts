@@ -205,7 +205,33 @@ export async function coordinate(
     // events today) — a real refactor. Add it if multi-turn agent tasks still
     // drift after the prompt split.
     const systemContent = target === 'harness' ? HARNESS_SYSTEM_PROMPT : LLM_SYSTEM_PROMPT;
+    // The "voice output" hint is appended to the LAST user message because
+    // LLMs reliably follow user-message instructions but inconsistently
+    // follow system-prompt rules. This is a small per-turn nudge that
+    // re-emphasises the no-symbol-names rule right where the model is
+    // generating the answer — much more effective than putting it only
+    // in the system prompt. Cheap (~30 tokens per turn) and strip-safe
+    // (we remove the hint from the final TTS text by anchoring on the
+    // exact prefix).
+    const voiceOutputHint =
+      '\n\n[Voice output] Your reply is read aloud by a TTS engine. Use natural ' +
+      'spoken English. Do NOT name symbols by their linguistic name ' +
+      '("a circumflex", "called a caret", "the tilde", "the asterisk") — ' +
+      'describe intent instead. Do NOT read out URLs, file paths, or ' +
+      'code. Do NOT include emoji, Markdown emphasis, bullet markers, ' +
+      'or fenced code blocks. Be concise.';
     const messages: ChatMessage[] = [{ role: 'system', content: systemContent }, ...history];
+    // Attach the voice hint to the last user turn (the one being answered
+    // this call) so the nudge is fresh. We don't modify the shared history
+    // — the hint is per-request only.
+    if (messages.length > 0) {
+      const lastIdx = messages.length - 1;
+      const last = messages[lastIdx];
+      if (last && last.role === 'user') {
+        const prev = typeof last.content === 'string' ? last.content : '';
+        messages[lastIdx] = { role: 'user', content: prev + voiceOutputHint };
+      }
+    }
     // Attach the screen-share frame to the final (current) user message as an
     // OpenAI-vision content array so the agent can see the desktop.
     if (withImage && opts.image) {

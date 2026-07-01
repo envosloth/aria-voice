@@ -95,6 +95,14 @@ async function main() {
   checks.push(['A: direct LLM was NOT called for a tool-requiring prompt (routed to harness)', recA.llmRequests.length === 0]);
   checks.push(['A: the agent harness handled it', recA.harnessTasks.length >= 1]);
   checks.push(['A: harness reply reaches the user woven naturally', /24°C|sunny/i.test(finalA)]);
+  // Voice-output hint: the per-turn user-message nudge must be present in
+  // the harness task. This is the most reliable way to prevent the
+  // "A circumflex" TTS bug — LLMs follow user-message instructions more
+  // reliably than system-prompt rules. The hint includes the literal
+  // "[Voice output]" tag so the test can verify it landed.
+  const harnessTaskText = (recA.harnessTasks[0] || '').toLowerCase();
+  checks.push(['A: voice-output hint appended to user message', harnessTaskText.includes('[voice output]')]);
+  checks.push(['A: voice-output hint mentions circumflex rule', harnessTaskText.includes('circumflex')]);
 
   // ---- Run B: same prompt forced to the direct LLM (mode=llm) ----
   const recB = { llmRequests: [], harnessTasks: [] };

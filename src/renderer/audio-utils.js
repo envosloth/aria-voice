@@ -158,44 +158,61 @@
     // symptom. These names have no place in a voice reply; strip the phrase
     // entirely so the explanation disappears.
     //
-    // CRITICAL: this regex is NARROW on purpose. Earlier versions of this
-    // strip false-positived on common English words — "a ring" / "a stroke" /
-    // "pipe down" / "the hash browns" / "a grave concern" / "an acute pain" —
-    // which is unacceptable. So we only match a symbol name when it sits in
-    // a DEFINITIONAL context: after "called/known as/named/referred to as",
-    // OR immediately preceded by a delimiter character that signals a
-    // pasted/typed symbol (` ' " [ < ( = ,). That cuts the false-positive
-    // surface to a tiny set of cases while still killing the actual
-    // "a circumflex" speech bug.
-    const SYMBOL_NAMES = [
-      'circumflex', 'caret', 'tilde', 'grave accent', 'acute accent',
-      'diaeresis', 'umlaut', 'cedilla', 'macron', 'breve', 'caron',
-      'ogonek', 'backslash', 'asterisk', 'hash mark', 'ampersand',
-      'pound sign', 'underscore',
+    // Two layers:
+    //
+    // 1) ALWAYS-STRIP names — words that NEVER appear in normal English. The
+    //    LLM cannot be using these for any reason other than explaining a
+    //    symbol, so there's no false-positive risk. Includes "circumflex" (the
+    //    user's reported bug), "umlaut", "cedilla", "macron", "breve",
+    //    "caron", "ogonek", "diaeresis", "grave accent", "acute accent". The
+    //    word "circumflex" on its own (with optional "a"/"the") is the
+    //    canonical "A circumflex" TTS bug; removing it unconditionally is
+    //    the only fully reliable fix.
+    //
+    // 2) CONTEXT-STRIP names — words that are common English but also have
+    //    a symbol meaning. "caret" / "tilde" / "asterisk" / "hash" / "ring"
+    //    / "backslash" / "slash" / "pipe" / "underscore" / "ampersand" /
+    //    "pound sign". Only stripped when they sit in a definitional
+    //    context: after "called/known as/named/referred to as", sandwiched
+    //    between delimiters (` ' " [ < ( = ,), or "A/An/The <name> means".
+    const ALWAYS_STRIP = [
+      'circumflex', 'umlaut', 'cedilla', 'macron', 'breve', 'caron',
+      'ogonek', 'diaeresis', 'grave accent', 'acute accent',
     ];
-    // Definite verb forms that announce a definition: "X is called a caret",
-    // "X is known as tilde", "the symbol, named caret". The verb can be
-    // followed by an optional article ("a caret" / "the caret") before the
-    // symbol name. Strip the verb phrase + article + name together.
+    // Layer 1: unconditional strip of the "a circumflex" / "the caret" / etc.
+    // pattern for ALWAYS_STRIP words. The article is optional; the word
+    // itself is the target. Word-boundary anchored to keep "circumflexing"
+    // (if that ever existed) intact, though in practice no such word does.
     s = s.replace(
-      new RegExp('\\b(?:called|known as|named|referred to as)\\s+(?:a|an|the)?\\s*(?:' + SYMBOL_NAMES.join('|') + ')\\b', 'gi'),
+      new RegExp('\\b(?:(?:a|an|the)\\s+)?(?:' + ALWAYS_STRIP.join('|') + ')\\b', 'gi'),
+      ' ',
+    );
+    // Layer 2: context-strip for words that have a common-English meaning.
+    const CONTEXT_NAMES = [
+      'caret', 'tilde', 'asterisk', 'hash mark', 'ampersand', 'backslash',
+      'underscore', 'pound sign',
+    ];
+    // Definite verb forms: "X is called a caret", "X is known as tilde",
+    // "the symbol, named caret". Verb can be followed by an optional article.
+    s = s.replace(
+      new RegExp('\\b(?:called|known as|named|referred to as)\\s+(?:a|an|the)?\\s*(?:' + CONTEXT_NAMES.join('|') + ')\\b', 'gi'),
       ' ',
     );
     // A symbol name sandwiched between delimiters: `(caret)` / `'caret'` /
     // `"caret"` / `[caret]` / `,caret,` / `<caret>`. A backtick is the
     // commonest case (Markdown inline code from the LLM).
     s = s.replace(
-      new RegExp('([`\'"\\[<,=(])\\s*(?:' + SYMBOL_NAMES.join('|') + ')\\s*(?=[`\'"\\]>,)])', 'gi'),
+      new RegExp('([`\'"\\[<,=(])\\s*(?:' + CONTEXT_NAMES.join('|') + ')\\s*(?=[`\'"\\]>,)])', 'gi'),
       '$1',
     );
     // "A/An <symbol_name>" / "The <symbol_name>" ONLY when followed by a
     // definitional predicate (means, refers to, is the word for, is the
-    // name of) — that's the literal "a circumflex means" grammar the LLM
+    // name of) — that's the literal "a caret means" grammar the LLM
     // produces. Standalone "the tilde" or "a caret" without a follow-on
     // definition is left alone (it might be a real use, e.g. the user asked
     // what something is called).
     s = s.replace(
-      new RegExp('\\b(?:a|an|the)\\s+(?:' + SYMBOL_NAMES.join('|') + ')\\s+(?:means|refers to|is the (?:name|word) for|is the (?:name|word) of)\\b', 'gi'),
+      new RegExp('\\b(?:a|an|the)\\s+(?:' + CONTEXT_NAMES.join('|') + ')\\s+(?:means|refers to|is the (?:name|word) for|is the (?:name|word) of)\\b', 'gi'),
       ' ',
     );
 
