@@ -55,6 +55,12 @@ const api = {
     cancel: () => ipcRenderer.send(IPC.LLM_CANCEL),
     test: (opts: { endpoint: string; model: string; apiKey?: string }) =>
       ipcRenderer.invoke(IPC.LLM_TEST, opts),
+    // Auto-discover the model served by an OpenAI-compatible endpoint (Hermes
+    // on :8642, Ollama on :11434, LM Studio on :1234, vLLM, etc.). Settings'
+    // "Discover model" button calls this and pre-fills the model field. Returns
+    // { ok, models[], recommended?, endpoint, error? }.
+    listModels: (opts: { endpoint: string; apiKey?: string }) =>
+      ipcRenderer.invoke(IPC.LLM_LIST_MODELS, opts),
     onToken: (cb: (token: string) => void) =>
       ipcRenderer.on(IPC.LLM_TOKEN, (_e, token) => cb(token)),
     onTool: (cb: (info: { name: string; args?: string }) => void) =>

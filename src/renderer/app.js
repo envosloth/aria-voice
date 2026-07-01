@@ -985,6 +985,10 @@ const cfg = {
   harnessModel: document.getElementById('cfg-harness-model'),
   harnessKey: document.getElementById('cfg-harness-key'),
   harnessNote: document.getElementById('cfg-harness-note'),
+  discoverLlm: document.getElementById('discover-llm'),
+  discoverLlmStatus: document.getElementById('discover-llm-status'),
+  discoverHarness: document.getElementById('discover-harness'),
+  discoverHarnessStatus: document.getElementById('discover-harness-status'),
   sttModel: document.getElementById('cfg-stt-model'),
   sttBackend: document.getElementById('cfg-stt-backend'),
   ttsVoice: document.getElementById('cfg-tts-voice'),
@@ -1360,6 +1364,57 @@ settingsClose.addEventListener('click', closeSettings);
 settingsOverlay.addEventListener('click', (e) => {
   if (e.target === settingsOverlay) closeSettings();
 });
+
+// "Discover model" buttons — probe the configured endpoint for its served
+// model list via IPC and pre-fill the model field with the recommended id. The
+// endpoint URL + key are pulled from the form (NOT from persisted config) so a
+// pasted URL is tested before the user hits Save. Status shown under the row:
+// success -> green preview-list; failure -> red error text. Never persists.
+async function discoverModel(kind) {
+  const endpointEl = kind === 'llm' ? cfg.llmEndpoint : cfg.harnessEndpoint;
+  const modelEl    = kind === 'llm' ? cfg.llmModel    : cfg.harnessModel;
+  const keyEl      = kind === 'llm' ? cfg.llmKey      : cfg.harnessKey;
+  const btn        = kind === 'llm' ? cfg.discoverLlm : cfg.discoverHarness;
+  const statusEl   = kind === 'llm' ? cfg.discoverLlmStatus : cfg.discoverHarnessStatus;
+  const endpoint = (endpointEl.value || '').trim();
+  if (!endpoint) {
+    statusEl.textContent = 'Enter an endpoint URL first.';
+    statusEl.className = 'err';
+    return;
+  }
+  const prevLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Discovering…';
+  statusEl.textContent = '';
+  statusEl.className = '';
+  try {
+    const r = await aria.llm.listModels({ endpoint, apiKey: keyEl.value });
+    if (!r.ok) {
+      statusEl.textContent = 'Failed: ' + (r.error || 'unknown error');
+      statusEl.className = 'err';
+      return;
+    }
+    if (!r.models || r.models.length === 0) {
+      statusEl.textContent = 'Endpoint reachable but returned no models — enter one manually.';
+      statusEl.className = 'err';
+      return;
+    }
+    // Pre-fill the input with the recommended id (if not already filled).
+    if (!modelEl.value && r.recommended) modelEl.value = r.recommended;
+    const preview = r.models.slice(0, 6).join(', ');
+    const more = r.models.length > 6 ? `, … (+${r.models.length - 6} more)` : '';
+    statusEl.textContent = `Found ${r.models.length} model${r.models.length === 1 ? '' : 's'}: ${preview}${more}`;
+    statusEl.className = 'ok';
+  } catch (e) {
+    statusEl.textContent = 'Discovery error: ' + (e && e.message ? e.message : String(e));
+    statusEl.className = 'err';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prevLabel;
+  }
+}
+if (cfg.discoverLlm)     cfg.discoverLlm.addEventListener('click',     () => discoverModel('llm'));
+if (cfg.discoverHarness) cfg.discoverHarness.addEventListener('click', () => discoverModel('harness'));
 
 settingsSave.addEventListener('click', async () => {
   await aria.config.set('routing.mode', cfg.routingMode.value);

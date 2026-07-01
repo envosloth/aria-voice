@@ -28,6 +28,10 @@ export const IPC = {
   LLM_TOOL: 'llm:tool',        // main -> renderer: a tool the harness invoked (shown above the reply)
   LLM_DONE: 'llm:done',
   LLM_ERROR: 'llm:error',
+  // Discover models served by an OpenAI-compatible endpoint (Hermes, Ollama, LM
+  // Studio, vLLM…). Used by Settings to auto-fill the model field on the harness
+  // (Hermes on :8642) or LLM (any other). Returns the default-recommended model.
+  LLM_LIST_MODELS: 'llm:list-models',
   LLM_TEST: 'llm:test',        // renderer -> main: test a provider endpoint/key
   LLM_ROUTE: 'llm:route',      // main -> renderer: which target answered (llm|harness)
 

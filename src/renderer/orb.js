@@ -256,6 +256,16 @@
     // low-frequency so it stays a rounded blob, not spikes.
     const dAmp = react * 0.24;
 
+    // Organic ambient drift — independent of the audio-reactive wobble so the orb
+    // reads as alive even when it's NOT speaking. Three coupled sine waves at
+    // quasi-commensurate frequencies produce a non-repeating gentle tide. Cheap
+    // (3 sin per frame, NOT per-vertex); uniform radial scale so neighbouring
+    // vertices stay together — preserves the blob reading, no spikes.
+    const drift =
+      0.012 * Math.sin(t * 0.27) +
+      0.008 * Math.sin(t * 0.41 + 1.3) +
+      0.005 * Math.sin(t * 0.71 + 2.6);
+
     // "Nearness" is measured by the perspective scale (pp): a larger pp means the
     // point is closer to the viewer. Using pp (not the raw rotated z) removes any
     // sign-convention ambiguity, so the side facing the user is reliably the one
@@ -277,6 +287,8 @@
                   + 0.6 * Math.sin(th + ph * 2 + t * 0.8);   // slow diagonal swell
         rk = r * (1 + dAmp * wob * 0.4);
       }
+      // Apply the per-frame ambient drift on top of the audio wobble.
+      rk *= 1 + drift;
       const x = rk * sp * cosTh[k];
       const y = rk * cosPhi[k];
       const z = rk * sp * sinTh[k];

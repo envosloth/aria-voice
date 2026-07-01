@@ -552,6 +552,18 @@
     }
     .checkbox-label { display: flex !important; align-items: center; gap: 8px; }
     .checkbox-label input { width: auto !important; margin: 0 !important; }
+    /* Model row: input + inline Discover button. min-width:0 on the input so it
+       shrinks/ellipses inside the flex row instead of pushing the button off
+       the edge on a narrow settings panel. */
+    .discover-row { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
+    .discover-row input { flex: 1; min-width: 0; margin-top: 0; }
+    .discover-row button { flex: none; padding: 7px 14px; font-size: 12px; }
+    /* Inline status line under the discover row. */
+    #discover-llm-status, #discover-harness-status {
+      display: block; margin-top: 6px; min-height: 1em;
+    }
+    #discover-llm-status.ok, #discover-harness-status.ok { color: var(--success); }
+    #discover-llm-status.err, #discover-harness-status.err { color: var(--error); }
 
     .settings-warning {
       display: none; padding: 10px 14px; margin-bottom: 16px;
@@ -774,7 +786,11 @@
           <input type="url" id="cfg-llm-endpoint" placeholder="https://api.deepseek.com/v1/chat/completions">
         </label>
         <label>Model
-          <input type="text" id="cfg-llm-model" placeholder="deepseek-chat">
+          <div class="discover-row">
+            <input type="text" id="cfg-llm-model" placeholder="deepseek-chat">
+            <button id="discover-llm" class="ghost-btn" type="button">Discover</button>
+          </div>
+          <span class="hint" id="discover-llm-status"></span>
         </label>
         <label>API Key <span class="hint">(OS keyring)</span>
           <input type="password" id="cfg-llm-key" placeholder="paste your key">
@@ -791,7 +807,11 @@
         </label>
         <p class="hint" id="cfg-harness-note" style="margin:-6px 0 12px;"></p>
         <label>Model
-          <input type="text" id="cfg-harness-model" placeholder="model name">
+          <div class="discover-row">
+            <input type="text" id="cfg-harness-model" placeholder="model name">
+            <button id="discover-harness" class="ghost-btn" type="button">Discover</button>
+          </div>
+          <span class="hint" id="discover-harness-status"></span>
         </label>
         <label>API Key <span class="hint">(optional, OS keyring)</span>
           <input type="password" id="cfg-harness-key" placeholder="optional — leave blank to keep existing">

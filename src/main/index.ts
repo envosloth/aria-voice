@@ -5,6 +5,7 @@ import { Supervisor } from './supervisor';
 import { config } from './config';
 import { getSecureBackend, isSecureBackendSafe, setSecret, getSecret, deleteSecret } from './secure-storage';
 import { streamChat } from './llm-stream';
+import { listModels, normalizeChatBaseUrl } from './llm-models';
 import { coordinate, cancelCoordination } from './coordinator';
 import { buildManifest, missingModels, downloadModel } from './model-manager';
 import { perfEnabled, setPerfEnabled, perfMark, perfMarkExternal } from './perf';
@@ -323,6 +324,19 @@ function setupIpcHandlers(): void {
         },
       );
     });
+  });
+
+  // Model auto-discovery for an OpenAI-compatible endpoint (Hermes, Ollama, LM
+  // Studio, vLLM…). Asks for GET /v1/models, parses the OpenAI `data[].id` list,
+  // and returns the recommended default + the full list so the UI can show a
+  // dropdown. Used by the Settings → Agent-harness / Conversational-LLM "Discover
+  // model" buttons; never persists anything by itself. The endpoint URL accepts
+  // the same shape as chat (full chat-completions URL, .../v1 base, or host only)
+  // — normalizeChatBaseUrl() converts it to the /v1/models route. A missing or
+  // unauthorized endpoint returns ok:false with the underlying error so the UI
+  // can show "discovery failed — enter the model manually".
+  ipcMain.handle(IPC.LLM_LIST_MODELS, async (_e, opts: { endpoint: string; apiKey?: string }) => {
+    return await listModels(opts.endpoint, opts.apiKey || '');
   });
 
   // Mic PCM from the renderer (getUserMedia, 16kHz mono s16le). Always feed the
