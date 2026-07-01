@@ -246,7 +246,6 @@
       backdrop-filter: blur(8px);
       -webkit-backdrop-filter: blur(8px);
       border: 1px solid var(--border);
-      border-left: 2px solid var(--accent-active);
       border-bottom-left-radius: 5px;
     }
     .message.assistant:hover {
@@ -472,12 +471,15 @@
       background: rgba(0,0,0,0.55);
       backdrop-filter: blur(4px);
       -webkit-backdrop-filter: blur(4px);
-      display: none;
+      display: flex;
       align-items: center;
       justify-content: center;
       z-index: 100;
+      visibility: hidden;
+      opacity: 0;
+      transition: opacity 0.25s ease, visibility 0.25s ease;
     }
-    .settings-overlay.visible { display: flex; }
+    .settings-overlay.visible { visibility: visible; opacity: 1; }
 
     .settings-panel {
       background: color-mix(in srgb, var(--surface) 92%, transparent);
@@ -491,6 +493,13 @@
       border: 1px solid var(--border);
       padding: 0 24px 24px;
       box-shadow: 0 20px 60px -15px rgba(0,0,0,0.7), 0 0 0 1px var(--border);
+      transform: scale(0.95) translateY(10px);
+      opacity: 0;
+      transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.25s ease;
+    }
+    .settings-overlay.visible .settings-panel {
+      transform: scale(1) translateY(0);
+      opacity: 1;
     }
 
     .settings-header {
@@ -560,8 +569,17 @@
       transition: opacity 0.2s ease, transform 0.15s ease;
     }
     button.primary:hover { opacity: 0.9; transform: translateY(-1px); }
-    button.primary:active { transform: translateY(0); }
+    button.primary:active { transform: translateY(0) scale(0.97); }
     #settings-saved-msg { color: var(--success); font-size: 13px; }
+
+    /* ── Tactile press states on all interactive elements ── */
+    #mic-btn:active { transform: scale(0.92); }
+    #screen-btn:active { transform: scale(0.92); }
+    #settings-btn:active { transform: scale(0.90); }
+    .ghost-btn:active, #update-action-btn:active { transform: scale(0.97); }
+    .onboard-secondary:active { transform: scale(0.96); }
+    .onboard-ghost:active { transform: scale(0.95); opacity: 0.6; }
+    .tool-chip:active { transform: translateY(0) scale(0.95); }
 
     /* ── Performance panel ── */
     .perf-latency {
@@ -626,9 +644,11 @@
     .onboard-overlay {
       position: fixed; inset: 0; background: var(--bg);
       backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-      display: none; align-items: center; justify-content: center; z-index: 200;
+      display: flex; align-items: center; justify-content: center; z-index: 200;
+      visibility: hidden; opacity: 0;
+      transition: opacity 0.3s ease, visibility 0.3s ease;
     }
-    .onboard-overlay.visible { display: flex; }
+    .onboard-overlay.visible { visibility: visible; opacity: 1; }
     .onboard-panel {
       width: 90%; max-width: 460px;
       background: color-mix(in srgb, var(--surface) 95%, transparent);
@@ -637,6 +657,13 @@
       border: 1px solid var(--border);
       border-radius: 20px; padding: 36px;
       box-shadow: 0 24px 70px -20px rgba(0,0,0,0.7);
+      transform: scale(0.95) translateY(15px);
+      opacity: 0;
+      transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.3s ease;
+    }
+    .onboard-overlay.visible .onboard-panel {
+      transform: scale(1) translateY(0);
+      opacity: 1;
     }
     .onboard-steps { display: flex; gap: 8px; justify-content: center; margin-bottom: 28px; }
     .onboard-steps .dot {
