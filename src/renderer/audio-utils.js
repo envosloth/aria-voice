@@ -151,6 +151,54 @@
     // hanging, which TTS reads as "control plus". Trim a trailing "+ " left over.
     s = s.replace(/\b(ctrl|cmd|alt|shift|esc|tab|enter|return|space|backspace)\s*\+\s*$/gim, ' ');
 
+    // SYMBOL-NAME PHRASE STRIP. The LLM sometimes explains a stray symbol in
+    // its reply — "that's a circumflex", "the ^ is called a caret", "the ~
+    // means tilde". TTS then reads the explanation verbatim, which is the
+    // "I can hear the agent say 'A circumflex' when it don't make sense at all"
+    // symptom. These names have no place in a voice reply; strip the phrase
+    // entirely so the explanation disappears.
+    //
+    // CRITICAL: this regex is NARROW on purpose. Earlier versions of this
+    // strip false-positived on common English words — "a ring" / "a stroke" /
+    // "pipe down" / "the hash browns" / "a grave concern" / "an acute pain" —
+    // which is unacceptable. So we only match a symbol name when it sits in
+    // a DEFINITIONAL context: after "called/known as/named/referred to as",
+    // OR immediately preceded by a delimiter character that signals a
+    // pasted/typed symbol (` ' " [ < ( = ,). That cuts the false-positive
+    // surface to a tiny set of cases while still killing the actual
+    // "a circumflex" speech bug.
+    const SYMBOL_NAMES = [
+      'circumflex', 'caret', 'tilde', 'grave accent', 'acute accent',
+      'diaeresis', 'umlaut', 'cedilla', 'macron', 'breve', 'caron',
+      'ogonek', 'backslash', 'asterisk', 'hash mark', 'ampersand',
+      'pound sign', 'underscore',
+    ];
+    // Definite verb forms that announce a definition: "X is called a caret",
+    // "X is known as tilde", "the symbol, named caret". The verb can be
+    // followed by an optional article ("a caret" / "the caret") before the
+    // symbol name. Strip the verb phrase + article + name together.
+    s = s.replace(
+      new RegExp('\\b(?:called|known as|named|referred to as)\\s+(?:a|an|the)?\\s*(?:' + SYMBOL_NAMES.join('|') + ')\\b', 'gi'),
+      ' ',
+    );
+    // A symbol name sandwiched between delimiters: `(caret)` / `'caret'` /
+    // `"caret"` / `[caret]` / `,caret,` / `<caret>`. A backtick is the
+    // commonest case (Markdown inline code from the LLM).
+    s = s.replace(
+      new RegExp('([`\'"\\[<,=(])\\s*(?:' + SYMBOL_NAMES.join('|') + ')\\s*(?=[`\'"\\]>,)])', 'gi'),
+      '$1',
+    );
+    // "A/An <symbol_name>" / "The <symbol_name>" ONLY when followed by a
+    // definitional predicate (means, refers to, is the word for, is the
+    // name of) — that's the literal "a circumflex means" grammar the LLM
+    // produces. Standalone "the tilde" or "a caret" without a follow-on
+    // definition is left alone (it might be a real use, e.g. the user asked
+    // what something is called).
+    s = s.replace(
+      new RegExp('\\b(?:a|an|the)\\s+(?:' + SYMBOL_NAMES.join('|') + ')\\s+(?:means|refers to|is the (?:name|word) for|is the (?:name|word) of)\\b', 'gi'),
+      ' ',
+    );
+
     // Collapse whitespace and tidy spacing before punctuation.
     s = s.replace(/\s+([,.!?;:])/g, '$1');
     s = s.replace(/\s+/g, ' ').trim();

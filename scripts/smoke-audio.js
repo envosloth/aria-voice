@@ -102,5 +102,23 @@ check('san-degree', !/\bdegree\b/i.test(S('heat to 90°')), `got "${S('heat to 9
 check('san-section', !/\bsection\b/i.test(S('see § 4.2 for details')), `got "${S('see § 4.2 for details')}"`);
 check('san-keeps-unicode-words', S('café déjà vu') === 'café déjà vu', `got "${S('café déjà vu')}"`);
 
+// 12. Symbol-name phrase strip: the LLM sometimes explains a stray character
+//     ("a circumflex", "called a caret", "the tilde means"). The voice should
+//     not read those explanations. The strip is intentionally NARROW — common
+//     English ("a ring", "a stroke", "pipe down", "the hash browns", "a grave
+//     concern", "an acute pain") MUST be preserved.
+check('san-defn-circumflex', !/\bcircumflex\b/i.test(S('that symbol, called a circumflex, marks a vowel')), `got "${S('that symbol, called a circumflex, marks a vowel')}"`);
+check('san-defn-caret', !/\bcaret\b/i.test(S('the symbol, known as caret, points up')), `got "${S('the symbol, known as caret, points up')}"`);
+check('san-defn-tilde', !/\btilde\b/i.test(S('a tilde means "approximately"')), `got "${S('a tilde means \"approximately\"')}"`);
+check('san-defn-backtick-caret', !/\bcaret\b/i.test(S('use `(caret)` for the cursor')), `got "${S('use \`(caret)\` for the cursor')}"`);
+// Negative cases: common English must survive.
+check('san-keeps-ring', S('give me a ring when you arrive') === 'give me a ring when you arrive', `got "${S('give me a ring when you arrive')}"`);
+check('san-keeps-stroke', S('he had a stroke yesterday') === 'he had a stroke yesterday', `got "${S('he had a stroke yesterday')}"`);
+check('san-keeps-pipe-down', S('pipe down please') === 'pipe down please', `got "${S('pipe down please')}"`);
+check('san-keeps-hash-browns', S('the hash browns are ready') === 'the hash browns are ready', `got "${S('the hash browns are ready')}"`);
+check('san-keeps-grave-concern', S('I have grave concerns') === 'I have grave concerns', `got "${S('I have grave concerns')}"`);
+check('san-keeps-acute-pain', S('an acute pain in her side') === 'an acute pain in her side', `got "${S('an acute pain in her side')}"`);
+check('san-keeps-ring-fire', S('the ring of fire is beautiful') === 'the ring of fire is beautiful', `got "${S('the ring of fire is beautiful')}"`);
+
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

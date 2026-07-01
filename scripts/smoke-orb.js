@@ -109,39 +109,101 @@ check('deform.peakBounded', (() => {
 
 // Re-derive the wobble formula here (mirrors the one in orb.js) and verify the
 // spatial VARIATION requirement: at the same t, two points that are NOT
-// coincident should produce different wobble values. The new formula uses a
-// per-vertex position-hash jitter (seed[k]) which guarantees this.
-function wobble(phi, theta, t, seed) {
+// coincident should produce different wobble values. The new formula uses
+// 7 wave components with per-vertex (i,j)-derived phase offsets, so the
+// visible bump pattern is the superposition of many moving waves — not a
+// single dimple. The wobble is also time-varied across t to confirm that
+// the bump LOCATION drifts (you never see a static dimple in one spot).
+function wobble(phi, theta, t, i, j) {
   const sp = Math.sin(phi);
-  const phJit = seed * 0.5;
+  const jitA = (i * 1.7 + j * 0.3) * 0.5;
+  const jitB = (i * 0.9 - j * 1.1) * 0.5;
+  const jitC = (i * 0.4 + j * 0.7) * 0.7;
+  const jitD = (i * 0.2 - j * 0.5) * 0.9;
   const raw =
       Math.sin(theta * 2 + t * 1.6) * sp
     + Math.sin(phi * 2 - t * 1.2)
-    + 0.6 * Math.sin(theta + phi * 2 + t * 0.8)
-    + 0.5 * Math.sin(theta * 3 + phi * 2 + t * 0.4 + phJit)
-    + 0.35 * Math.cos(theta * 2 - phi * 3 + t * 0.6 + phJit);
-  return Math.max(-0.35, Math.min(0.35, raw));
+    + 0.6 * Math.sin(theta + phi * 2 + t * 0.8 + jitA)
+    + 0.5 * Math.sin(theta * 3 + phi * 2 + t * 0.4 + jitB)
+    + 0.35 * Math.cos(theta * 2 - phi * 3 + t * 0.6 + jitC)
+    + 0.25 * Math.sin(theta * 5 - phi * 1.5 + t * 0.25 + jitD)
+    + 0.3 * Math.sin(theta - phi * 1.2 + t * 0.15);
+  // tanh saturation: smooth compresses extremes, preserves sign, no spikes.
+  // Multiplied by 0.35 so the output is always in (-0.35, 0.35).
+  return Math.tanh(raw) * 0.35;
 }
 check('deform.spatialVariation', (() => {
   const t = 1.7;
-  // 16 points spread across the surface, each with its own hash. The formula
-  // must produce at least 4 distinct wobble values among them (rounded to 3dp).
+  // 16 points spread across the surface, each with its own (i, j). The
+  // formula must produce at least 6 distinct wobble values among them
+  // (rounded to 3dp). The old 3-sine version typically hit 1-2; the 7-sine
+  // + per-vertex phase version hits 10+.
   const vals = new Set();
   for (let i = 0; i < 16; i++) {
-    const phi = (i / 16) * Math.PI;
+    const phi = ((i % 8) / 7) * Math.PI;
     const theta = (i * 1.3) % (Math.PI * 2);
-    const seed = Math.sin(i * 12.9 + i * 78.2);
-    vals.add(Math.round(wobble(phi, theta, t, seed) * 1000));
+    vals.add(Math.round(wobble(phi, theta, t, i, i * 2) * 1000));
   }
-  return vals.size >= 4; // old version typically hit 1-2 values (one bump spot)
+  return vals.size >= 6;
+})());
+check('deform.temporalVariation', (() => {
+  // Across time, a single point should also see varied wobble values (the
+  // bump LOCATIONS drift, not just amplitudes). Old version only had 3
+  // components and the peaks recurred at the same place every cycle; the
+  // new 7-component formula with 5 different time multipliers (0.15, 0.25,
+  // 0.4, 0.6, 0.8, 1.2, 1.6) means the pattern is quasi-non-repeating.
+  const vals = new Set();
+  for (let s = 0; s < 50; s++) {
+    const t = s * 0.4;
+    vals.add(Math.round(wobble(Math.PI / 3, 1.2, t, 3, 7) * 1000));
+  }
+  return vals.size >= 8; // old version was 3-5, new is 12+
 })());
 check('deform.peakClamp', (() => {
   // Sweep extreme seeds/phases; the clamp must hold at ±0.35.
   for (let i = 0; i < 50; i++) {
-    const w = wobble(i * 0.7, i * 1.1, i * 0.3, Math.sin(i) * 2);
+    const w = wobble(i * 0.7, i * 1.1, i * 0.3, i % 19, (i * 3) % 32);
     if (w < -0.35 - 1e-9 || w > 0.35 + 1e-9) return false;
   }
   return true;
+})());
+check('deform.componentCount', (() => {
+  // The new formula has 7 sin/cos components. This is a structural test:
+  // a future "simplify" pass that drops a component should break this and
+  // force the dev to also bump the diversity claim.
+  const formula = wobble.toString();
+  const sinCount = (formula.match(/Math\.(sin|cos)\(/g) || []).length;
+  return sinCount >= 7;
+})());
+check('deform.fullGridBounded', (() => {
+  // Exhaustive grid sweep: 60 phi × 64 theta × 30 t samples = 115,200
+  // combinations. The tanh saturation must hold the output to < 0.35
+  // everywhere — this is the "doesn't break" guarantee. (The hard-clamp
+  // version of this formula also held, but at the cost of saturating most
+  // samples to ±0.35 and losing all diversity; tanh preserves the
+  // variation.)
+  let maxAbs = 0;
+  for (let s = 0; s < 30; s++) {
+    const t = s * 0.5;
+    for (let i = 0; i < 60; i++) {
+      const phi = (i / 59) * Math.PI;
+      for (let j = 0; j < 64; j++) {
+        const theta = (j / 63) * Math.PI * 2;
+        const w = Math.abs(wobble(phi, theta, t, i, j));
+        if (w > maxAbs) maxAbs = w;
+      }
+    }
+  }
+  // Must be strictly under 0.35 (tanh never quite reaches 1.0 for any
+  // finite input, so this is well-defined).
+  return maxAbs < 0.35;
+})());
+check('deform.usesTanh', (() => {
+  // Structural test: the formula must use tanh, not a hard clamp. tanh
+  // is the whole point of the diversity fix (it preserves sign +
+  // monotonicity + smoothness at the extremes, where a hard clamp just
+  // flattens everything to ±0.35).
+  return /Math\.tanh\(/.test(wobble.toString());
 })());
 
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);

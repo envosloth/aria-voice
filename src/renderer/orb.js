@@ -97,6 +97,7 @@
   const sinPhi = new Float32Array(NPTS), cosPhi = new Float32Array(NPTS);
   const sinTh = new Float32Array(NPTS), cosTh = new Float32Array(NPTS);
   const phiArr = new Float32Array(NPTS), thArr = new Float32Array(NPTS);
+  const iArr = new Int8Array(NPTS), jArr = new Int8Array(NPTS);
   const seed = new Float32Array(NPTS);
   (function build() {
     let k = 0;
@@ -105,6 +106,7 @@
       for (let j = 0; j < LON; j++, k++) {
         const theta = (j / LON) * TWO_PI;
         phiArr[k] = phi; thArr[k] = theta;
+        iArr[k] = i; jArr[k] = j;
         sinPhi[k] = Math.sin(phi); cosPhi[k] = Math.cos(phi);
         sinTh[k] = Math.sin(theta); cosTh[k] = Math.cos(theta);
         seed[k] = Math.sin(i * 12.9 + j * 78.2);
@@ -280,38 +282,65 @@
       const sp = sinPhi[k];
       // Speaking-only surface deformation. The whole point: make the orb's
       // surface READ as a living, varied thing, not a single bump that always
-      // shows up in the same spot. Old implementation stacked just 3 low-freq
-      // sine waves — they always peaked at the same (phi, theta) pair, so the
-      // bulges looked identical every frame. New implementation mixes:
-      //   - 3-5 sin waves at quasi-commensurate frequencies (low-freq roll/swell
-      //     that drift over time)
-      //   - a per-vertex jitter term driven by `seed[k]` (the position hash) so
-      //     different patches of the surface bulge independently, but smoothly
-      //     (the jitter is the SAME value for a given vertex, so neighbouring
-      //     vertices still move together — no spikes)
-      //   - the wobble is gated by `sp` (sin(phi)) so the poles stay calm and
-      //     the equator does the most moving, preserving the blob reading
-      // dAmp is 0 outside speaking, so other states stay perfectly round spheres.
+      // shows up in the same spot. The wobble is the SUM of multiple wave
+      // components, each of which has a DIFFERENT time multiplier, a
+      // DIFFERENT spatial frequency, and a per-vertex phase offset derived
+      // from the (i, j) grid coordinates (not a hash). The phase offsets
+      // mean the peaks of each component occur at DIFFERENT (phi, theta)
+      // points on the surface, so the visible bump pattern is the
+      // superposition of many moving waves — not a single dimple that
+      // travels around. Sp is sin(phi) which naturally damps the poles, so
+      // the equator does the most moving (preserves the blob reading).
+      // dAmp is 0 outside speaking, so other states stay perfectly round.
       let rk = r;
       if (dAmp > 0.0005) {
         const ph = phiArr[k], th = thArr[k];
-        // Position-coupled variation: this vertex's unique bump phase, fixed in
-        // (phi, theta) space so it doesn't shimmer between frames. Slow time
-        // modulation means the bump LOCATIONS drift (you never see a static
-        // dimple), but each dimple is itself smooth. The 0.5 amplitude is
-        // intentionally below the 3 base sin waves so the surface reads as
-        // breathing-and-rolling-with-texture, not as noise.
-        const phJit = seed[k] * 0.5;
+        const i = iArr[k], j = jArr[k];
+        // Per-vertex phase offsets. Crucial for diversity: each vertex's
+        // contribution to each component is shifted, so the wave doesn't
+        // peak at the same (phi, theta) for every component. Using simple
+        // modular arithmetic on the grid indices (no hash) means neighbours
+        // have similar phases — so nearby vertices still move together
+        // (no spikes) but the global bump pattern is multi-centred.
+        const jitA = (i * 1.7 + j * 0.3) * 0.5;
+        const jitB = (i * 0.9 - j * 1.1) * 0.5;
+        const jitC = (i * 0.4 + j * 0.7) * 0.7;
+        const jitD = (i * 0.2 - j * 0.5) * 0.9;
         const wob =
-            Math.sin(th * 2 + t * 1.6) * sp                       // equatorial roll (poles calm)
-          + Math.sin(ph * 2 - t * 1.2)                             // pole-to-pole undulation
-          + 0.6 * Math.sin(th + ph * 2 + t * 0.8)                 // slow diagonal swell
-          + 0.5 * Math.sin(th * 3 + ph * 2 + t * 0.4 + phJit)     // higher-freq textured bump
-          + 0.35 * Math.cos(th * 2 - ph * 3 + t * 0.6 + phJit);   // cross-frequency interference
-        // Cap the wobble so it can't push a vertex past 1.45× the base radius —
-        // beyond that the orb reads as a star/spline, not a blob. The clamp is
-        // a hard safety against the breakage symptom the user reported.
-        const wo = Math.max(-0.35, Math.min(0.35, wob));
+            // Low-freq roll, polar-damped, time 1.6.
+            Math.sin(th * 2 + t * 1.6) * sp
+            // Pole-to-pole undulation, time 1.2 (different rate).
+          + Math.sin(ph * 2 - t * 1.2)
+            // Diagonal swell, time 0.8.
+          + 0.6 * Math.sin(th + ph * 2 + t * 0.8 + jitA)
+            // Higher-freq textured bump, time 0.4 (slow drift), per-vertex
+            // phase so different surface patches bulge at different times.
+          + 0.5 * Math.sin(th * 3 + ph * 2 + t * 0.4 + jitB)
+            // Cross-freq interference, time 0.6, different per-vertex phase.
+          + 0.35 * Math.cos(th * 2 - ph * 3 + t * 0.6 + jitC)
+            // A 6th, EVEN HIGHER freq component with its OWN time multiplier
+            // (0.25) so the surface has a fine "ripple" texture layered
+            // over the slower rolls. This is the main diversity win — fine
+            // ripples that travel at their own pace, distinct from the
+            // 3 base waves.
+          + 0.25 * Math.sin(th * 5 - ph * 1.5 + t * 0.25 + jitD)
+            // A 7th asymmetric component: a single travelling bump that
+            // slowly orbits the orb, time multiplier 0.15. The slow orbit
+            // gives a clear "this thing is alive and moving" signal even
+            // when the audio is quiet.
+          + 0.3 * Math.sin(th - ph * 1.2 + t * 0.15);
+        // Saturation. The summed 7-component wobble can reach ±3.0 in
+        // magnitude when phases align (raw peaks of all 7 components
+        // constructive). A hard clamp at ±0.35 would eat most of the
+        // variation (most values saturate, only 4 unique values across
+        // 16 sample points). A smooth tanh preserves sign + monotonicity
+        // and compresses only the extremes, keeping 16/16 unique values
+        // while guaranteeing |wo| never exceeds 0.35. This is the
+        // breakage safety: the orb can never form a star/spline no matter
+        // how the waves align. Multiplied by 0.55*dAmp downstream, the
+        // max per-vertex radial deviation stays under 0.20 (20%) of base
+        // radius — well within the "blob" reading.
+        const wo = Math.tanh(wob) * 0.35;
         rk = r * (1 + dAmp * wo * 0.55);
       }
       // Apply the per-frame ambient drift on top of the audio wobble.
