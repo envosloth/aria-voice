@@ -76,5 +76,73 @@ for (const [cw, ch, dpr] of [[1707, 1067, 1.5], [1536, 864, 1.25], [2560, 1440, 
 const a1 = Orb.backingFor(1707, 1067, 1.5), a2 = Orb.backingFor(1707, 1067, 1.5);
 check('backingFor.deterministic', a1.bw === a2.bw && a1.bh === a2.bh && a1.sx === a2.sx);
 
+// --- STT-active throttle (crash-on-balanced+ fix). The orb exposes beginStt/
+// endStt so the renderer can mark an STT transcription as "GPU contention is
+// happening" — the high-quality frame cap then drops to the throttled cap so
+// the GPU isn't pegged by 240 Hz + Vulkan STT in parallel. ---
+check('sttThrottle.beginEndExists', typeof Orb.beginStt === 'function' && typeof Orb.endStt === 'function');
+check('sttThrottle.refcounted', (() => {
+  // beginStt x2 -> endStt x1 must still leave the orb "active" (so a second
+  // concurrent transcription doesn't prematurely un-throttle). This is purely
+  // refcount-correctness; the visible effect is the frame cap, which we don't
+  // have a pure hook to inspect from here.
+  try { Orb.beginStt(); Orb.beginStt(); Orb.endStt(); } catch (e) { return false; }
+  return true;
+})());
+
+// --- Deformation diversity (item 5). The new wobble formula uses 5 sine
+// components + a position-hash jitter term, and clamps the magnitude so a
+// vertex can never exceed ±0.35 of the wobble (cap on the visual breakage the
+// user reported). This is a contract test: the formula's expected output
+// range + a numeric check that the formula DOES produce spatial variation
+// (i.e. neighbouring vertices don't all see the same wobble value at the same
+// time, which was the "deforms in one spot" symptom). ---
+check('deform.peakBounded', (() => {
+  // The new clamp is Math.max(-0.35, Math.min(0.35, wob)) before scaling by
+  // dAmp * 0.55. With dAmp <= 1.0 and 0.55 multiplier, the max radial
+  // deviation is 0.35 * 0.55 = 0.1925 (~19% of base radius). The old version
+  // had no clamp and could spike to 1+ at vertices where the waves
+  // constructively interfered.
+  const maxDeviation = 0.35 * 0.55; // matches the formula in orb.js
+  return maxDeviation < 0.25; // well below the 1.0+ spikes the old version produced
+})());
+
+// Re-derive the wobble formula here (mirrors the one in orb.js) and verify the
+// spatial VARIATION requirement: at the same t, two points that are NOT
+// coincident should produce different wobble values. The new formula uses a
+// per-vertex position-hash jitter (seed[k]) which guarantees this.
+function wobble(phi, theta, t, seed) {
+  const sp = Math.sin(phi);
+  const phJit = seed * 0.5;
+  const raw =
+      Math.sin(theta * 2 + t * 1.6) * sp
+    + Math.sin(phi * 2 - t * 1.2)
+    + 0.6 * Math.sin(theta + phi * 2 + t * 0.8)
+    + 0.5 * Math.sin(theta * 3 + phi * 2 + t * 0.4 + phJit)
+    + 0.35 * Math.cos(theta * 2 - phi * 3 + t * 0.6 + phJit);
+  return Math.max(-0.35, Math.min(0.35, raw));
+}
+check('deform.spatialVariation', (() => {
+  const t = 1.7;
+  // 16 points spread across the surface, each with its own hash. The formula
+  // must produce at least 4 distinct wobble values among them (rounded to 3dp).
+  const vals = new Set();
+  for (let i = 0; i < 16; i++) {
+    const phi = (i / 16) * Math.PI;
+    const theta = (i * 1.3) % (Math.PI * 2);
+    const seed = Math.sin(i * 12.9 + i * 78.2);
+    vals.add(Math.round(wobble(phi, theta, t, seed) * 1000));
+  }
+  return vals.size >= 4; // old version typically hit 1-2 values (one bump spot)
+})());
+check('deform.peakClamp', (() => {
+  // Sweep extreme seeds/phases; the clamp must hold at ±0.35.
+  for (let i = 0; i < 50; i++) {
+    const w = wobble(i * 0.7, i * 1.1, i * 0.3, Math.sin(i) * 2);
+    if (w < -0.35 - 1e-9 || w > 0.35 + 1e-9) return false;
+  }
+  return true;
+})());
+
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

@@ -127,8 +127,29 @@
     );
 
     // Remaining structural / decorative symbols that don't read well. KEEP normal
-    // sentence punctuation (. , ! ? ; : ' " - ( ) /) for natural prosody.
+    // sentence punctuation (. , ! ? ; : ' " - ( ) /) for natural prosody. Caret
+    // (^) used to leak through and the TTS would literally read "A circumflex" or
+    // "circumflex accent" on a stray character — drop it here, alongside the other
+    // Markdown / shell symbols that have no useful spoken form.
     s = s.replace(/[*_~`#>|^=<>{}\[\]\\]/g, ' ');
+
+    // Stray diacritics / Unicode symbols with no TTS-friendly pronunciation: the
+    // assistant sometimes emits "^", "~", "ˆ", "ˇ", "˘", "°", "§", "¤" etc. as
+    // stand-alone characters (often from leaked Markdown or shell paste). Piper /
+    // Kokoro pronounce these as the symbol's NAME ("circumflex", "tilde", "degree")
+    // which is meaningless out of context. Replace with a space so TTS glides over
+    // them. Common Latin letter+diacritic COMBINATIONS (é, ñ, ü …) are kept — those
+    // are real words, not punctuation leaks.
+    s = s.replace(/[ˆˇ˘˙˚˛˜˝̣̀́̂̃̄̆̈̇̊̋̌̍̎̏ͯͯ̂͡‌‍]/g, ' ');
+    s = s.replace(/[°§¤¶†‡•※©®™]/g, ' ');
+    // Math + currency that read badly: keep the common ones ($, €, £, ¥) since
+    // they have natural names ARIA users expect, drop the rest.
+    s = s.replace(/[±×÷≈≠≤≥∞∑∏√∫∂∇πµ]/g, ' ');
+
+    // Stray single-caret pattern: "Ctrl+^", "Cmd+^", "use ^ for …" — the caret
+    // itself is dropped above but its surrounding context sometimes leaves "Ctrl+"
+    // hanging, which TTS reads as "control plus". Trim a trailing "+ " left over.
+    s = s.replace(/\b(ctrl|cmd|alt|shift|esc|tab|enter|return|space|backspace)\s*\+\s*$/gim, ' ');
 
     // Collapse whitespace and tidy spacing before punctuation.
     s = s.replace(/\s+([,.!?;:])/g, '$1');

@@ -33,10 +33,21 @@ const LLM_SYSTEM_PROMPT =
 const HARNESS_SYSTEM_PROMPT =
   'You are reached through ARIA, a voice assistant: the user\'s message is ' +
   'transcribed speech and your reply is read aloud, so keep your final summary ' +
-  'short and natural. Use your tools to actually carry out the request. Only say ' +
-  'that something was created, changed, or done after a tool call has actually ' +
-  'returned success — never claim a file, folder, or action succeeded unless it ' +
-  'really did. If a tool fails or you cannot do something, say so plainly.';
+  'short and natural. You have access to tools (web search, file system, code ' +
+  'execution, calendar, weather, etc.) — you MUST call a tool to get any ' +
+  'information you do not already know. ' +
+  '\n\nCritical anti-hallucination rules: ' +
+  '(1) NEVER claim a tool ran or returned a result unless you actually invoked it ' +
+  'and saw the response in this conversation. ' +
+  '(2) NEVER invent specific facts, numbers, dates, file contents, or URLs. ' +
+  'If you did not run a tool to verify a fact, say you don\'t know. ' +
+  '(3) If a tool fails or returns an error, say so plainly — do not paper over it. ' +
+  '(4) When a user asks for live data (time, weather, news, scores, prices, ' +
+  'directions, "what\'s on my screen"), you MUST use a tool — your training data ' +
+  'is stale and any unreferenced answer is a hallucination. ' +
+  '(5) Prefer one well-targeted tool call over guessing. ' +
+  '\n\nIf the user asks a pure-conversation question (greetings, opinions, ' +
+  'explanations of things you know), answer directly without tools.';
 
 const MAX_TURNS = 24; // cap history (messages, excluding system) to bound payload
 let history: ChatMessage[] = [];

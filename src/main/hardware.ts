@@ -205,14 +205,25 @@ export function perfProfile(hw: HardwareInfo, gpuCapPct: number): PerfProfile {
   const sttThreads = Math.max(1, Math.min(headroom, Math.round(hw.cpuCores * capFrac)));
 
   // Orb quality: the lower of what the tier can afford and what the cap allows.
+  // At 'high' the orb runs at the display's native refresh (60-240 Hz) WITH the
+  // full shadow-blur pass — both are continuous GPU work, and running them in
+  // parallel with a Vulkan STT transcription on a mid-range GPU is what crashed
+  // the app on 'balanced' and 'max-performance' (the GPU saturated and the
+  // compositor locked up). Keep the orb at medium when we're also driving the
+  // GPU with STT, so a single turn can never peg every GPU consumer at once.
   const tierMax: PerfProfile['orbQuality'] = hw.tier === 'high' ? 'high' : hw.tier === 'medium' ? 'medium' : 'low';
   const capMax: PerfProfile['orbQuality'] = cap <= 35 ? 'low' : cap <= 60 ? 'medium' : 'high';
   const orbQuality = minQuality(tierMax, capMax);
 
   // STT backend: prefer the GPU (Vulkan) unless the cap is very low or there's no
-  // usable discrete GPU — then the CPU path keeps GPU utilisation near zero.
+  // usable discrete GPU. ALSO force CPU when the orb will run at high quality on
+  // a non-flagship GPU — the GPU+Vulkan+shadow-blur combo is the known crash
+  // path. The CPU path is a deterministic fallback (spec requires it) and on a
+  // high-tier CPU alone it's still well under a turn's budget.
   const sttBackend: PerfProfile['sttBackend'] =
-    cap <= 35 || (!hw.gpu.discrete && hw.gpu.vendor !== 'unknown') ? 'cpu' : 'vulkan';
+    cap <= 35 || (!hw.gpu.discrete && hw.gpu.vendor !== 'unknown') ? 'cpu' :
+    (orbQuality === 'high' && (hw.tier === 'medium' || cap <= 80)) ? 'cpu' :
+    'vulkan';
 
   return { sttThreads, sttBackend, orbQuality, gpuCapPct: cap };
 }
@@ -274,7 +285,6 @@ function threadsFor(hw: HardwareInfo, capPct: number): number {
 // (Kokoro is heavier to first-audio) and the nicer Kokoro voice where it's
 // affordable, and orb quality scaled to the tier.
 function autoProfile(hw: HardwareInfo): ResourceProfile {
-  const discrete = hw.gpu.discrete;
   if (hw.tier === 'low') {
     const cap = 40;
     return {
@@ -284,8 +294,13 @@ function autoProfile(hw: HardwareInfo): ResourceProfile {
   }
   if (hw.tier === 'medium') {
     const cap = 70;
+    // 'auto' on a medium-tier host with a discrete GPU: still avoid Vulkan STT
+    // for the same reason the 'balanced' preset does — it pegged the GPU and
+    // crashed the app alongside the orb + speech playback. CPU STT on the same
+    // hardware is well under a turn's budget.
+    const sttBackend: ResourceProfile['sttBackend'] = 'cpu';
     return {
-      preset: 'auto', sttModel: 'base.en', sttBackend: discrete ? 'vulkan' : 'cpu', sttThreads: threadsFor(hw, cap),
+      preset: 'auto', sttModel: 'base.en', sttBackend, sttThreads: threadsFor(hw, cap),
       ttsEngine: 'kokoro', ttsVoice: KOKORO_DEFAULT_VOICE, orbQuality: 'medium', gpuCapPct: cap,
     };
   }
@@ -315,19 +330,29 @@ export function resolveProfile(preset: PerfPreset, hw: HardwareInfo): ResourcePr
     }
     case 'balanced': {
       const cap = 60;
+      // GPU STT only on a true high-tier host. On 'medium' tier (the common
+      // laptop) Vulkan STT + orb at medium + speech playback saturated the GPU
+      // and crashed the app. CPU STT on the same hardware is still well under
+      // a turn's budget and turns 'balanced' into the actually-stable preset.
+      const sttBackend: PerfProfile['sttBackend'] = (hw.tier === 'high' && hw.gpu.discrete) ? 'vulkan' : 'cpu';
       return {
-        preset, sttModel: 'base.en', sttBackend: hw.gpu.discrete ? 'vulkan' : 'cpu', sttThreads: threadsFor(hw, cap),
+        preset, sttModel: 'base.en', sttBackend, sttThreads: threadsFor(hw, cap),
         ttsEngine: 'kokoro', ttsVoice: KOKORO_DEFAULT_VOICE, orbQuality: 'medium', gpuCapPct: cap,
       };
     }
     case 'max-performance': {
       const cap = 100;
       // A bigger STT model only where there's headroom for it (high tier); medium/
-      // low stay on base so "max" never makes a weak machine unusably slow.
+      // low stay on base so "max" never makes a weak machine unusably slow. The
+      // orb stays medium for medium-tier hosts (we don't want native-refresh +
+      // shadow blur + Vulkan STT in parallel — that combo crashed the app);
+      // high-tier hosts can run the full high orb + Vulkan STT.
       const sttModel = hw.tier === 'high' ? 'small' : 'base.en';
+      const orbQuality: PerfProfile['orbQuality'] = hw.tier === 'high' ? 'high' : 'medium';
+      const sttBackend: PerfProfile['sttBackend'] = (hw.tier === 'high' && hw.gpu.discrete) ? 'vulkan' : 'cpu';
       return {
-        preset, sttModel, sttBackend: hw.gpu.discrete ? 'vulkan' : 'cpu', sttThreads: threadsFor(hw, cap),
-        ttsEngine: 'kokoro', ttsVoice: KOKORO_DEFAULT_VOICE, orbQuality: 'high', gpuCapPct: cap,
+        preset, sttModel, sttBackend, sttThreads: threadsFor(hw, cap),
+        ttsEngine: 'kokoro', ttsVoice: KOKORO_DEFAULT_VOICE, orbQuality, gpuCapPct: cap,
       };
     }
     case 'auto':

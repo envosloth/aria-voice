@@ -70,6 +70,21 @@ check('opinion', route('what do you think about jazz music', both), 'llm');
 check('explain', route('explain how photosynthesis works', both), 'llm');
 check('in-order-to', route('in order to learn, what should I read about history', both), 'llm');
 
+// --- Paraphrased tool-intent phrasings the user reported "falling through to the
+// LLM" before this fix. Each one previously hit a chat model that hallucinated
+// the answer; now they reliably route to the harness. ---
+check('do-you-know-time', route('do you know what time it is', both), 'harness');
+check('tell-me-time', route('tell me the time', both), 'harness');
+check('current-time', route('what is the current time', both), 'harness');
+check('current-date', route('what is the current date', both), 'harness');
+check('go-to-wiki', route('go to wikipedia', both), 'harness');
+check('set-brightness', route('set brightness to 50', both), 'harness');
+check('start-music', route('start the music', both), 'harness');
+check('toggle-wifi', route('toggle wifi off', both), 'harness');
+check('change-volume', route('change the volume to 30', both), 'harness');
+check('who-is-winning', route('who is winning the game', both), 'harness');
+check('latest-score', route('what is the latest score', both), 'harness');
+
 // --- Screen-share vision detail: glance -> low (fast), reading -> high (legible) ---
 check('vd-whats-on-screen', visionDetailFor("what's on my screen"), 'low');
 check('vd-what-am-i-looking-at', visionDetailFor('what am I looking at'), 'low');

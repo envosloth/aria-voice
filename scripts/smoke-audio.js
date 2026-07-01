@@ -92,5 +92,15 @@ check('san-url-only-empty', S('https://only-a-link.com').trim() === 'link', `got
 check('san-stars-only-empty', S('***').trim() === '', `got "${S('***')}"`);
 check('san-empty', S('') === '' && S(null) === '' && S(undefined) === '');
 
+// 11. Word filter regression: stray carets and shell-style symbols used to make
+//     the TTS read "A circumflex" or "circumflex accent" out loud. They must be
+//     dropped (not translated to the symbol's spoken name).
+check('san-caret', !/\bcircumflex\b/i.test(S('press Ctrl+^ to toggle')), `got "${S('press Ctrl+^ to toggle')}"`);
+check('san-trailing-ctrl-plus', !/\b(ctrl|control)\s+plus\b/i.test(S('the chord Ctrl+^')), `got "${S('the chord Ctrl+^')}"`);
+check('san-math', !/[±×÷≈]/.test(S('value ± 5%')), `got "${S('value ± 5%')}"`);
+check('san-degree', !/\bdegree\b/i.test(S('heat to 90°')), `got "${S('heat to 90°')}"`);
+check('san-section', !/\bsection\b/i.test(S('see § 4.2 for details')), `got "${S('see § 4.2 for details')}"`);
+check('san-keeps-unicode-words', S('café déjà vu') === 'café déjà vu', `got "${S('café déjà vu')}"`);
+
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

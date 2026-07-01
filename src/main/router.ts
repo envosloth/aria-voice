@@ -34,13 +34,17 @@ const AGENTIC = new RegExp(
     'weather', 'forecast', 'temperature', 'humidity', 'raining', 'rain', 'snow',
     'sunny', 'cloudy', 'windy', 'storm', 'umbrella', 'sunrise', 'sunset',
     'uv index', 'air quality', 'pollen',
-    // time / date (live)
-    'what time', 'time is it', 'what day', 'what.s the date', 'todays date',
-    "today's date", 'date today', 'current time',
+    // time / date (live) — more phrasing variants so a paraphrased "what's the
+    // current time" or "do you know what time it is" reliably routes to the
+    // harness. The old list missed "do you know" / "can you tell me" prefixes,
+    // so casual phrasings leaked to the chat LLM and got hallucinated answers.
+    'what time', 'time is it', 'time it is', 'do you know what time', 'tell me the time',
+    'what day', 'what.s the date', 'todays date', "today's date", 'date today',
+    'current time', 'current date',
     // news / finance / sports (live)
     'news', 'headlines', 'stock', 'stocks', 'shares', 'market', 'crypto',
     'bitcoin', 'ethereum', 'price of', 'how much is', 'exchange rate', 'currency',
-    'score', 'scores', 'who won', 'standings',
+    'score', 'scores', 'who won', 'standings', 'who is winning', 'latest score',
     // search / web / research
     'search', 'search for', 'look up', 'lookup', 'google', 'bing', 'wikipedia',
     'browse', 'website', 'on the internet',
@@ -63,16 +67,19 @@ const AGENTIC = new RegExp(
 
 // Strong real-time signals: when present, the answer depends on the live world,
 // so it needs tools -> harness. Kept tight (no bare "today"/"tonight") so casual
-// pleasantries like "how are you today" aren't misrouted.
+// pleasantries like "how are you today" aren't misrouted. Added a few more
+// variants (right now / currently / latest) and an explicit "what is the
+// weather/temperature/forecast/time" so the common phrasings never fall through.
 const REALTIME =
-  /\b(right now|currently|the latest|up[- ]?to[- ]?date|near me|nearby|around here|this (week|weekend|month|year)|what time|what'?s the time|what day|what'?s the date)\b/i;
+  /\b(right now|currently|the latest|up[- ]?to[- ]?date|near me|nearby|around here|this (week|weekend|month|year)|what time|what'?s the time|what day|what'?s the date|what is the (weather|time|forecast|date|temperature|score|price))\b/i;
 
 // Imperative device/tool actions at the START of the message -> harness. Limited
 // to verbs that imply DOING something (not "tell/explain/describe/what/how",
 // which are conversational), and start-anchored so they don't match mid-sentence
-// filler.
+// filler. Added a few more common action verbs ("set", "start", "stop", "go to")
+// so a paraphrased "go to wikipedia" or "set brightness to 50" reliably routes.
 const ACTION =
-  /^\s*(open|launch|play|pause|resume|skip|mute|unmute|turn|set|send|call|text|email|remind|schedule|book|order|buy|reserve|navigate|download|install|update|upgrade|enable|disable|check|find|search|look up|show me|get me|pull up|bring up|take a)\b/i;
+  /^\s*(open|launch|play|pause|resume|skip|mute|unmute|turn|set|send|call|text|email|remind|schedule|book|order|buy|reserve|navigate|download|install|update|upgrade|enable|disable|check|find|search|look up|show me|get me|pull up|bring up|take a|start|stop|go to|switch|toggle|change|adjust|raise|lower|increase|decrease)\b/i;
 
 // Screen-share vision detail. The OpenAI-compatible `image_url.detail` controls
 // how hard the vision model works: "high" tiles the image into 512px tiles (many

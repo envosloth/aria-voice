@@ -57,9 +57,14 @@
     // refresh (160/165/240 Hz), so the orb is buttery, not visibly capped. 4ms is a
     // ~250 FPS ceiling that no real panel hits, so in practice it's one render per
     // refresh. Background windows still drop to BLUR_MIN_MS (~5 FPS) in loop().
-    high:   { stateMs: { idle: 4, listening: 4, processing: 4, speaking: 4 }, shadows: true,  blurMax: 26 },
-    medium: { stateMs: { idle: 40, listening: 40, processing: 40, speaking: 28 }, shadows: true,  blurMax: 8 },
-    low:    { stateMs: { idle: 66, listening: 66, processing: 66, speaking: 40 }, shadows: false, blurMax: 0 },
+    // The 'activeMs' is the throttled cap when an STT transcription is in flight
+    // (set by AriaOrb.beginStt/endStt from the renderer when the LLM/stt IPC
+    // fires) — 16ms = ~60 FPS, which still reads as smooth but takes the GPU
+    // from being pegged by a 240 Hz orb + Vulkan STT + speech playback, which
+    // was the "crash on balanced+" symptom.
+    high:   { stateMs: { idle: 4, listening: 4, processing: 4, speaking: 4 }, activeMs: 16, shadows: true,  blurMax: 26 },
+    medium: { stateMs: { idle: 40, listening: 40, processing: 40, speaking: 28 }, activeMs: 40, shadows: true,  blurMax: 8 },
+    low:    { stateMs: { idle: 66, listening: 66, processing: 66, speaking: 40 }, activeMs: 66, shadows: false, blurMax: 0 },
   };
   let quality = 'high';
   function setQuality(q) {
@@ -273,19 +278,41 @@
     let ppMin = 1e9, ppMax = -1e9;
     for (let k = 0; k < NPTS; k++) {
       const sp = sinPhi[k];
-      // Speaking-only surface swell: a few LOW-frequency waves in (latitude,
-      // longitude) that drift slowly over time. Because they're smooth functions
-      // of position (no per-vertex randomness), neighbouring vertices move
-      // together — the orb rolls and bulges like a soft blob instead of spiking
-      // into points. dAmp is 0 outside speaking, so other states stay perfectly
-      // round spheres.
+      // Speaking-only surface deformation. The whole point: make the orb's
+      // surface READ as a living, varied thing, not a single bump that always
+      // shows up in the same spot. Old implementation stacked just 3 low-freq
+      // sine waves — they always peaked at the same (phi, theta) pair, so the
+      // bulges looked identical every frame. New implementation mixes:
+      //   - 3-5 sin waves at quasi-commensurate frequencies (low-freq roll/swell
+      //     that drift over time)
+      //   - a per-vertex jitter term driven by `seed[k]` (the position hash) so
+      //     different patches of the surface bulge independently, but smoothly
+      //     (the jitter is the SAME value for a given vertex, so neighbouring
+      //     vertices still move together — no spikes)
+      //   - the wobble is gated by `sp` (sin(phi)) so the poles stay calm and
+      //     the equator does the most moving, preserving the blob reading
+      // dAmp is 0 outside speaking, so other states stay perfectly round spheres.
       let rk = r;
       if (dAmp > 0.0005) {
         const ph = phiArr[k], th = thArr[k];
-        const wob = Math.sin(th * 2 + t * 1.6) * sp         // equatorial roll, eased to 0 at the poles
-                  + Math.sin(ph * 2 - t * 1.2)               // pole-to-pole undulation
-                  + 0.6 * Math.sin(th + ph * 2 + t * 0.8);   // slow diagonal swell
-        rk = r * (1 + dAmp * wob * 0.4);
+        // Position-coupled variation: this vertex's unique bump phase, fixed in
+        // (phi, theta) space so it doesn't shimmer between frames. Slow time
+        // modulation means the bump LOCATIONS drift (you never see a static
+        // dimple), but each dimple is itself smooth. The 0.5 amplitude is
+        // intentionally below the 3 base sin waves so the surface reads as
+        // breathing-and-rolling-with-texture, not as noise.
+        const phJit = seed[k] * 0.5;
+        const wob =
+            Math.sin(th * 2 + t * 1.6) * sp                       // equatorial roll (poles calm)
+          + Math.sin(ph * 2 - t * 1.2)                             // pole-to-pole undulation
+          + 0.6 * Math.sin(th + ph * 2 + t * 0.8)                 // slow diagonal swell
+          + 0.5 * Math.sin(th * 3 + ph * 2 + t * 0.4 + phJit)     // higher-freq textured bump
+          + 0.35 * Math.cos(th * 2 - ph * 3 + t * 0.6 + phJit);   // cross-frequency interference
+        // Cap the wobble so it can't push a vertex past 1.45× the base radius —
+        // beyond that the orb reads as a star/spline, not a blob. The clamp is
+        // a hard safety against the breakage symptom the user reported.
+        const wo = Math.max(-0.35, Math.min(0.35, wob));
+        rk = r * (1 + dAmp * wo * 0.55);
       }
       // Apply the per-frame ambient drift on top of the audio wobble.
       rk *= 1 + drift;
@@ -404,6 +431,14 @@
     const q = QUALITY[quality];
     return (q && q.stateMs[s]) || STATE_MIN_MS[s] || 33;
   }
+  // The throttled cap while an STT transcription is in flight (the GPU STT path
+  // is the other continuous GPU consumer alongside the orb; allowing both to
+  // run uncapped on a 240 Hz monitor is the "crash on balanced+" symptom).
+  // Refcounted so concurrent STT streams (or rapid re-fires) don't un-throttle
+  // prematurely. Defaults to the full-speed per-state cap when no STT is active.
+  let sttActive = 0;
+  function beginStt() { sttActive++; }
+  function endStt() { sttActive = Math.max(0, sttActive - 1); }
   // When the window isn't focused (ARIA living in the background, common for a
   // voice assistant) drop to ~5 FPS regardless of state — nobody's watching the
   // orb, so there's no reason to burn CPU repainting it. document.hidden already
@@ -432,8 +467,15 @@
     // keep it smooth even if the window isn't focused. Idle/listening/processing
     // in the background (the always-on drain) drop to 5 FPS.
     const blurred = !windowFocused && state !== 'speaking';
+    // When an STT transcription is in flight on a high-tier host, swap in the
+    // throttled cap so the orb doesn't pin the GPU alongside Vulkan STT. The
+    // per-state cap still wins when no STT is active.
+    const q = QUALITY[quality];
+    const stateMs = (q && q.stateMs[state]) || STATE_MIN_MS[state] || 33;
+    const activeMs = (q && q.activeMs) || stateMs;
+    const capMs = sttActive > 0 ? Math.max(stateMs, activeMs) : stateMs;
     // Focused -> smooth (>=60 FPS, native on the high tier); backgrounded -> ~5 FPS.
-    const minMs = blurred ? BLUR_MIN_MS : Math.min(stateMinMs(state), FOCUS_SMOOTH_MS);
+    const minMs = blurred ? BLUR_MIN_MS : Math.min(capMs, FOCUS_SMOOTH_MS);
     if (now - lastRenderAt >= minMs) {
       lastRenderAt = now;
       // A single bad frame (e.g. a transient state during a resize) must never
@@ -515,7 +557,7 @@
     for (let i = 0; i < frames; i++) { now += 16.67; try { render(now); } catch (e) {} }
   }
 
-  root.AriaOrb = { init, setLevel, setState, setQuality, effectiveDpr, backingFor, measure, benchmark, refreshAccent, toggleFps, pump, MAX_BACKING };
+  root.AriaOrb = { init, setLevel, setState, setQuality, beginStt, endStt, effectiveDpr, backingFor, measure, benchmark, refreshAccent, toggleFps, pump, MAX_BACKING };
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);
 })(typeof self !== 'undefined' ? self : this);

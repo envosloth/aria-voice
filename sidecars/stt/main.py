@@ -117,6 +117,12 @@ class SttSidecar(BaseSidecar):
             cmd += self._thread_args()
             if self._force_cpu or not self.using_vulkan:
                 cmd.append("--no-gpu")
+            # Same determinism knob as the server: --no-fallback (disable the
+            # temperature-increment retry) and pin temperature to 0 explicitly.
+            # Together they kill the "Thanks for watching" hallucination on
+            # clipped audio — the high-temp retry path is what produced the
+            # phantom phrase in the first place. Empty result beats a fake one.
+            cmd += ["--temperature", "0.0", "--no-fallback"]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=self._env())
             return result.stdout.strip()
         finally:
@@ -142,6 +148,16 @@ class SttSidecar(BaseSidecar):
         self._force_cpu = os.environ.get("ARIA_STT_BACKEND", "").lower() == "cpu"
         if self._force_cpu:
             cmd.append("--no-gpu")
+        # Accuracy / determinism knob that doesn't cost latency: --no-fallback
+        # tells the server NOT to retry with increasing temperature when greedy
+        # decoding produces low-confidence output. The retry path is the source
+        # of the "Thanks for watching" hallucinations on clipped audio (the
+        # model picks a high-temperature guess when its first attempt scores
+        # below the entropy threshold). Disabling it pins the server to greedy
+        # decoding; if the first pass doesn't transcribe, you get an empty
+        # result, which is preferable to a hallucinated phrase. The CLI side
+        # uses --temperature 0.0 + --no-fallback for the same reason.
+        cmd += ["--no-fallback"]
         self._server_proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             env=self._env(), text=True,

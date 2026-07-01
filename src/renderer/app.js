@@ -447,6 +447,10 @@ function beginUtterance(opts) {
   listening = true;
   micBtn.classList.add('listening');
   orbState('listening');
+  // Tell the orb an STT transcription is starting so the GPU-bound render can
+  // swap in its throttled cap (the "high" tier native-refresh + Vulkan STT
+  // combo was the crash path on 'balanced' and above).
+  try { window.AriaOrb && window.AriaOrb.beginStt && window.AriaOrb.beginStt(); } catch (e) {}
   aria.stt.start(turnId);
   // VAD endpointing only for hands-free (wake-word) turns; push-to-talk ends on
   // button release.
@@ -480,6 +484,10 @@ micBtn.addEventListener('mouseleave', endUtterance);
 startMicCapture();
 
 aria.stt.onResult((text) => {
+  // STT transcription is done; lift the orb's GPU throttling. The orb flips
+  // back to its per-state cap (full refresh on the high tier). Wrapped in a
+  // try/catch in case the orb isn't ready yet (tests, headless boot).
+  try { window.AriaOrb && window.AriaOrb.endStt && window.AriaOrb.endStt(); } catch (e) {}
   if (text.trim()) {
     partialEl.textContent = '';
     perf.mark(currentVoiceTurnId, 'stt_result_render', { chars: text.trim().length });
