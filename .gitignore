@@ -42,3 +42,6 @@ Thumbs.db
 .env
 *.key
 credentials.json
+
+# Local progress backups
+RALPH_PROGRESS.prev.md
