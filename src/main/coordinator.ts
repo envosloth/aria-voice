@@ -91,6 +91,15 @@ function isVisionUnsupportedError(msg: string): boolean {
   return /image_url|unknown variant|image|vision|multimodal|content.*must be a string|invalid type.*image/i.test(msg);
 }
 
+// The endpoint rejected our credentials (bad/expired key). Worth its own message
+// because it's actionable — the user has to fix the key in Settings, not the
+// server. This is the common "screen share doesn't work" cause: an image forces
+// the harness target, so a stale harness key 401s every screen-share turn while
+// normal chat (routed to the LLM) keeps working and hides the problem.
+function isAuthError(msg: string): boolean {
+  return /\b(401|403)\b|invalid[_ ]api[_ ]key|unauthorized|forbidden/i.test(msg);
+}
+
 /**
  * Route a user message to the conversational LLM or the agent harness, then
  * stream the reply. The full shared conversation history is sent to whichever
@@ -217,6 +226,13 @@ export async function coordinate(
             `Can't reach your ${which} at ${ep} — is it running? ` +
             'Check Settings → endpoint, start the server (e.g. Ollama / your harness), ' +
             'or configure a reachable endpoint. Text input still works.',
+          );
+        } else if (isAuthError(err)) {
+          const where = target === 'harness' ? 'Agent Harness' : 'Conversational LLM';
+          cb.onError(
+            `Your ${which} at ${ep} rejected the API key (401/403). ` +
+            `Open Settings → ${where} and re-enter a valid API key. ` +
+            (target === 'harness' ? 'Screen share always routes here, so it fails until the key is fixed.' : ''),
           );
         } else {
           cb.onError(`${which} error: ${err}`);

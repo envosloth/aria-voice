@@ -33,6 +33,8 @@ export function normalizeChatBaseUrl(rawEndpoint: string): URL | null {
   const base = url.pathname.replace(/\/+$/, '');
   if (base === '') {
     url.pathname = '/v1/models';                       // host only
+  } else if (/\/models$/.test(base)) {
+    url.pathname = base;                               // already the models route — don't double-append
   } else if (/\/v\d+$/.test(base)) {
     url.pathname = base + '/models';                   // "…/v1" base
   } else if (/\/chat\/?completions$/.test(base)) {
