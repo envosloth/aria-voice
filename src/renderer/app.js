@@ -414,7 +414,7 @@ function updateVad(samples) {
 // whether it's still "speaking" before flipping back to idle (so a barge-in that
 // already moved us to 'listening' is never clobbered by a late audio-end).
 let orbStateName = 'idle';
-function orbState(s) { orbStateName = s; if (window.AriaOrb) window.AriaOrb.setState(s); }
+function orbState(s) { orbStateName = s; document.body.dataset.state = s; if (window.AriaOrb) window.AriaOrb.setState(s); }
 
 // Barge-in: the user started talking to ARIA (wake word, global/in-window
 // shortcut, or push-to-talk) while it was still thinking or speaking. Stop the

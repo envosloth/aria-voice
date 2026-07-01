@@ -72,6 +72,7 @@
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
       overflow: hidden;
+      transition: background-color 0.5s ease, color 0.5s ease;
     }
 
     /* ── Custom scrollbars ── */
@@ -191,6 +192,11 @@
       position: relative;
       transition: background 0.2s ease, border-color 0.2s ease, transform 0.15s ease;
     }
+    @keyframes msg-in {
+      from { opacity: 0; transform: translateY(10px) scale(0.98); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .message { animation: msg-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) both; }
     .message.user {
       align-self: flex-end;
       background: linear-gradient(135deg, var(--accent), color-mix(in srgb, var(--accent-active) 40%, var(--accent)));
@@ -236,6 +242,24 @@
       backdrop-filter: blur(20px) saturate(1.4);
       -webkit-backdrop-filter: blur(20px) saturate(1.4);
       border-top: 1px solid var(--border);
+    }
+    @keyframes shimmer {
+      0% { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+    .input-area::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent-active), transparent);
+      background-size: 200% 100%;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+      pointer-events: none;
+    }
+    body[data-state="processing"] .input-area::before {
+      opacity: 1;
+      animation: shimmer 1.8s infinite linear;
     }
 
     #text-input {
