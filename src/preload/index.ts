@@ -116,6 +116,20 @@ const api = {
     onError: (cb: (msg: string) => void) =>
       ipcRenderer.on(IPC.MODEL_ERROR, (_e, msg) => cb(msg)),
   },
+
+  // Remote access (SSH tunnel) — see src/main/tunnel-supervisor.ts. The
+  // status is pushed to the renderer on every state change (connected /
+  // reconnecting / error / …); the renderer subscribes via `onStatus`
+  // and renders a banner with a "Copy URL" button + Connect/Disconnect
+  // controls. `snapshot()` reads the latest state synchronously (used
+  // when the Settings panel first opens).
+  tunnel: {
+    snapshot: () => ipcRenderer.invoke(IPC.TUNNEL_SNAPSHOT),
+    start: () => ipcRenderer.send(IPC.TUNNEL_START),
+    stop: () => ipcRenderer.send(IPC.TUNNEL_STOP),
+    onStatus: (cb: (s: Record<string, unknown>) => void) =>
+      ipcRenderer.on(IPC.TUNNEL_STATUS, (_e, s) => cb(s)),
+  },
 };
 
 contextBridge.exposeInMainWorld('aria', api);

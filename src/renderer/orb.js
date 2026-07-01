@@ -97,7 +97,6 @@
   const sinPhi = new Float32Array(NPTS), cosPhi = new Float32Array(NPTS);
   const sinTh = new Float32Array(NPTS), cosTh = new Float32Array(NPTS);
   const phiArr = new Float32Array(NPTS), thArr = new Float32Array(NPTS);
-  const iArr = new Int8Array(NPTS), jArr = new Int8Array(NPTS);
   const seed = new Float32Array(NPTS);
   (function build() {
     let k = 0;
@@ -106,7 +105,6 @@
       for (let j = 0; j < LON; j++, k++) {
         const theta = (j / LON) * TWO_PI;
         phiArr[k] = phi; thArr[k] = theta;
-        iArr[k] = i; jArr[k] = j;
         sinPhi[k] = Math.sin(phi); cosPhi[k] = Math.cos(phi);
         sinTh[k] = Math.sin(theta); cosTh[k] = Math.cos(theta);
         seed[k] = Math.sin(i * 12.9 + j * 78.2);
@@ -280,67 +278,61 @@
     let ppMin = 1e9, ppMax = -1e9;
     for (let k = 0; k < NPTS; k++) {
       const sp = sinPhi[k];
-      // Speaking-only surface deformation. The whole point: make the orb's
-      // surface READ as a living, varied thing, not a single bump that always
-      // shows up in the same spot. The wobble is the SUM of multiple wave
-      // components, each of which has a DIFFERENT time multiplier, a
-      // DIFFERENT spatial frequency, and a per-vertex phase offset derived
-      // from the (i, j) grid coordinates (not a hash). The phase offsets
-      // mean the peaks of each component occur at DIFFERENT (phi, theta)
-      // points on the surface, so the visible bump pattern is the
-      // superposition of many moving waves — not a single dimple that
-      // travels around. Sp is sin(phi) which naturally damps the poles, so
-      // the equator does the most moving (preserves the blob reading).
+      // Speaking-only surface deformation. The design goal: a NATURAL-looking
+      // bulge that "breathes" with the voice, like a soft balloon being
+      // gently squeezed on one side. Earlier iterations stacked 7+ wave
+      // components with per-vertex jitter — that produced a "rippled" or
+      // "cellular" surface that read as a glitch, not a living thing. The
+      // fix is fewer components, lower frequencies, and NO per-vertex
+      // jitter — vertices with the same (phi, theta) move the same amount,
+      // so neighbours stay phase-aligned and the surface stays smooth.
+      //
+      // Components:
+      //   1) One slow equatorial bulge (one full wave around theta, polar-
+      //      damped so the poles don't move). This is the primary
+      //      "swelling" that visibly responds to the voice.
+      //   2) One slow pole-to-pole undulation (one wave from north to south
+      //      pole, animated out of phase with #1). Adds variety in the
+      //      orthogonal direction so the bulge isn't a uniform ring.
+      //   3) One slow "breathing" — a uniform radial pulse with a
+      //      separate time multiplier. The whole orb gently inflates and
+      //      deflates a few percent, separate from the directional
+      //      bulges. Reads as the orb "breathing" with the speaker.
+      //
       // dAmp is 0 outside speaking, so other states stay perfectly round.
       let rk = r;
       if (dAmp > 0.0005) {
         const ph = phiArr[k], th = thArr[k];
-        const i = iArr[k], j = jArr[k];
-        // Per-vertex phase offsets. Crucial for diversity: each vertex's
-        // contribution to each component is shifted, so the wave doesn't
-        // peak at the same (phi, theta) for every component. Using simple
-        // modular arithmetic on the grid indices (no hash) means neighbours
-        // have similar phases — so nearby vertices still move together
-        // (no spikes) but the global bump pattern is multi-centred.
-        const jitA = (i * 1.7 + j * 0.3) * 0.5;
-        const jitB = (i * 0.9 - j * 1.1) * 0.5;
-        const jitC = (i * 0.4 + j * 0.7) * 0.7;
-        const jitD = (i * 0.2 - j * 0.5) * 0.9;
+        const sp = sinPhi[k];
+        // Three slow components. No per-vertex jitter — by design. The
+        // goal is SMOOTH surface motion, not high-frequency texture.
+        //   Component 1: equatorial bulge, polar-damped, time t * 0.55.
+        //     One cycle around theta -> exactly one bump on the visible
+        //     hemisphere. As t advances, the bump slowly rotates around
+        //     the orb (because the phase advances), but stays at most one
+        //     bump wide so the surface reads as "one part of it is bigger".
+        //   Component 2: pole-to-pole undulation, time t * 0.35. One wave
+        //     from south pole to north pole, animated at a different rate
+        //     so the two don't synchronise. Adds variation in the
+        //     orthogonal direction without making the surface rippled.
+        //   Component 3: global breath, time t * 0.9 (faster than the
+        //     bulges so it feels like a separate rhythm). Uniform radial
+        //     pulse — every vertex moves in/out the same small amount.
         const wob =
-            // Low-freq roll, polar-damped, time 1.6.
-            Math.sin(th * 2 + t * 1.6) * sp
-            // Pole-to-pole undulation, time 1.2 (different rate).
-          + Math.sin(ph * 2 - t * 1.2)
-            // Diagonal swell, time 0.8.
-          + 0.6 * Math.sin(th + ph * 2 + t * 0.8 + jitA)
-            // Higher-freq textured bump, time 0.4 (slow drift), per-vertex
-            // phase so different surface patches bulge at different times.
-          + 0.5 * Math.sin(th * 3 + ph * 2 + t * 0.4 + jitB)
-            // Cross-freq interference, time 0.6, different per-vertex phase.
-          + 0.35 * Math.cos(th * 2 - ph * 3 + t * 0.6 + jitC)
-            // A 6th, EVEN HIGHER freq component with its OWN time multiplier
-            // (0.25) so the surface has a fine "ripple" texture layered
-            // over the slower rolls. This is the main diversity win — fine
-            // ripples that travel at their own pace, distinct from the
-            // 3 base waves.
-          + 0.25 * Math.sin(th * 5 - ph * 1.5 + t * 0.25 + jitD)
-            // A 7th asymmetric component: a single travelling bump that
-            // slowly orbits the orb, time multiplier 0.15. The slow orbit
-            // gives a clear "this thing is alive and moving" signal even
-            // when the audio is quiet.
-          + 0.3 * Math.sin(th - ph * 1.2 + t * 0.15);
-        // Saturation. The summed 7-component wobble can reach ±3.0 in
-        // magnitude when phases align (raw peaks of all 7 components
-        // constructive). A hard clamp at ±0.35 would eat most of the
-        // variation (most values saturate, only 4 unique values across
-        // 16 sample points). A smooth tanh preserves sign + monotonicity
-        // and compresses only the extremes, keeping 16/16 unique values
-        // while guaranteeing |wo| never exceeds 0.35. This is the
-        // breakage safety: the orb can never form a star/spline no matter
-        // how the waves align. Multiplied by 0.55*dAmp downstream, the
-        // max per-vertex radial deviation stays under 0.20 (20%) of base
-        // radius — well within the "blob" reading.
-        const wo = Math.tanh(wob) * 0.35;
+            // Equatorial bulge: single wave around the orb's waist.
+            Math.sin(th + t * 0.55) * sp * 0.8
+            // Pole-to-pole undulation: single wave top-to-bottom.
+          + Math.cos(ph * 2 + t * 0.35) * 0.4
+            // Global breath: every vertex pulses in/out together.
+          + Math.sin(t * 0.9) * 0.3;
+        // Gentle saturation. Three components with small amplitudes sum to
+        // at most ~±1.5 raw, but in practice the bulges cancel each other
+        // most of the time so the actual peak is ~±1.0. tanh keeps the
+        // surface smooth at the extremes (no hard clamp that would flatten
+        // the bulges into a uniform ring) and guarantees |wo| < 0.45,
+        // which after dAmp * 0.55 gives at most ~25% radial deviation —
+        // well within the "blob" reading.
+        const wo = Math.tanh(wob) * 0.45;
         rk = r * (1 + dAmp * wo * 0.55);
       }
       // Apply the per-frame ambient drift on top of the audio wobble.

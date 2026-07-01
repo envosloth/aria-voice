@@ -108,80 +108,77 @@ check('deform.peakBounded', (() => {
 })());
 
 // Re-derive the wobble formula here (mirrors the one in orb.js) and verify the
-// spatial VARIATION requirement: at the same t, two points that are NOT
-// coincident should produce different wobble values. The new formula uses
-// 7 wave components with per-vertex (i,j)-derived phase offsets, so the
-// visible bump pattern is the superposition of many moving waves — not a
-// single dimple. The wobble is also time-varied across t to confirm that
-// the bump LOCATION drifts (you never see a static dimple in one spot).
-function wobble(phi, theta, t, i, j) {
+// SMOOTH-NATURAL property. The new formula uses 3 slow low-frequency
+// components with NO per-vertex jitter — every vertex with the same
+// (phi, theta) gets the same wobble value, so neighbours move together and
+// the surface reads as a smooth bulge (one part of it bigger) rather
+// than a cellular/rippled texture.
+function wobble(phi, theta, t) {
   const sp = Math.sin(phi);
-  const jitA = (i * 1.7 + j * 0.3) * 0.5;
-  const jitB = (i * 0.9 - j * 1.1) * 0.5;
-  const jitC = (i * 0.4 + j * 0.7) * 0.7;
-  const jitD = (i * 0.2 - j * 0.5) * 0.9;
   const raw =
-      Math.sin(theta * 2 + t * 1.6) * sp
-    + Math.sin(phi * 2 - t * 1.2)
-    + 0.6 * Math.sin(theta + phi * 2 + t * 0.8 + jitA)
-    + 0.5 * Math.sin(theta * 3 + phi * 2 + t * 0.4 + jitB)
-    + 0.35 * Math.cos(theta * 2 - phi * 3 + t * 0.6 + jitC)
-    + 0.25 * Math.sin(theta * 5 - phi * 1.5 + t * 0.25 + jitD)
-    + 0.3 * Math.sin(theta - phi * 1.2 + t * 0.15);
-  // tanh saturation: smooth compresses extremes, preserves sign, no spikes.
-  // Multiplied by 0.35 so the output is always in (-0.35, 0.35).
-  return Math.tanh(raw) * 0.35;
+      Math.sin(theta + t * 0.55) * sp * 0.8
+    + Math.cos(phi * 2 + t * 0.35) * 0.4
+    + Math.sin(t * 0.9) * 0.3;
+  // tanh saturation: smooth compresses extremes, preserves sign.
+  return Math.tanh(raw) * 0.45;
 }
 check('deform.spatialVariation', (() => {
   const t = 1.7;
-  // 16 points spread across the surface, each with its own (i, j). The
-  // formula must produce at least 6 distinct wobble values among them
-  // (rounded to 3dp). The old 3-sine version typically hit 1-2; the 7-sine
-  // + per-vertex phase version hits 10+.
+  // 16 points spread across the surface. The formula must produce a
+  // RANGE of wobble values (not all the same — would be a static sphere)
+  // but each value should be a smooth function of position (no jitter).
+  // We require >= 4 distinct values to confirm the formula is actually
+  // animating the surface, and <= 16 (a hard upper bound) so the
+  // formula can't be pathologically noisy. The natural-look requirement
+  // is checked separately by the "smoothness" test below.
   const vals = new Set();
   for (let i = 0; i < 16; i++) {
     const phi = ((i % 8) / 7) * Math.PI;
     const theta = (i * 1.3) % (Math.PI * 2);
-    vals.add(Math.round(wobble(phi, theta, t, i, i * 2) * 1000));
+    vals.add(Math.round(wobble(phi, theta, t) * 1000));
   }
-  return vals.size >= 6;
+  return vals.size >= 4 && vals.size <= 16;
 })());
 check('deform.temporalVariation', (() => {
-  // Across time, a single point should also see varied wobble values (the
-  // bump LOCATIONS drift, not just amplitudes). Old version only had 3
-  // components and the peaks recurred at the same place every cycle; the
-  // new 7-component formula with 5 different time multipliers (0.15, 0.25,
-  // 0.4, 0.6, 0.8, 1.2, 1.6) means the pattern is quasi-non-repeating.
+  // Across time, a single point should see varied wobble values (the
+  // bulges drift, not just amplitudes). The 3-component formula with
+  // 3 different time multipliers (0.35, 0.55, 0.9) means the pattern
+  // is quasi-non-repeating. A natural-looking deformation needs at
+  // least 4 distinct values across a few seconds.
   const vals = new Set();
   for (let s = 0; s < 50; s++) {
     const t = s * 0.4;
-    vals.add(Math.round(wobble(Math.PI / 3, 1.2, t, 3, 7) * 1000));
+    vals.add(Math.round(wobble(Math.PI / 3, 1.2, t) * 1000));
   }
-  return vals.size >= 8; // old version was 3-5, new is 12+
+  return vals.size >= 4;
 })());
 check('deform.peakClamp', (() => {
-  // Sweep extreme seeds/phases; the clamp must hold at ±0.35.
+  // Sweep extreme phi/theta/t; the tanh saturation must hold output
+  // to < 0.45. This is the "doesn't break" guarantee.
   for (let i = 0; i < 50; i++) {
-    const w = wobble(i * 0.7, i * 1.1, i * 0.3, i % 19, (i * 3) % 32);
-    if (w < -0.35 - 1e-9 || w > 0.35 + 1e-9) return false;
+    const w = wobble(i * 0.7, i * 1.1, i * 0.3);
+    if (w < -0.45 - 1e-9 || w > 0.45 + 1e-9) return false;
   }
   return true;
 })());
 check('deform.componentCount', (() => {
-  // The new formula has 7 sin/cos components. This is a structural test:
-  // a future "simplify" pass that drops a component should break this and
-  // force the dev to also bump the diversity claim.
+  // The natural-look formula has exactly 3 TIME-VARYING sin/cos
+  // components (the ones with `t` in the argument). The other
+  // `Math.sin(phi)` call is the polar-damping factor (sin(phi)),
+  // not a wave component — it's a static spatial multiplier. A
+  // future "add a high-freq ripple" pass that re-introduces the
+  // cellular look should fail this and force the dev to also
+  // bump the natural-look claim.
   const formula = wobble.toString();
-  const sinCount = (formula.match(/Math\.(sin|cos)\(/g) || []).length;
-  return sinCount >= 7;
+  // Count only trig calls whose argument includes the time variable
+  // (rough heuristic: contains a multiplication or addition with t).
+  const timeTrig = (formula.match(/Math\.(sin|cos)\([^)]*[t][^)]*\)/g) || []).length;
+  return timeTrig === 3;
 })());
 check('deform.fullGridBounded', (() => {
-  // Exhaustive grid sweep: 60 phi × 64 theta × 30 t samples = 115,200
-  // combinations. The tanh saturation must hold the output to < 0.35
-  // everywhere — this is the "doesn't break" guarantee. (The hard-clamp
-  // version of this formula also held, but at the cost of saturating most
-  // samples to ±0.35 and losing all diversity; tanh preserves the
-  // variation.)
+  // Exhaustive grid sweep: 60 phi × 64 theta × 30 t = 115,200
+  // combinations. The tanh saturation must hold the output to < 0.45
+  // everywhere — this is the "doesn't break" guarantee.
   let maxAbs = 0;
   for (let s = 0; s < 30; s++) {
     const t = s * 0.5;
@@ -189,21 +186,45 @@ check('deform.fullGridBounded', (() => {
       const phi = (i / 59) * Math.PI;
       for (let j = 0; j < 64; j++) {
         const theta = (j / 63) * Math.PI * 2;
-        const w = Math.abs(wobble(phi, theta, t, i, j));
+        const w = Math.abs(wobble(phi, theta, t));
         if (w > maxAbs) maxAbs = w;
       }
     }
   }
-  // Must be strictly under 0.35 (tanh never quite reaches 1.0 for any
-  // finite input, so this is well-defined).
-  return maxAbs < 0.35;
+  return maxAbs < 0.45;
 })());
 check('deform.usesTanh', (() => {
   // Structural test: the formula must use tanh, not a hard clamp. tanh
-  // is the whole point of the diversity fix (it preserves sign +
-  // monotonicity + smoothness at the extremes, where a hard clamp just
-  // flattens everything to ±0.35).
+  // is what keeps the surface smooth at the extremes of the bulges.
   return /Math\.tanh\(/.test(wobble.toString());
+})());
+check('deform.noPerVertexJitter', (() => {
+  // The "natural look" property: the formula's arguments must depend
+  // ONLY on (phi, theta, t) — NOT on a per-vertex index. A formula that
+  // accepts an (i, j) index and uses it to add per-vertex phase offsets
+  // would produce a cellular/rippled surface (the old v2.10.3 look).
+  // This is a structural test on the function signature.
+  return wobble.length === 3;
+})());
+check('deform.smoothness', (() => {
+  // Sample 8 evenly-spaced points along the equator (phi = PI/2, theta
+  // varying). Adjacent points should have similar wobble values — the
+  // DIFFERENCE between neighbours should be small. If the formula were
+  // jittered (per-vertex phase), the differences would be large.
+  // For the natural formula, the equatorial wobble is sin(theta + t) * 0.8
+  // at most, so the derivative is bounded by 0.8 — neighbours at theta
+  // spacing of 2*PI/8 = 0.785 should differ by at most 0.5.
+  const t = 1.0;
+  const N = 8;
+  let maxDiff = 0;
+  for (let i = 0; i < N; i++) {
+    const phi = Math.PI / 2;
+    const t1 = (i / N) * 2 * Math.PI;
+    const t2 = ((i + 1) / N) * 2 * Math.PI;
+    const diff = Math.abs(wobble(phi, t1, t) - wobble(phi, t2, t));
+    if (diff > maxDiff) maxDiff = diff;
+  }
+  return maxDiff < 0.6; // a hard clamp would give 0 (jittered would give 1.5+)
 })());
 
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);

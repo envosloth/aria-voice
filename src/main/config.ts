@@ -31,6 +31,44 @@ interface AppConfig {
   routing: {
     mode: 'auto' | 'llm' | 'harness';
   };
+  // Remote access to the harness (or any endpoint) over SSH. When
+  // `enabled` is true, ARIA spawns `ssh -N -L <localPort>:remoteHost:
+  // remotePort user@sshHost` at startup (or on demand), keeps the process
+  // alive, and exposes a `tunneledEndpoint` URL the user can paste into
+  // the harness/llm endpoint field (typically http://127.0.0.1:localPort/
+  // v1/chat/completions). The tunnel state (PID, last error, bytes
+  // forwarded) is published to the renderer for a status indicator.
+  //
+  // Why a separate config block (not a free-form command): SSH tunnels
+  // need a single, well-defined schema (host, user, ports, identity file,
+  // password) so the Settings UI can build a real form. Power users can
+  // still bypass the form by setting `rawCommand` (the full `ssh -N -L
+  // …` line), but the structured form is the safe path. The local port
+  // defaults to 0 (OS-assigned) so multiple ARIA instances on the same
+  // machine don't collide; the actual chosen port is reported back in
+  // `tunneledPort` after the tunnel is up.
+  remote: {
+    enabled: boolean;
+    // The shape of the tunnel target: a "harness" tunnel rewrites
+    // harness.endpoint on connect, a "llm" tunnel rewrites llm.endpoint,
+    // a "custom" tunnel just exposes the local port and lets the user
+    // paste the URL anywhere. Default: 'harness' (the common case for
+    // ARIA — Claude Code / Codex run on a remote dev box).
+    target: 'harness' | 'llm' | 'custom';
+    sshHost: string;          // user@hostname or user@ip
+    sshPort: number;          // SSH server port (default 22)
+    identityFile: string;     // path to private key (default ~/.ssh/id_rsa)
+    remoteHost: string;       // host the remote service runs on (usually 127.0.0.1)
+    remotePort: number;       // port the remote service listens on
+    localPort: number;        // 0 = OS-assigned
+    // If non-empty, overrides the structured form. Use with care —
+    // arbitrary shell-interpreted strings are a foot-gun, so the
+    // renderer should warn before saving.
+    rawCommand: string;
+    // Auto-reconnect on drop. Default true; the tunnel supervisor
+    // restarts with exponential backoff (1s, 2s, 4s, …, capped at 30s).
+    autoReconnect: boolean;
+  };
   audio: {
     inputDevice: string;
     outputDevice: string;
@@ -90,6 +128,18 @@ const defaults: AppConfig = {
   },
   routing: {
     mode: 'auto',
+  },
+  remote: {
+    enabled: false,
+    target: 'harness',
+    sshHost: '',
+    sshPort: 22,
+    identityFile: '',
+    remoteHost: '127.0.0.1',
+    remotePort: 8080,
+    localPort: 0,
+    rawCommand: '',
+    autoReconnect: true,
   },
   audio: {
     inputDevice: 'default',

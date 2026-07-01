@@ -565,6 +565,41 @@
     #discover-llm-status.ok, #discover-harness-status.ok { color: var(--success); }
     #discover-llm-status.err, #discover-harness-status.err { color: var(--error); }
 
+    /* ── Remote access (SSH tunnel) ── */
+    .remote-row { display: flex; gap: 8px; align-items: stretch; }
+    .remote-row label { display: flex; flex-direction: column; }
+    .remote-row input { margin-top: 0; }
+    .tunnel-status {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px; margin: 8px 0;
+      background: color-mix(in srgb, var(--bg) 96%, var(--text) 4%);
+      border-radius: 8px; border: 1px solid var(--border);
+      font-size: 12px;
+    }
+    .tunnel-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--text-dim);
+      transition: background 0.3s ease, box-shadow 0.3s ease;
+      flex: none;
+    }
+    .tunnel-dot.connected {
+      background: var(--success);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 30%, transparent);
+    }
+    .tunnel-dot.connecting, .tunnel-dot.starting, .tunnel-dot.reconnecting {
+      background: var(--warning);
+      animation: pulse 1.5s infinite;
+    }
+    .tunnel-dot.error { background: var(--error); }
+    .tunnel-label { font-weight: 500; }
+    .tunnel-endpoint {
+      font-family: ui-monospace, monospace; font-size: 11px;
+      color: var(--text-dim); margin-left: auto;
+      max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .remote-actions { display: flex; gap: 6px; margin-top: 6px; }
+    .remote-actions button { flex: 1; padding: 7px 10px; font-size: 12px; }
+
     .settings-warning {
       display: none; padding: 10px 14px; margin-bottom: 16px;
       background: color-mix(in srgb, var(--warning) 12%, transparent);
@@ -816,6 +851,64 @@
         <label>API Key <span class="hint">(optional, OS keyring)</span>
           <input type="password" id="cfg-harness-key" placeholder="optional — leave blank to keep existing">
         </label>
+      </section>
+
+      <section>
+        <h3>Remote access <span class="hint">(SSH tunnel)</span></h3>
+        <label class="checkbox-label">
+          <input type="checkbox" id="cfg-remote-enabled">
+          Connect to the harness (or LLM) over SSH
+        </label>
+        <p class="hint" style="margin:2px 0 8px;">ARIA spawns <code>ssh -N -L</code> locally and rewrites the endpoint to <code>http://127.0.0.1:&lt;localPort&gt;/v1/chat/completions</code>. Useful when the agent harness runs on a remote dev box (Claude Code, Codex) and you want the LLM/audio pipeline to stay local.</p>
+        <label>Target
+          <select id="cfg-remote-target">
+            <option value="harness">Rewrite harness endpoint (Claude Code, Codex, etc.)</option>
+            <option value="llm">Rewrite conversational LLM endpoint</option>
+            <option value="custom">Custom — don't rewrite, just expose the local port</option>
+          </select>
+        </label>
+        <div class="remote-row">
+          <label style="flex:2;">SSH host
+            <input type="text" id="cfg-remote-sshhost" placeholder="user@hostname">
+          </label>
+          <label style="flex:0 0 80px;">SSH port
+            <input type="number" id="cfg-remote-sshport" min="1" max="65535" value="22">
+          </label>
+        </div>
+        <label>Identity file <span class="hint">(optional)</span>
+          <input type="text" id="cfg-remote-identity" placeholder="~/.ssh/id_ed25519">
+        </label>
+        <div class="remote-row">
+          <label style="flex:2;">Remote host <span class="hint">(on the SSH target)</span>
+            <input type="text" id="cfg-remote-remotehost" placeholder="127.0.0.1" value="127.0.0.1">
+          </label>
+          <label style="flex:1;">Remote port
+            <input type="number" id="cfg-remote-remoteport" min="1" max="65535" value="8080">
+          </label>
+        </div>
+        <div class="remote-row">
+          <label style="flex:1;">Local port <span class="hint">(0 = any free port)</span>
+            <input type="number" id="cfg-remote-localport" min="0" max="65535" value="0">
+          </label>
+          <label class="checkbox-label" style="flex:0 0 auto;align-self:end;padding-bottom:8px;">
+            <input type="checkbox" id="cfg-remote-autoreconnect" checked>
+            Auto-reconnect
+          </label>
+        </div>
+        <label>Raw command <span class="hint">(optional override)</span>
+          <input type="text" id="cfg-remote-rawcommand" placeholder="ssh -N -L 8080:127.0.0.1:8080 user@host -i ~/.ssh/key">
+        </label>
+        <p class="hint" style="margin:2px 0 6px;">When non-empty, the raw command runs verbatim instead of the structured form. Use for password auth via <code>sshpass</code> or non-default ssh flags. Power-user override; arbitrary shell strings are a foot-gun.</p>
+        <div class="tunnel-status" id="tunnel-status">
+          <span class="tunnel-dot" id="tunnel-dot"></span>
+          <span class="tunnel-label" id="tunnel-label">Tunnel: idle</span>
+          <span class="tunnel-endpoint" id="tunnel-endpoint"></span>
+        </div>
+        <div class="remote-actions">
+          <button id="tunnel-connect" class="ghost-btn" type="button">Connect</button>
+          <button id="tunnel-disconnect" class="ghost-btn" type="button">Disconnect</button>
+          <button id="tunnel-copy-url" class="ghost-btn" type="button">Copy URL</button>
+        </div>
       </section>
 
       <section>

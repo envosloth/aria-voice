@@ -1,6 +1,6 @@
 {
   "name": "aria",
-  "version": "2.10.4",
+  "version": "2.10.5",
   "description": "GPU-accelerated voice assistant with local STT/TTS and remote LLM",
   "main": "dist/main/index.js",
   "scripts": {
@@ -20,6 +20,7 @@
     "smoke:memory": "npm run build && node scripts/smoke-memory.js",
     "smoke:models": "npm run build && node scripts/smoke-models.js",
     "smoke:audio": "node scripts/smoke-audio.js",
+    "smoke:tunnel": "node scripts/smoke-tunnel.js",
     "smoke:e2e": "npm run build && bash scripts/gen-test-audio.sh && node scripts/smoke-e2e.js",
     "smoke:boot": "npm run build && ARIA_SMOKE=1 electron --no-sandbox dist/main/index.js",
     "smoke:hardware": "npm run build && node scripts/smoke-hardware.js",

@@ -53,4 +53,10 @@ export const IPC = {
   UPDATE_OPEN: 'update:open',       // renderer -> main: open the release page in the browser (deb/dev)
   UPDATE_STATUS: 'update:status',   // main -> renderer: checking|available|downloading|downloaded|not-available|error
   UPDATE_CURRENT: 'update:current', // renderer -> main: current app version + delivery channel
+
+  // Remote access (SSH tunnel for the harness/llm endpoint).
+  TUNNEL_STATUS: 'tunnel:status',   // main -> renderer: every state transition
+  TUNNEL_START:  'tunnel:start',    // renderer -> main: start the tunnel (manual)
+  TUNNEL_STOP:   'tunnel:stop',     // renderer -> main: stop the tunnel (manual)
+  TUNNEL_SNAPSHOT: 'tunnel:snapshot', // renderer -> main: read the latest snapshot
 } as const;

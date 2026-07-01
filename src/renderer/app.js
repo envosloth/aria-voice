@@ -992,13 +992,7 @@ const cfg = {
   harnessEndpoint: document.getElementById('cfg-harness-endpoint'),
   harnessModel: document.getElementById('cfg-harness-model'),
   harnessKey: document.getElementById('cfg-harness-key'),
-  harnessNote: document.getElementById('cfg-harness-note'),
-  discoverLlm: document.getElementById('discover-llm'),
-  discoverLlmStatus: document.getElementById('discover-llm-status'),
-  discoverHarness: document.getElementById('discover-harness'),
-  discoverHarnessStatus: document.getElementById('discover-harness-status'),
   sttModel: document.getElementById('cfg-stt-model'),
-  sttBackend: document.getElementById('cfg-stt-backend'),
   ttsVoice: document.getElementById('cfg-tts-voice'),
   ttsSpeed: document.getElementById('cfg-tts-speed'),
   ttsSpeedVal: document.getElementById('cfg-tts-speed-val'),
@@ -1008,6 +1002,23 @@ const cfg = {
   wwPhrase: document.getElementById('cfg-ww-phrase'),
   theme: document.getElementById('cfg-theme'),
   perfPreset: document.getElementById('cfg-perf-preset'),
+  // Remote access (SSH tunnel) — see src/main/tunnel-supervisor.ts.
+  remoteEnabled: document.getElementById('cfg-remote-enabled'),
+  remoteTarget: document.getElementById('cfg-remote-target'),
+  remoteSshHost: document.getElementById('cfg-remote-sshhost'),
+  remoteSshPort: document.getElementById('cfg-remote-sshport'),
+  remoteIdentity: document.getElementById('cfg-remote-identity'),
+  remoteRemoteHost: document.getElementById('cfg-remote-remotehost'),
+  remoteRemotePort: document.getElementById('cfg-remote-remoteport'),
+  remoteLocalPort: document.getElementById('cfg-remote-localport'),
+  remoteAutoReconnect: document.getElementById('cfg-remote-autoreconnect'),
+  remoteRawCommand: document.getElementById('cfg-remote-rawcommand'),
+  tunnelDot: document.getElementById('tunnel-dot'),
+  tunnelLabel: document.getElementById('tunnel-label'),
+  tunnelEndpoint: document.getElementById('tunnel-endpoint'),
+  tunnelConnect: document.getElementById('tunnel-connect'),
+  tunnelDisconnect: document.getElementById('tunnel-disconnect'),
+  tunnelCopyUrl: document.getElementById('tunnel-copy-url'),
 };
 
 // Volume + speed are live sliders (not gated behind the Save button): volume rides
@@ -1061,6 +1072,96 @@ function applyHarnessSelection(id, opts) {
   }
 }
 cfg.harness.addEventListener('change', () => applyHarnessSelection(cfg.harness.value, { prefill: true }));
+
+// --- Remote access (SSH tunnel) ---------------------------------------
+// Each input writes its value to the corresponding config key on change;
+// the main process picks up the change via CONFIG_SET and calls
+// tunnel.sync() (see src/main/index.ts), which starts/stops/restarts
+// the SSH tunnel as needed. The Connect/Disconnect buttons send
+// explicit TUNNEL_START / TUNNEL_STOP messages; on success the
+// supervisor's status stream (TUNNEL_STATUS) updates the dot + label.
+// Copy URL copies the tunneled http://127.0.0.1:port/v1/chat/completions
+// URL to the clipboard so the user can paste it into the harness/llm
+// endpoint field of a "custom" tunnel, or into another tool.
+const remoteBindings = [
+  ['cfg.remoteEnabled',     'remote.enabled',     'checked'],
+  ['cfg.remoteTarget',      'remote.target',      'value'],
+  ['cfg.remoteSshHost',     'remote.sshHost',     'value'],
+  ['cfg.remoteSshPort',     'remote.sshPort',     'value', parseInt, 22],
+  ['cfg.remoteIdentity',    'remote.identityFile', 'value'],
+  ['cfg.remoteRemoteHost',  'remote.remoteHost',  'value'],
+  ['cfg.remoteRemotePort',  'remote.remotePort',  'value', parseInt, 8080],
+  ['cfg.remoteLocalPort',   'remote.localPort',   'value', parseInt, 0],
+  ['cfg.remoteAutoReconnect','remote.autoReconnect','checked'],
+  ['cfg.remoteRawCommand',  'remote.rawCommand',  'value'],
+];
+for (const [elKey, cfgKey, prop, parse, fallback] of remoteBindings) {
+  const el = cfg[elKey.split('.')[1]];
+  if (!el) continue;
+  const ev = (el.type === 'checkbox' || el.type === 'radio') ? 'change' : 'input';
+  el.addEventListener(ev, () => {
+    let v = el[prop];
+    if (parse) v = (Number.isFinite(+v) ? parse(v) : fallback);
+    aria.config.set(cfgKey, v);
+  });
+}
+
+// Render the live tunnel status into the dot + label + endpoint text.
+function paintTunnel(s) {
+  if (!cfg.tunnelDot || !cfg.tunnelLabel) return;
+  const state = s.state || 'idle';
+  cfg.tunnelDot.className = 'tunnel-dot ' + state;
+  const labelMap = {
+    idle: 'idle',
+    starting: 'connecting…',
+    connected: 'connected',
+    reconnecting: `reconnecting (#${s.attempts || 0})`,
+    error: 'error',
+    stopped: 'stopped',
+  };
+  cfg.tunnelLabel.textContent = `Tunnel: ${labelMap[state] || state}${s.message ? ' — ' + s.message : ''}`;
+  cfg.tunnelEndpoint.textContent = s.endpoint || '';
+  cfg.tunnelEndpoint.title = s.endpoint || '';
+}
+// Subscribe to status pushes and paint on each. The snapshot is fetched
+// once on Settings open (see loadSettingsValues below) to back-fill the
+// current state before the next status event arrives.
+if (aria.tunnel && aria.tunnel.onStatus) {
+  aria.tunnel.onStatus(paintTunnel);
+}
+if (cfg.tunnelConnect) {
+  cfg.tunnelConnect.addEventListener('click', () => {
+    // Persist the form first (the user might have edited a field and
+    // not tabbed out), then trigger start. aria.config.set is async
+    // but tunnel.start reads config sync, so we wait for the form
+    // write to settle via a microtask before starting.
+    Promise.all(remoteBindings.map(([elKey, cfgKey, prop, parse, fallback]) => {
+      const el = cfg[elKey.split('.')[1]];
+      if (!el) return Promise.resolve();
+      let v = el[prop];
+      if (parse) v = (Number.isFinite(+v) ? parse(v) : fallback);
+      return aria.config.set(cfgKey, v);
+    })).then(() => aria.tunnel.start());
+  });
+}
+if (cfg.tunnelDisconnect) {
+  cfg.tunnelDisconnect.addEventListener('click', () => aria.tunnel.stop());
+}
+if (cfg.tunnelCopyUrl) {
+  cfg.tunnelCopyUrl.addEventListener('click', () => {
+    const url = cfg.tunnelEndpoint.textContent || '';
+    if (!url) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url);
+    } else {
+      // Fallback for sandboxed renderers without clipboard access.
+      const ta = document.createElement('textarea');
+      ta.value = url; document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); } catch (e) {}
+      document.body.removeChild(ta);
+    }
+  });
+}
 
 // --- Performance panel: live per-stage latency + hardware-adaptive GPU cap ---
 const perfEls = {
@@ -1340,6 +1441,25 @@ async function loadSettings() {
   if (cfg.wwPhrase.selectedIndex < 0) cfg.wwPhrase.value = 'hey_jarvis';
   cfg.theme.value = (await aria.config.get('ui.theme')) || 'midnight';
   if (cfg.perfPreset) { cfg.perfPreset.value = (await aria.config.get('ui.perfPreset')) || 'auto'; updatePresetHint(); }
+
+  // Remote access: back-fill the form from the current config + paint the
+  // current tunnel status so the user sees "connected" / "error" before
+  // the next push event.
+  if (cfg.remoteEnabled) {
+    cfg.remoteEnabled.checked       = !!(await aria.config.get('remote.enabled'));
+    cfg.remoteTarget.value          = (await aria.config.get('remote.target')) || 'harness';
+    cfg.remoteSshHost.value         = (await aria.config.get('remote.sshHost')) || '';
+    cfg.remoteSshPort.value         = (await aria.config.get('remote.sshPort')) || 22;
+    cfg.remoteIdentity.value        = (await aria.config.get('remote.identityFile')) || '';
+    cfg.remoteRemoteHost.value      = (await aria.config.get('remote.remoteHost')) || '127.0.0.1';
+    cfg.remoteRemotePort.value      = (await aria.config.get('remote.remotePort')) || 8080;
+    cfg.remoteLocalPort.value       = (await aria.config.get('remote.localPort')) || 0;
+    cfg.remoteAutoReconnect.checked = !!(await aria.config.get('remote.autoReconnect'));
+    cfg.remoteRawCommand.value      = (await aria.config.get('remote.rawCommand')) || '';
+    if (aria.tunnel && aria.tunnel.snapshot) {
+      try { paintTunnel(await aria.tunnel.snapshot()); } catch (e) { /* ignore */ }
+    }
+  }
 
   // Performance panel: show the latest turn's latency + detected hardware.
   refreshPerfPanel();

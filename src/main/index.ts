@@ -16,6 +16,7 @@ import {
 } from './updater';
 import { IPC } from '../shared/ipc-channels';
 import { SidecarName } from '../shared/constants';
+import { tunnel, installTunnelHook } from './tunnel-supervisor';
 
 // Chromium feature flags must be set in ONE enable-features switch — calling
 // appendSwitch('enable-features', …) twice overwrites rather than merges.
@@ -244,8 +245,21 @@ function setupIpcHandlers(): void {
       // (STT model/backend, TTS engine/voice, GPU cap) and reloads the sidecars,
       // so the change is real + observable. 'custom' applies nothing.
       void applyResourcePreset(value as PerfPreset);
+    } else if (key === 'remote.enabled' || key.startsWith('remote.')) {
+      // Tunnel config changed. Sync the supervisor: it'll start if the user
+      // just enabled it, stop if they just disabled it, or restart with the
+      // new args if they changed host/port/identity while it was up.
+      tunnel.sync();
     }
   });
+
+  // Tunnel control (Settings → Remote access → Connect / Disconnect).
+  // The tunnel state is also pushed to the renderer on every change
+  // (the `tunnel.on('status', …)` hook above), so the renderer can
+  // subscribe via TUNNEL_STATUS instead of polling.
+  ipcMain.handle(IPC.TUNNEL_SNAPSHOT, () => tunnel.snapshot());
+  ipcMain.on(IPC.TUNNEL_START, () => tunnel.start());
+  ipcMain.on(IPC.TUNNEL_STOP, () => tunnel.stop());
 
   ipcMain.handle(IPC.SECURE_BACKEND, () => ({
     backend: getSecureBackend(),
@@ -372,6 +386,20 @@ let sttListening = false;
 let sttTurnId = '';
 
 app.whenReady().then(async () => {
+  // Wire the SSH tunnel supervisor to the renderer BEFORE we instantiate
+  // the sidecar supervisor, so the tunnel status (connected / error)
+  // can flow to the UI as soon as it's up. The tunnel supervisor is
+  // lazy — nothing is spawned until the user enables it in Settings.
+  installTunnelHook();
+  tunnel.on('status', (s) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC.TUNNEL_STATUS, s);
+    }
+  });
+  // Sync once on startup (if `remote.enabled` was persisted from a
+  // previous run, bring the tunnel back up automatically).
+  tunnel.sync();
+
   supervisor = new Supervisor(
     (name: SidecarName, status: string, detail?: string) => {
       mainWindow?.webContents.send(IPC.SIDECAR_STATUS, { name, status, detail });
@@ -1075,6 +1103,10 @@ function routeSidecarMessage(name: SidecarName, msg: Record<string, unknown>): v
 app.on('before-quit', async (e) => {
   isQuitting = true; // let the window's close handler actually close
   globalShortcut.unregisterAll();
+  // Tear down the SSH tunnel on quit so the ssh process doesn't outlive
+  // the app. The supervisor's stop() is synchronous (it just sends
+  // SIGTERM to the child) — the await is on the sidecar stopAll.
+  try { tunnel.stop(); } catch (e) { /* nothing to do */ }
   // An AppImage self-update is relaunching: electron-updater's beforeInstall hook
   // already stopped the sidecars, so let the quit proceed normally (a hard
   // app.exit here would cancel the staged install + relaunch).
