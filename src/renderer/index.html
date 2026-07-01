@@ -79,10 +79,21 @@
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb {
-      background: rgba(255, 255, 255, 0.1);
+      background: color-mix(in srgb, var(--accent-active) 15%, transparent);
       border-radius: 999px;
+      transition: background 0.2s ease;
     }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.18); }
+    ::-webkit-scrollbar-thumb:hover { background: var(--accent-active); }
+
+    /* ── Selection + focus-visible ── */
+    ::selection {
+      background: color-mix(in srgb, var(--accent-active) 25%, transparent);
+      color: var(--text);
+    }
+    button:focus-visible, input:focus-visible, select:focus-visible {
+      outline: 2px solid var(--accent-active);
+      outline-offset: 2px;
+    }
 
     /* ── Orb canvas (unchanged sizing) ── */
     #orb-canvas {
@@ -180,6 +191,31 @@
       overflow-y: auto;
       padding-bottom: 20px;
       scroll-behavior: smooth;
+    }
+    #conversation:empty {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      gap: 16px;
+      opacity: 0.8;
+    }
+    #conversation:empty::before {
+      content: '🎙️';
+      font-size: 44px;
+      filter: drop-shadow(0 0 12px var(--glow));
+      animation: float-orb 4s ease-in-out infinite;
+    }
+    #conversation:empty::after {
+      content: 'How can I help you today?';
+      font-size: 15px; font-weight: 500;
+      color: var(--text-muted);
+      letter-spacing: -0.01em;
+    }
+    @keyframes float-orb {
+      0%, 100% { transform: translateY(0) scale(1); }
+      50% { transform: translateY(-8px) scale(1.04); }
     }
 
     /* ── Refined message bubbles ── */
@@ -426,6 +462,8 @@
       transition: color 0.2s ease, background 0.2s ease;
     }
     #settings-btn:hover { color: var(--text); background: rgba(255,255,255,0.06); }
+    #settings-btn svg { transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+    #settings-btn:hover svg { transform: rotate(45deg); }
 
     /* ── Settings overlay: glass modal ── */
     .settings-overlay {
@@ -573,6 +611,13 @@
       background: color-mix(in srgb, var(--accent-active) 14%, transparent);
       border: 1px solid color-mix(in srgb, var(--accent-active) 30%, transparent);
       color: var(--text);
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .tool-chip:hover {
+      background: color-mix(in srgb, var(--accent-active) 24%, transparent);
+      border-color: var(--accent-active);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px -2px var(--glow);
     }
     .tool-chip-icon { font-size: 11px; filter: grayscale(0.2); }
     .tool-chip-count { opacity: 0.6; font-weight: 700; }
