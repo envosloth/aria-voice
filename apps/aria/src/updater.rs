@@ -19,7 +19,7 @@ pub fn check_and_update(repo: &str, events: Sender<UiEvent>) {
         .get(&api)
         .header("User-Agent", "aria-updater")
         .call();
-    let body: serde_json::Value = match resp.and_then(|r| Ok(r.into_body().read_json()?)) {
+    let body: serde_json::Value = match resp.and_then(|r| r.into_body().read_json()) {
         Ok(v) => v,
         Err(e) => return send(UiEvent::Activity(format!("update check failed: {e}"))),
     };

@@ -3,7 +3,9 @@
 use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum State {
+    #[default]
     Idle,
     Listening,
     Thinking,
@@ -48,11 +50,6 @@ pub struct Fsm {
     degraded: HashSet<Stage>,
 }
 
-impl Default for State {
-    fn default() -> Self {
-        State::Idle
-    }
-}
 
 impl Fsm {
     pub fn new() -> Self {
