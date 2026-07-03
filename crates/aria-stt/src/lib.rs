@@ -91,7 +91,7 @@ mod tests {
 #[cfg(test)]
 mod bench {
     use super::*;
-    use aria_core::Stt as _;
+
     use std::path::PathBuf;
 
     #[test]

@@ -63,7 +63,9 @@ impl KokoroTts {
             .chars()
             .filter_map(|c| self.vocab.get(&c).copied())
             .collect();
-        tokens.truncate(MAX_PHONEMES);
+        // Style table has rows 0..=509; index = token count, so cap at 509
+        // (a full 510-token sentence would read past the table and panic).
+        tokens.truncate(MAX_PHONEMES - 1);
         if tokens.is_empty() {
             return Ok(Vec::new());
         }
@@ -181,6 +183,15 @@ mod tests {
         assert!((0.8..8.0).contains(&secs), "duration {secs}s");
         let peak = pcm.iter().map(|&s| (s as i32).abs()).max().unwrap();
         assert!(peak > 2_000, "silent, peak {peak}");
+    }
+
+    #[test]
+    fn very_long_text_does_not_panic() {
+        let mut k = KokoroTts::new(&models(), "bm_george", 1.0).unwrap();
+        // ~600+ phonemes once espeak expands it — must clamp, not crash (A-6 spirit)
+        let long = "the quick brown fox jumps over the lazy dog and keeps running ".repeat(20);
+        let pcm = k.synth_raw(&long).unwrap();
+        assert!(!pcm.is_empty());
     }
 
     #[test]

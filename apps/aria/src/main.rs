@@ -102,7 +102,13 @@ fn main() {
             let _ = signal_running_instance(b"quit");
             return;
         }
-        _ => {}
+        _ => {
+            // Single instance: a second plain launch (double-clicked icon)
+            // must not start a second assistant — surface the existing one.
+            if signal_running_instance(b"show") {
+                return;
+            }
+        }
     }
 
     let headless = args.first().map(String::as_str) == Some("--headless");
@@ -235,7 +241,12 @@ fn start_instance_socket(events: mpsc::Sender<UiEvent>) {
                     println!("quit requested — exiting");
                     std::process::exit(0);
                 }
-                let _ = events.send(UiEvent::ToggleWindow);
+                let ev = if &buf[..n] == b"show" {
+                    UiEvent::Show // second launch → bring the window back
+                } else {
+                    UiEvent::ToggleWindow
+                };
+                let _ = events.send(ev);
                 aria_ui::ping_ui(); // wake a compositor-idled render loop
             }
         })

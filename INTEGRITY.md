@@ -3,6 +3,30 @@
 Ralph-loop verification record. Each iteration re-runs the battery, fixes
 what it finds, and appends here. Newest first.
 
+## Iteration 3 — 2026-07-03
+
+### Defects found & fixed
+1. **Double-launch ran two assistants**: a second plain `aria` (e.g. clicking
+   the app icon again) deleted the live instance's socket, bound its own, and
+   both answered the microphone. Now a second launch sends "show" to the
+   running instance (window surfaces) and exits. Verified live: boot → second
+   launch exits 0 immediately → still exactly 1 process → quit clean.
+2. **Latent Kokoro out-of-bounds panic**: the style table has rows 0..=509
+   but tokens were truncated to 510 and the row index is `tokens.len()` — a
+   sentence hitting the cap would slice past the table. Truncation is now 509;
+   new test synthesizes a ~600-phoneme run-on sentence (passes, no panic).
+3. **Corrupted build artifacts** from an interrupted session (Exec format
+   error + invalid rlib metadata) — cleaned and fully rebuilt; suite green.
+
+### Battery results
+| Check | Result |
+|---|---|
+| `cargo test` | 38 passed, 0 failed (was 37) |
+| Second-launch single-instance guard | PASS (1 process, exit 0) |
+| `aria --quit` after the above | PASS |
+| Release build | clean, 0 warnings |
+| Installed binary | refreshed |
+
 ## Iteration 2 — 2026-07-03
 
 ### Defects found & fixed
