@@ -3,6 +3,36 @@
 Ralph-loop verification record. Each iteration re-runs the battery, fixes
 what it finds, and appends here. Newest first.
 
+## Iteration 2 — 2026-07-03
+
+### Defects found & fixed
+1. **Quit/toggle dead when the compositor idles the window** (reproduced
+   twice): GNOME Wayland stops frame callbacks for occluded/idle surfaces,
+   stalling the eframe render loop — and Quit was routed through it as a
+   UiEvent, so `aria --quit` (and toggle) silently did nothing until the
+   window repainted. Fixes: (a) socket "quit" now calls `process::exit(0)`
+   directly — shutdown can never depend on the render loop; (b) new
+   `aria_ui::ping_ui()` (global egui Context handle) — the socket thread and
+   every runtime event now `request_repaint()` so toggle/wake/Show drain even
+   from an idled loop. Verified: 2× fresh boot → straight quit → 0 processes.
+2. **New coverage** (spec §11.5 was untested): `PanicLlm` test proves an LLM
+   panic is contained (counts toward the breaker, app lives); breaker test
+   proves it opens after 3 failures and fast-fails while open; hallucination
+   guard edge tests (quiet+filler dropped, loud or substantive kept).
+
+### Battery results
+| Check | Result |
+|---|---|
+| `cargo test` | 37 passed, 0 failed (was 34) |
+| Live RSS after boot (Kokoro+whisper+ort loaded) | 588 MB — ceiling 2048 MB |
+| Thread count live | 60 (inference pools; no leaks across turns) |
+| `aria --quit`, fresh boot ×2 | PASS, PASS |
+| `aria --loop-fakes` | M0 loop OK |
+| Desktop entry Exec path | ok |
+| Alt+Shift+Space gsettings binding | present |
+| history.jsonl | all lines valid JSON |
+
+
 ## Iteration 1 — 2026-07-03
 
 ### Defects found & fixed

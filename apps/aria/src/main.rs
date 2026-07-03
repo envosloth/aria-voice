@@ -229,12 +229,14 @@ fn start_instance_socket(events: mpsc::Sender<UiEvent>) {
                 let mut buf = [0u8; 16];
                 let _ = conn.set_read_timeout(Some(std::time::Duration::from_millis(200)));
                 let n = conn.read(&mut buf).unwrap_or(0);
-                let ev = if &buf[..n] == b"quit" {
-                    UiEvent::Quit
-                } else {
-                    UiEvent::ToggleWindow
-                };
-                let _ = events.send(ev);
+                if &buf[..n] == b"quit" {
+                    // Never route quit through the render loop: Wayland can
+                    // stall it for occluded windows, deadlocking shutdown.
+                    println!("quit requested — exiting");
+                    std::process::exit(0);
+                }
+                let _ = events.send(UiEvent::ToggleWindow);
+                aria_ui::ping_ui(); // wake a compositor-idled render loop
             }
         })
         .ok();

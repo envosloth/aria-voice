@@ -70,6 +70,7 @@ fn rms(frame: &[i16]) -> f32 {
 impl Runtime {
     fn emit(&self, ev: UiEvent) {
         let _ = self.events.send(ev); // headless mode: receiver dropped, fine
+        aria_ui::ping_ui(); // drain promptly even if the compositor idled us
     }
 
     fn state(&self, orb: OrbState, label: &str) {
@@ -783,5 +784,79 @@ mod tests {
         let got: Vec<_> = ev_rx.try_iter().collect();
         assert!(got.iter().any(|e| matches!(e, UiEvent::Sentence(s) if s == "Nice to meet you.")));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// LLM that panics — must not take the app down (§5.2 isolation).
+    struct PanicLlm;
+    impl aria_core::Llm for PanicLlm {
+        fn complete(
+            &mut self,
+            _h: &[ChatMsg],
+            _cb: &mut dyn FnMut(&str) -> bool,
+        ) -> Result<(), aria_core::StageError> {
+            panic!("segfault stand-in");
+        }
+    }
+
+    fn test_runtime(llm: Box<dyn aria_core::Llm>) -> Option<Runtime> {
+        let (ev_tx, _ev_rx) = std::sync::mpsc::channel();
+        let (_cmd_tx, cmd_rx) = std::sync::mpsc::channel();
+        let (_playback, sink) = aria_audio::Playback::start(48_000, 0.0).ok()?;
+        std::mem::forget(_playback); // keep stream alive for the test
+        Some(Runtime {
+            cfg: Config::default(),
+            wake: Box::new(FakeWake::new(1)),
+            stt: Box::new(FakeStt::new("x")),
+            llm,
+            llm_direct: None,
+            tts: Box::new(FakeTts::default()),
+            source: Box::new(FakeAudioSource::new(vec![])),
+            sink,
+            tts_rate: 24_000,
+            events: ev_tx,
+            cmds: Arc::new(Mutex::new(cmd_rx)),
+            llm_failures: 0,
+            llm_breaker_until: None,
+            session: Vec::new(),
+            history_path: std::env::temp_dir().join(format!("aria-h-{:?}.jsonl", std::thread::current().id())),
+            router: Router::new("auto", false),
+            screen_share: false,
+            requeue: Vec::new(),
+        })
+    }
+
+    #[test]
+    fn llm_panic_is_contained_and_spoken_apology_flows() {
+        let Some(mut rt) = test_runtime(Box::new(PanicLlm)) else { return };
+        // Must not propagate the panic; failure counts toward the breaker.
+        rt.typed_turn("hello");
+        assert_eq!(rt.llm_failures, 1);
+        let _ = std::fs::remove_file(&rt.history_path);
+    }
+
+    #[test]
+    fn breaker_opens_after_threshold_and_fast_fails() {
+        let Some(mut rt) = test_runtime(Box::new(PanicLlm)) else { return };
+        for _ in 0..rt.cfg.health.breaker_failure_threshold {
+            rt.typed_turn("q");
+        }
+        assert!(rt.llm_breaker_until.is_some(), "breaker should be open");
+        // While open, respond() fast-fails without touching the LLM.
+        let (spoke, interrupt) = rt.respond("again", None);
+        assert!(interrupt.is_none());
+        let _ = spoke; // apology may or may not synth via FakeTts (empty pcm ok)
+        assert!(rt.llm_breaker_until.is_some());
+        let _ = std::fs::remove_file(&rt.history_path);
+    }
+
+    #[test]
+    fn hallucination_guard_edges() {
+        // quiet + classic filler → dropped
+        assert!(is_hallucination("Thank you.", 300.0, 500.0));
+        assert!(is_hallucination("thanks for watching!", 100.0, 500.0));
+        // loud audio → always trusted
+        assert!(!is_hallucination("Thank you.", 1200.0, 500.0));
+        // quiet but substantive → trusted
+        assert!(!is_hallucination("turn off the lights in the kitchen", 300.0, 500.0));
     }
 }

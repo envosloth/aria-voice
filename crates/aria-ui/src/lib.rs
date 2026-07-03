@@ -190,6 +190,17 @@ struct Msg {
     at: String,
 }
 
+/// Render-loop waker: lets non-UI threads force a repaint so events get
+/// drained even when the compositor has idled the window (Wayland stalls
+/// frame callbacks for occluded surfaces — A-2 for the UI side).
+static UI_CTX: std::sync::OnceLock<egui::Context> = std::sync::OnceLock::new();
+
+pub fn ping_ui() {
+    if let Some(ctx) = UI_CTX.get() {
+        ctx.request_repaint();
+    }
+}
+
 pub fn run_ui(
     events: Receiver<UiEvent>,
     cmds: Sender<UiCommand>,
@@ -208,6 +219,7 @@ pub fn run_ui(
         "aria-harness",
         opts,
         Box::new(move |cc| {
+            let _ = UI_CTX.set(cc.egui_ctx.clone());
             install_fonts(&cc.egui_ctx);
             cc.egui_ctx.set_visuals(egui::Visuals::dark());
             Ok(Box::new(App::new(events, cmds, settings, endpoint_label, history)))
