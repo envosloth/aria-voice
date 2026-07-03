@@ -33,9 +33,9 @@ struct Palette {
 fn mode(s: OrbState) -> Mode {
     match s {
         OrbState::Idle => Mode { spd: 0.45, amp: 0.55, flare: 0.55 },
-        OrbState::Thinking => Mode { spd: 1.6, amp: 0.85, flare: 0.8 },
-        OrbState::Speaking => Mode { spd: 1.0, amp: 1.0, flare: 1.15 },
-        OrbState::Tools => Mode { spd: 2.1, amp: 0.95, flare: 0.85 },
+        OrbState::Thinking => Mode { spd: 0.9, amp: 0.7, flare: 0.7 },
+        OrbState::Speaking => Mode { spd: 0.85, amp: 0.8, flare: 0.9 },
+        OrbState::Tools => Mode { spd: 1.0, amp: 0.7, flare: 0.7 },
     }
 }
 
@@ -46,6 +46,24 @@ fn palette(s: OrbState) -> Palette {
         OrbState::Speaking => Palette { e: [0.0, 170.0, 210.0], hh: [220.0, 250.0, 255.0] },
         OrbState::Tools => Palette { e: [255.0, 120.0, 15.0], hh: [255.0, 246.0, 220.0] },
     }
+}
+
+/// Continuously-smoothable render parameters: the UI lerps these per frame
+/// (state changes glide) and modulates amp/flare with live speech RMS so the
+/// orb + debris react only while the agent is actually speaking (spec §6.6).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OrbParams {
+    pub spd: f32,
+    pub amp: f32,
+    pub flare: f32,
+    pub e: [f32; 3],
+    pub hh: [f32; 3],
+}
+
+pub fn params_for(s: OrbState) -> OrbParams {
+    let m = mode(s);
+    let p = palette(s);
+    OrbParams { spd: m.spd, amp: m.amp, flare: m.flare, e: p.e, hh: p.hh }
 }
 
 pub fn state_hue_color(s: OrbState) -> Color32 {
@@ -206,45 +224,22 @@ impl Orb {
         Self { size, dots, rings }
     }
 
-    /// Draw into `rect` (square assumed) at time `t` seconds.
-    pub fn paint(
+    /// Draw at wall-clock `t` (flicker/pulse timing) and accumulated
+    /// `motion_t` (spin phase). Integrate `motion_t += dt * spd` upstream:
+    /// spin speed changes then glide instead of rescaling the whole phase
+    /// history (the old `t * spd` made the orb whip around on transitions).
+    pub fn paint_params(
         &self,
         painter: &Painter,
         rect: Rect,
         t: f32,
-        state: OrbState,
-        speed: f32,
+        motion_t: f32,
+        p: &OrbParams,
         glow: f32,
     ) {
-        self.paint_blend(painter, rect, t, state, state, 1.0, speed, glow);
-    }
-
-    /// Like `paint`, but eases between two states: colors and motion lerp
-    /// from `from` to `to` by `mix` (0..1) so transitions never step.
-    #[allow(clippy::too_many_arguments)]
-    pub fn paint_blend(
-        &self,
-        painter: &Painter,
-        rect: Rect,
-        t: f32,
-        from: OrbState,
-        to: OrbState,
-        mix: f32,
-        speed: f32,
-        glow: f32,
-    ) {
-        let k = mix.clamp(0.0, 1.0);
-        // ease-out cubic — springy settle without overshoot artifacts
-        let k = 1.0 - (1.0 - k).powi(3);
-        let lerp = |a: f32, b: f32| a + (b - a) * k;
-        let (ma, mb) = (mode(from), mode(to));
-        let m = Mode { spd: lerp(ma.spd, mb.spd), amp: lerp(ma.amp, mb.amp), flare: lerp(ma.flare, mb.flare) };
-        let (pa, pb) = (palette(from), palette(to));
-        let mix3 = |a: [f32; 3], b: [f32; 3]| [lerp(a[0], b[0]), lerp(a[1], b[1]), lerp(a[2], b[2])];
-        let pal = Palette { e: mix3(pa.e, pb.e), hh: mix3(pa.hh, pb.hh) };
+        let pal = Palette { e: p.e, hh: p.hh };
         let scale = rect.width() / self.size;
         let r_max = self.size / 2.0;
-        let t = t * speed.max(0.2);
         let glow = glow.max(0.2);
 
         let ramp = |q: f32, a: f32| -> Color32 {
@@ -261,7 +256,7 @@ impl Orb {
         };
 
         // Spin + fixed tilt projection (design: rotY(ay) then rotX(0.33)).
-        let ay = t * 0.45 * m.spd;
+        let ay = 0.45 * motion_t;
         let (sa, ca) = ay.sin_cos();
         let (st2, ct2) = 0.33f32.sin_cos();
         let proj = |x: f32, y: f32, z: f32| -> (f32, f32, f32, f32) {
@@ -283,7 +278,7 @@ impl Orb {
 
         // Debris rings: arc segments as polylines + flickering debris squares.
         for rg in &self.rings {
-            let a = rg.w * t * m.spd;
+            let a = rg.w * motion_t;
             for sg in &rg.segs {
                 const CH: usize = 3;
                 const NS: usize = 5;
@@ -304,7 +299,7 @@ impl Orb {
                         prsum += pr;
                     }
                     let shade = 0.25 + 0.75 * ((zsum / (NS + 1) as f32) / rg.rb + 1.0) * 0.5;
-                    let alpha = sg.al * m.amp * shade * glow.min(1.4);
+                    let alpha = sg.al * p.amp * shade * glow.min(1.4);
                     painter.add(egui::Shape::line(
                         pts,
                         Stroke::new(rg.lw * (prsum / (NS + 1) as f32) * scale, ramp(rg.h, alpha)),
@@ -322,7 +317,7 @@ impl Orb {
                 let shade = 0.25 + 0.75 * (pz / d.rr + 1.0) * 0.5;
                 let fl = 0.5 + 0.5 * (t * 2.4 * d.w + d.tw).sin();
                 let ss = (d.s * pr).max(0.4) * scale;
-                let c = ramp(d.h, (0.2 + 0.6 * fl) * m.amp * shade);
+                let c = ramp(d.h, (0.2 + 0.6 * fl) * p.amp * shade);
                 let p = to_screen(px, py);
                 painter.rect_filled(Rect::from_center_size(p, egui::vec2(ss, ss)), 0.0, c);
             }
@@ -335,13 +330,13 @@ impl Orb {
             let shade = 0.3 + 0.7 * (pz / rr + 1.0) * 0.5;
             let fl = 0.55 + 0.45 * (t * 2.0 * d.w + d.tw).sin();
             let ss = (d.s * pr).max(0.4) * scale;
-            let c = ramp(d.h, ((0.3 + 0.7 * fl) * shade * m.amp).min(1.0));
+            let c = ramp(d.h, ((0.3 + 0.7 * fl) * shade * p.amp).min(1.0));
             let p = to_screen(px, py);
             painter.rect_filled(Rect::from_center_size(p, egui::vec2(ss, ss)), 0.0, c);
         }
 
         // White-hot pulsing core flare.
-        let pulse = (1.0 + 0.1 * (t * 3.1).sin() + 0.05 * (t * 7.7).sin()) * m.flare;
+        let pulse = (1.0 + 0.1 * (t * 3.1).sin() + 0.05 * (t * 7.7).sin()) * p.flare;
         let cr = r_max * 0.5 * pulse.max(0.3);
         radial_fan(
             painter,

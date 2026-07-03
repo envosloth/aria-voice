@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use aria_orb::{radial_fan, state_hue_color, Orb, OrbState};
+use aria_orb::{params_for, radial_fan, state_hue_color, Orb, OrbParams, OrbState};
 use egui::{
     Align, Color32, CornerRadius, FontData, FontFamily, FontId, Frame, Layout, Margin, RichText,
     Stroke,
@@ -293,8 +293,8 @@ struct App {
     t0: Instant,
     orb: Orb,
     state: OrbState,
-    orb_from: OrbState,
-    orb_switched: Instant,
+    orb_p: OrbParams,
+    motion_t: f32,
     hidden: bool,
     badge: String,
     msgs: Vec<Msg>,
@@ -341,8 +341,8 @@ impl App {
             t0: Instant::now(),
             orb: Orb::new("hero", 250.0),
             state: OrbState::Idle,
-            orb_from: OrbState::Idle,
-            orb_switched: Instant::now(),
+            orb_p: params_for(OrbState::Idle),
+            motion_t: 0.0,
             hidden: false,
             badge: "IDLE · STANDING BY".into(),
             msgs,
@@ -368,10 +368,6 @@ impl App {
         while let Ok(ev) = self.events.try_recv() {
             match ev {
                 UiEvent::State(s, label) => {
-                    if s != self.state {
-                        self.orb_from = self.state;
-                        self.orb_switched = Instant::now(); // eased, never stepped
-                    }
                     self.state = s;
                     self.badge = label;
                     self.timeline.push_back((Instant::now(), s));
@@ -465,9 +461,32 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let was_hidden = self.hidden;
         self.drain_events();
-        let dt = self.last_frame.elapsed().as_secs_f32().max(1e-4);
+        let dt = self.last_frame.elapsed().as_secs_f32().clamp(1e-4, 0.1);
         self.last_frame = Instant::now();
         self.fps_ema = 0.95 * self.fps_ema + 0.05 / dt;
+
+        // Orb dynamics: glide toward the state's params; while the agent is
+        // actually speaking, amp/flare/spin ride the live playback RMS so the
+        // core and debris move with the voice — and only then (§6.6).
+        let mut target = params_for(self.state);
+        let react = (aria_core::meter::get() * 4.5).min(1.0);
+        if self.state == OrbState::Speaking && react > 0.02 {
+            target.amp = 0.5 + 1.3 * react;
+            target.flare = 0.55 + 1.25 * react;
+            target.spd = 0.6 + 0.7 * react;
+        }
+        let k = 1.0 - (-dt / 1.1f32).exp(); // ~1.1 s time constant — smooth, never snaps
+        let l = |a: f32, b: f32| a + (b - a) * k;
+        let p = &mut self.orb_p;
+        p.spd = l(p.spd, target.spd);
+        p.amp = l(p.amp, target.amp);
+        p.flare = l(p.flare, target.flare);
+        for i in 0..3 {
+            p.e[i] = l(p.e[i], target.e[i]);
+            p.hh[i] = l(p.hh[i], target.hh[i]);
+        }
+        // Phase accumulation: speed changes glide, the angle never jumps.
+        self.motion_t += dt * self.orb_p.spd * self.settings.orb_speed;
         let ctx = ui.ctx().clone();
 
         // Escape interrupts the agent mid-speech.
@@ -492,7 +511,9 @@ impl eframe::App for App {
             self.log("running in background — Quit via sidebar or Ctrl+Q", false);
         }
         if self.hidden != was_hidden {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(!self.hidden));
+            // Minimize, don't unmap: Visible(false) corrupts the surface on
+            // Wayland (GUI came back broken after closing to background).
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(self.hidden));
             if !self.hidden {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             }
@@ -503,6 +524,9 @@ impl eframe::App for App {
         ctx.request_repaint_after(Duration::from_millis(if focused { 16 } else { 250 }));
 
         ctx.all_styles_mut(|s| {
+            // Labels must not grab clicks or show the I-beam — they were
+            // eating card/button clicks and breaking the cursor.
+            s.interaction.selectable_labels = false;
             s.visuals.override_text_color = Some(TEXT);
             s.visuals.panel_fill = Color32::TRANSPARENT;
             s.visuals.window_fill = Color32::from_rgb(16, 20, 30);
@@ -609,14 +633,20 @@ impl App {
                 ui.label(RichText::new("⏻").font(sans(13.0)).color(Color32::from_rgb(225, 95, 85)));
                 ui.label(RichText::new("Quit ARIA").font(sans(12.5)).color(text_dim(215)));
             });
-            if q.interact(egui::Sense::click()).clicked() {
+            if q.interact(egui::Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
                 self.really_quit = true;
             }
             let r = row_card(ui, false, |ui| {
                 ui.label(RichText::new("⚙").font(sans(13.0)).color(text_dim(150)));
                 ui.label(RichText::new("Settings").font(sans(12.5)).color(text_dim(215)));
             });
-            if r.interact(egui::Sense::click()).clicked() {
+            if r.interact(egui::Sense::click())
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
                 self.settings_open = true;
             }
         });
@@ -748,18 +778,24 @@ impl App {
         ui.set_min_height(ui.available_height());
         ui.vertical_centered(|ui| {
             ui.add_space(16.0);
-            let (r, p) = ui.allocate_painter(egui::vec2(250.0, 250.0), egui::Sense::hover());
-            let mix = self.orb_switched.elapsed().as_secs_f32() / 1.5; // slow, smooth stage blends
-            self.orb.paint_blend(
+            let (r, p) = ui.allocate_painter(egui::vec2(250.0, 250.0), egui::Sense::click());
+            self.orb.paint_params(
                 &p,
                 r.rect,
                 self.t0.elapsed().as_secs_f32(),
-                self.orb_from,
-                self.state,
-                mix,
-                self.settings.orb_speed,
+                self.motion_t,
+                &self.orb_p,
                 self.settings.orb_glow,
             );
+            // The orb itself is a big stop button while the agent talks.
+            if r.clicked() && self.speaking() {
+                self.send(UiCommand::Stop);
+                self.log("interrupted (orb)", false);
+            }
+            if self.speaking() {
+                r.on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text("click to interrupt");
+            }
             ui.add_space(10.0);
             badge(ui, self.state, &self.badge);
         });
@@ -888,15 +924,15 @@ impl App {
                     .inner_margin(Margin::same(0)),
             )
             .show(ctx, |ui| {
-                ui.set_width(780.0);
+                ui.set_width(740.0);
                 ui.horizontal_top(|ui| {
                     // nav rail
                     Frame::new()
                         .fill(white_a(8))
                         .inner_margin(Margin::same(14))
                         .show(ui, |ui| {
-                            ui.set_width(180.0);
-                            ui.set_min_height(500.0);
+                            ui.set_width(160.0);
+                            ui.set_min_height(470.0);
                             ui.add_space(4.0);
                             ui.label(RichText::new("Settings").font(sans(16.0)).strong());
                             ui.add_space(14.0);
@@ -918,7 +954,7 @@ impl App {
                                     })
                                     .response
                                     .interact(egui::Sense::click());
-                                if resp.clicked() {
+                                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                                     self.settings_tab = i;
                                 }
                                 ui.add_space(3.0);
@@ -932,12 +968,14 @@ impl App {
                             });
                         });
                     // content
-                    Frame::new().inner_margin(Margin::same(22)).show(ui, |ui| {
-                        ui.set_min_width(520.0);
+                    Frame::new().inner_margin(Margin::same(18)).show(ui, |ui| {
+                        let w = (ui.available_width() - 8.0).max(320.0);
+                        ui.set_width(w);
                         egui::ScrollArea::vertical()
-                            .max_height(430.0)
+                            .max_height(400.0)
                             .auto_shrink(false)
                             .show(ui, |ui| {
+                                ui.set_max_width(w);
                                 ui.spacing_mut().item_spacing.y = 6.0;
                                 match self.settings_tab {
                                     0 => self.tab_harness(ui),
@@ -1061,7 +1099,7 @@ impl App {
                 })
                 .response
                 .interact(egui::Sense::click());
-            if resp.clicked() {
+            if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                 clicked = Some(v.to_string());
             }
             ui.add_space(2.0);
@@ -1317,6 +1355,7 @@ fn button_square(
     fg: Option<Color32>,
 ) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
     let p = ui.painter();
     p.rect_filled(rect, 11.0, fill);
     p.rect_stroke(rect, 11.0, Stroke::new(1.0, white_a(30)), egui::StrokeKind::Inside);

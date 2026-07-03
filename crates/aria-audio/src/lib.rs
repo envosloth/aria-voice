@@ -158,10 +158,17 @@ impl Playback {
                         rx.clear();
                     }
                     let gain = f32::from_bits(vol2.load(Ordering::Relaxed));
+                    let mut sum = 0f32;
+                    let mut n = 0u32;
                     for frame in out.chunks_mut(channels) {
                         let s = rx.try_pop().unwrap_or(0.0) * gain;
+                        sum += s * s;
+                        n += 1;
                         frame.fill(s); // mono → all channels
                     }
+                    // Feed the orb's voice-reactivity from the same buffer the
+                    // sink plays (A-1: no second sampling loop).
+                    aria_core::meter::set((sum / n.max(1) as f32).sqrt());
                 },
                 |e| eprintln!("playback stream error: {e}"),
                 None,

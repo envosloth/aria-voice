@@ -215,7 +215,7 @@ impl Runtime {
 
             // Self-barge-in guard: while ARIA speaks, the wake word must be
             // *much* clearer than usual (its own voice bleeds into the mic).
-            self.wake.set_threshold((self.cfg.wake.threshold + 0.25).min(0.9));
+            self.wake.set_threshold((self.cfg.wake.threshold + 0.10).min(0.9));
             let (spoke, interrupt) = self.respond(&text, Some(audio_end));
             fsm.handle(Event::SpeechStarted);
             if let Some(cmd) = interrupt {
