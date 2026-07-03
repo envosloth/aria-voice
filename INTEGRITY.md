@@ -3,6 +3,25 @@
 Ralph-loop verification record. Each iteration re-runs the battery, fixes
 what it finds, and appends here. Newest first.
 
+## Iteration 4 — 2026-07-03 · STEADY STATE
+
+No new runtime defects found. This pass exercised the last untested
+deliverable — packaging — and re-ran the battery.
+
+| Check | Result |
+|---|---|
+| `cargo deb -p aria` (first ever run) | builds `aria-voice_0.1.0-1_amd64.deb` (14.6 MB) |
+| .deb contents | /usr/bin/aria + desktop entry + icon + copyright — all present |
+| .deb Depends | libasound2, libc6 (matches ldd) |
+| release.yml | parses; linux/macos/windows jobs present |
+| `cargo test` | 38 passed, 0 failed |
+| Boot → quit cycle | clean |
+| Fix applied | `license = "MIT"` added (cargo-deb warning) |
+
+Verdict after 4 passes: battery is stable and green; the loop has converged.
+Remaining unverifiable-from-here items are unchanged (screen-share portal
+dialog, acoustic wake rate w/ mic gain, CI on a real GitHub remote).
+
 ## Iteration 3 — 2026-07-03
 
 ### Defects found & fixed
