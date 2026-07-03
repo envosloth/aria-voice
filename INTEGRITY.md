@@ -3,6 +3,11 @@
 Ralph-loop verification record. Each iteration re-runs the battery, fixes
 what it finds, and appends here. Newest first.
 
+## Iteration 5 — 2026-07-03 · drift check
+
+No changes since pass 4 (HEAD 43b40e4). Suite 38/38 · boot clean · quit
+clean. Only the ralph-loop state file had churned — now gitignored.
+
 ## Iteration 4 — 2026-07-03 · STEADY STATE
 
 No new runtime defects found. This pass exercised the last untested
