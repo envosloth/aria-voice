@@ -511,12 +511,17 @@ impl eframe::App for App {
             self.log("running in background — Quit via sidebar or Ctrl+Q", false);
         }
         if self.hidden != was_hidden {
-            // Minimize, don't unmap: Visible(false) corrupts the surface on
-            // Wayland (GUI came back broken after closing to background).
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(self.hidden));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(!self.hidden));
             if !self.hidden {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                ctx.request_repaint(); // fresh full layout on return
             }
+        }
+        if self.hidden {
+            // Never lay out against an unmapped/zero-size surface: egui would
+            // persist clamped panel sizes and the panes come back overlapping.
+            ctx.request_repaint_after(Duration::from_millis(500));
+            return;
         }
 
         // A-1: cap the render loop; throttle hard when unfocused.
@@ -924,94 +929,82 @@ impl App {
                     .inner_margin(Margin::same(0)),
             )
             .show(ctx, |ui| {
-                ui.set_width(740.0);
-                ui.horizontal_top(|ui| {
-                    // nav rail
-                    Frame::new()
-                        .fill(white_a(8))
-                        .inner_margin(Margin::same(14))
-                        .show(ui, |ui| {
-                            ui.set_width(160.0);
-                            ui.set_min_height(470.0);
-                            ui.add_space(4.0);
-                            ui.label(RichText::new("Settings").font(sans(16.0)).strong());
-                            ui.add_space(14.0);
-                            for (i, name) in TABS.iter().enumerate() {
-                                let active = self.settings_tab == i;
-                                let resp = Frame::new()
-                                    .fill(if active { white_a(26) } else { Color32::TRANSPARENT })
-                                    .stroke(if active {
-                                        Stroke::new(1.0, white_a(30))
-                                    } else {
-                                        Stroke::NONE
-                                    })
-                                    .corner_radius(CornerRadius::same(10))
-                                    .inner_margin(Margin::symmetric(12, 9))
-                                    .show(ui, |ui| {
-                                        ui.set_width(ui.available_width());
-                                        let c = if active { TEXT } else { text_dim(150) };
-                                        ui.label(RichText::new(*name).font(sans(13.0)).color(c));
-                                    })
-                                    .response
-                                    .interact(egui::Sense::click());
-                                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                                    self.settings_tab = i;
-                                }
-                                ui.add_space(3.0);
-                            }
-                            ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-                                ui.label(
-                                    RichText::new(format!("ARIA v{}", env!("CARGO_PKG_VERSION")))
-                                        .font(mono(9.5))
-                                        .color(text_dim(80)),
-                                );
-                            });
+                ui.set_width(660.0);
+                Frame::new().inner_margin(Margin::same(18)).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Settings").font(sans(16.0)).strong());
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(format!("ARIA v{}", env!("CARGO_PKG_VERSION")))
+                                    .font(mono(9.5))
+                                    .color(text_dim(80)),
+                            );
                         });
-                    // content
-                    Frame::new().inner_margin(Margin::same(18)).show(ui, |ui| {
-                        let w = (ui.available_width() - 8.0).max(320.0);
-                        ui.set_width(w);
-                        egui::ScrollArea::vertical()
-                            .max_height(400.0)
-                            .auto_shrink(false)
-                            .show(ui, |ui| {
-                                ui.set_max_width(w);
-                                ui.spacing_mut().item_spacing.y = 6.0;
-                                match self.settings_tab {
-                                    0 => self.tab_harness(ui),
-                                    1 => self.tab_voice(ui),
-                                    2 => self.tab_wake(ui),
-                                    3 => self.tab_perf(ui),
-                                    _ => self.tab_updates(ui),
-                                }
-                            });
-                        ui.add_space(10.0);
-                        ui.separator();
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            let save = egui::Button::new(
-                                RichText::new("Save changes")
-                                    .color(Color32::from_rgb(6, 19, 28))
-                                    .strong(),
-                            )
-                            .fill(Color32::from_rgb(52, 170, 200))
-                            .corner_radius(CornerRadius::same(9));
-                            if ui.add(save).clicked() {
-                                let s = self.settings.clone();
-                                self.send(UiCommand::SaveSettings(s));
-                                self.log("settings saved", false);
-                                self.settings_open = false;
+                    });
+                    ui.add_space(10.0);
+                    ui.horizontal_wrapped(|ui| {
+                        for (i, name) in TABS.iter().enumerate() {
+                            let active = self.settings_tab == i;
+                            let resp = Frame::new()
+                                .fill(if active { white_a(28) } else { white_a(8) })
+                                .stroke(Stroke::new(1.0, white_a(if active { 40 } else { 16 })))
+                                .corner_radius(CornerRadius::same(10))
+                                .inner_margin(Margin::symmetric(12, 7))
+                                .show(ui, |ui| {
+                                    let c = if active { TEXT } else { text_dim(150) };
+                                    ui.label(RichText::new(*name).font(sans(12.5)).color(c));
+                                })
+                                .response
+                                .interact(egui::Sense::click())
+                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                            if resp.clicked() {
+                                self.settings_tab = i;
                             }
-                            if ui.button("Cancel").clicked() {
-                                self.settings_open = false;
+                        }
+                    });
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical()
+                        .max_height(380.0)
+                        .auto_shrink(false)
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 6.0;
+                            ui.set_width(ui.available_width() - 6.0);
+                            match self.settings_tab {
+                                0 => self.tab_harness(ui),
+                                1 => self.tab_voice(ui),
+                                2 => self.tab_wake(ui),
+                                3 => self.tab_perf(ui),
+                                _ => self.tab_updates(ui),
                             }
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                ui.label(
-                                    RichText::new("voice · speed · volume apply live — the rest on restart")
-                                        .font(mono(8.5))
-                                        .color(text_dim(80)),
-                                );
-                            });
+                        });
+                    ui.add_space(8.0);
+                    ui.separator();
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        let save = egui::Button::new(
+                            RichText::new("Save changes")
+                                .color(Color32::from_rgb(6, 19, 28))
+                                .strong(),
+                        )
+                        .fill(Color32::from_rgb(52, 170, 200))
+                        .corner_radius(CornerRadius::same(9));
+                        if ui.add(save).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                            let s = self.settings.clone();
+                            self.send(UiCommand::SaveSettings(s));
+                            self.log("settings saved", false);
+                            self.settings_open = false;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.settings_open = false;
+                        }
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.label(
+                                RichText::new("voice · speed · volume apply live — the rest on restart")
+                                    .font(mono(8.5))
+                                    .color(text_dim(80)),
+                            );
                         });
                     });
                 });
