@@ -1,0 +1,11 @@
+[package]
+name = "aria-audio"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aria-core = { path = "../aria-core" }
+cpal = "0.16"
+ringbuf = "0.4"
+rubato = "0.16"
+thiserror = { workspace = true }

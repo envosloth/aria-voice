@@ -1,0 +1,5 @@
+# espeak-rs-sys bindgen needs clang builtin headers; libclang1-21 on this box
+# ships without them, so point at gcc's. ponytail: machine-specific path —
+# replace with `apt install libclang-dev` on other hosts.
+[env]
+BINDGEN_EXTRA_CLANG_ARGS = "-I/usr/lib/gcc/x86_64-linux-gnu/15/include"

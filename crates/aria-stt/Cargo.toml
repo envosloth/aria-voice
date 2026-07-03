@@ -1,0 +1,18 @@
+[package]
+name = "aria-stt"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aria-core = { path = "../aria-core" }
+whisper-rs = "0.15"
+thiserror = { workspace = true }
+
+[dev-dependencies]
+hound = "3"
+
+[features]
+default = []
+vulkan = ["whisper-rs/vulkan"]
+cuda = ["whisper-rs/cuda"]
+metal = ["whisper-rs/metal"]

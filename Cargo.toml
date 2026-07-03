@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["crates/aria-core", "crates/aria-wake", "crates/aria-stt", "crates/aria-tts", "crates/aria-llm", "crates/aria-audio", "crates/aria-orb", "crates/aria-ui", "apps/aria"]
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+thiserror = "2"

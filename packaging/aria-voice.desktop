@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=ARIA
+GenericName=Voice Assistant
+Comment=Local-first voice assistant with the Harness UI
+Exec=/usr/bin/aria
+Icon=aria-voice
+Terminal=false
+Categories=Utility;AudioVideo;
+Keywords=voice;assistant;jarvis;llm;
+StartupWMClass=aria-harness

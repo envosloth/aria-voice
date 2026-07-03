@@ -1,0 +1,43 @@
+# M5: build + release on tag push (vX.Y.Z). Linux is the supported target;
+# mac/win jobs build CPU-only binaries to keep the matrix honest (§8).
+name: release
+on:
+  push:
+    tags: ["v*"]
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libclang-dev cmake \
+            libvulkan-dev glslc glslang-tools libespeak-ng-dev
+      - name: build
+        run: cargo build --release
+      - name: deb
+        run: |
+          cargo install cargo-deb
+          cargo deb -p aria --no-build
+      - name: smoke
+        run: cargo test -p aria-core -p aria-llm  # engine tests need models; core+llm are hermetic
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/release/aria
+            target/debian/*.deb
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: brew install cmake espeak-ng
+      - run: cargo build --release -p aria-core -p aria-llm -p aria-orb
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release -p aria-core -p aria-llm -p aria-orb

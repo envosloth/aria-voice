@@ -1,0 +1,10 @@
+[package]
+name = "aria-ui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aria-orb = { path = "../aria-orb" }
+aria-core = { path = "../aria-core" }
+eframe = "0.35"
+egui = "0.35"
