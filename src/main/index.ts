@@ -66,8 +66,12 @@ app.on('child-process-gone', (_e, details) => {
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
-    width: 800,
-    height: 600,
+    // Sized for the 3-column glass layout (sidebar + chat + ops rail); the
+    // renderer collapses to 2/1 columns below 1080/720px CSS breakpoints.
+    width: 1280,
+    height: 800,
+    minWidth: 760,
+    minHeight: 540,
     show: !SMOKE, // headless boot test: don't pop a window on the user's desktop
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),

@@ -185,6 +185,20 @@
     ctx.setTransform(sx, 0, 0, sy, 0, 0);
     cx = w / 2; cy = h / 2;
     baseR = Math.min(w, h) * 0.27;
+    // If the layout provides an orb anchor (the ops-rail slot in the glass UI),
+    // center the orb there instead of the viewport, sized to fit the slot.
+    // Falls back to viewport-center when the anchor is absent or hidden
+    // (narrow windows hide the ops rail via media query — which always comes
+    // with a window resize, so this re-runs and the fallback kicks in).
+    const anchor = document.getElementById('orb-anchor');
+    if (anchor) {
+      const r = anchor.getBoundingClientRect();
+      if (r.width > 40 && r.height > 40) {
+        cx = r.left + r.width / 2;
+        cy = r.top + r.height / 2;
+        baseR = Math.min(r.width, r.height) * 0.30;
+      }
+    }
     gradBucket = -1;
   }
 
