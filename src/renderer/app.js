@@ -509,6 +509,16 @@ window.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'f' && window.AriaOrb) {
     window.AriaOrb.toggleFps();
   }
+  // Cmd/Ctrl+, opens Settings (the sidebar shows this hint, and the gear is
+  // hidden on narrow windows — this keeps Settings reachable at any width).
+  if ((e.metaKey || e.ctrlKey) && e.key === ',') {
+    e.preventDefault();
+    openSettings();
+  }
+  // Escape closes it.
+  if (e.key === 'Escape' && settingsOverlay.classList.contains('visible')) {
+    closeSettings();
+  }
 });
 
 // Which target (LLM vs Agent harness) the coordinator routed to.
