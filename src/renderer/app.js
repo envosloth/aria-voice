@@ -150,6 +150,9 @@ async function submitUserMessage(rawText, existingTurnId) {
   // A voice turn passes its existing id so STT->LLM->TTS stay one timeline; a
   // typed turn starts a fresh one.
   const turnId = existingTurnId || perf.newTurn('text');
+  // Remember whether this turn came from voice so conversation mode only chains
+  // a follow-up listen after spoken exchanges, never after a typed message.
+  lastTurnWasVoice = !!existingTurnId;
   currentTurnId = turnId;
   resetTurnMarkers();
   perf.mark(turnId, 'user_input', { chars: text.length });
@@ -438,6 +441,20 @@ let vadActive = false;
 let vad = null;
 let vadSafetyTimer = null;
 
+// --- Conversation mode: after ARIA finishes speaking to a voice turn, it
+// re-opens the mic for a few seconds so the user can keep talking naturally
+// without re-saying the wake word. Off by default (config conversation.enabled).
+let conversationMode = false;
+let lastTurnWasVoice = false;   // was the turn being answered started by voice?
+let followupTimer = null;       // delay between reply-end and re-listening
+let noSpeechTimer = null;       // closes a follow-up window if nobody speaks
+let discardSttResult = false;   // drop the next STT result (silent follow-up)
+// How long a follow-up window waits for the user to START talking before it
+// gives up and returns to idle. Long enough to react to a reply, short enough
+// that the mic isn't hanging open. Once speech starts, VAD endpointing takes over.
+const FOLLOWUP_NO_SPEECH_MS = 6000;
+try { aria.config.get('conversation.enabled').then((v) => { conversationMode = !!v; }); } catch (e) {}
+
 function updateVad(samples) {
   if (vad && vad.pushFrame(samples)) endUtterance();
 }
@@ -456,6 +473,7 @@ function orbState(s) { orbStateName = s; document.body.dataset.state = s; if (wi
 // you cut ARIA off mid-answer with "hey jarvis…" to redirect it.
 function bargeIn() {
   cancelThinkingHold();
+  clearTimeout(followupTimer); followupTimer = null; // cancel a queued auto-listen
   try { aria.llm.cancel(); } catch (e) {}   // stop generating server-side
   stopPlayback(true);                        // halt audio + cancel TTS synthesis
   resetTtsStream();                          // drop any half-buffered sentence
@@ -495,18 +513,48 @@ function beginUtterance(opts) {
   vad = vadActive ? new window.AriaAudio.VadEndpointer({ frameMs: 20, hangMs: 550 }) : null;
   clearTimeout(vadSafetyTimer);
   if (vadActive) vadSafetyTimer = setTimeout(endUtterance, 8000); // hard cap
+  // Follow-up (conversation-mode) window: if no speech starts within a few
+  // seconds, close it silently. Crucially this DISCARDS the STT result rather
+  // than sending it — whisper hallucinates phantom phrases on pure silence
+  // ("Thank you.", "you"), and those must never become a fake user turn.
+  clearTimeout(noSpeechTimer); noSpeechTimer = null;
+  if (opts && opts.followup) {
+    noSpeechTimer = setTimeout(() => {
+      if (vad && !vad.hasSpeech()) endUtterance({ discard: true });
+    }, FOLLOWUP_NO_SPEECH_MS);
+  }
 }
 
-function endUtterance() {
+function endUtterance(opts) {
   if (!listening) return;
   listening = false;
   vadActive = false;
   vad = null;
   clearTimeout(vadSafetyTimer);
+  clearTimeout(noSpeechTimer); noSpeechTimer = null;
   micBtn.classList.remove('listening');
-  orbState('processing'); // STT + LLM working
   perf.mark(currentVoiceTurnId, 'audio_end');
+  // A silent follow-up: finalize STT to keep the sidecar clean but drop whatever
+  // it returns, and go straight back to idle instead of flashing 'processing'.
+  if (opts && opts.discard) {
+    discardSttResult = true;
+    orbState('idle');
+  } else {
+    orbState('processing'); // STT + LLM working
+  }
   aria.stt.end();
+}
+
+// Re-open the mic after a spoken reply so the user can continue the conversation
+// hands-free. Only for voice turns, only when enabled, and only if nothing else
+// grabbed the pipeline in the meantime.
+function maybeStartFollowup() {
+  if (!conversationMode || !lastTurnWasVoice) return;
+  clearTimeout(followupTimer);
+  followupTimer = setTimeout(() => {
+    if (orbStateName !== 'idle') return; // a barge-in / manual action took over
+    beginUtterance({ vad: true, followup: true });
+  }, 500);
 }
 
 micBtn.addEventListener('mousedown', beginUtterance);
@@ -521,6 +569,9 @@ aria.stt.onResult((text) => {
   // back to its per-state cap (full refresh on the high tier). Wrapped in a
   // try/catch in case the orb isn't ready yet (tests, headless boot).
   try { window.AriaOrb && window.AriaOrb.endStt && window.AriaOrb.endStt(); } catch (e) {}
+  // A silent follow-up window was closed: drop this result (it's silence, and
+  // whisper may have hallucinated a phantom phrase) and stay idle.
+  if (discardSttResult) { discardSttResult = false; partialEl.textContent = ''; orbState('idle'); return; }
   if (text.trim()) {
     partialEl.textContent = '';
     perf.mark(currentVoiceTurnId, 'stt_result_render', { chars: text.trim().length });
@@ -806,6 +857,8 @@ function armIdleAtAudioEnd() {
     // the latency panel's "full reply" is measured to here (not to turn_complete,
     // which is only when the LLM text finished and can precede the audio).
     try { perf.mark(currentTurnId, 'tts_done'); } catch (e) {}
+    // Conversation mode: reply's done, listen for a natural follow-up.
+    maybeStartFollowup();
   }, remainMs + 250);
 }
 
@@ -1036,7 +1089,13 @@ const cfg = {
   harnessEndpoint: document.getElementById('cfg-harness-endpoint'),
   harnessModel: document.getElementById('cfg-harness-model'),
   harnessKey: document.getElementById('cfg-harness-key'),
+  harnessNote: document.getElementById('cfg-harness-note'),
+  discoverLlm: document.getElementById('discover-llm'),
+  discoverHarness: document.getElementById('discover-harness'),
+  discoverLlmStatus: document.getElementById('discover-llm-status'),
+  discoverHarnessStatus: document.getElementById('discover-harness-status'),
   sttModel: document.getElementById('cfg-stt-model'),
+  sttBackend: document.getElementById('cfg-stt-backend'),
   ttsVoice: document.getElementById('cfg-tts-voice'),
   ttsSpeed: document.getElementById('cfg-tts-speed'),
   ttsSpeedVal: document.getElementById('cfg-tts-speed-val'),
@@ -1044,6 +1103,7 @@ const cfg = {
   volumeVal: document.getElementById('cfg-volume-val'),
   wwEnabled: document.getElementById('cfg-ww-enabled'),
   wwPhrase: document.getElementById('cfg-ww-phrase'),
+  conversationEnabled: document.getElementById('cfg-conversation-enabled'),
   theme: document.getElementById('cfg-theme'),
   perfPreset: document.getElementById('cfg-perf-preset'),
   // Remote access (SSH tunnel) — see src/main/tunnel-supervisor.ts.
@@ -1479,6 +1539,7 @@ async function loadSettings() {
   }
   cfg.wwEnabled.checked = !!(await aria.config.get('wakeword.enabled'));
   cfg.wwPhrase.value = (await aria.config.get('wakeword.phrase')) || 'hey_jarvis';
+  if (cfg.conversationEnabled) cfg.conversationEnabled.checked = !!(await aria.config.get('conversation.enabled'));
   // Legacy/free-text values (e.g. "hey jarvis" with a space, or an unsupported
   // "aria") won't match a dropdown option -> fall back to the reliable default so
   // the control never shows blank and always reflects a model that actually loads.
@@ -1523,6 +1584,9 @@ async function loadSettings() {
 function openSettings() {
   savedMsg.textContent = '';
   loadSettings();
+  // The hardware readout was only rendered on preset *change*, so the panel
+  // sat on "Detecting hardware…" forever — render it on every open.
+  loadHardwareInfo().then((info) => renderHardware(info));
   settingsOverlay.classList.add('visible');
 }
 async function closeSettings() {
@@ -1533,9 +1597,44 @@ async function closeSettings() {
 
 settingsBtn.addEventListener('click', openSettings);
 settingsClose.addEventListener('click', closeSettings);
+
+// New session: stop anything in flight, wipe the on-screen transcript AND the
+// main-side conversation history, and return to a clean idle state.
+const newSessionBtn = document.getElementById('new-session-btn');
+if (newSessionBtn) {
+  newSessionBtn.addEventListener('click', () => {
+    bargeIn();                          // cancel gen + stop audio + clear stream/tool state
+    try { aria.llm.reset(); } catch (e) {} // clear history on the main side
+    conversationEl.replaceChildren();   // empty transcript -> :empty placeholder returns
+    partialEl.textContent = '';
+    currentAssistantMsg = null;
+    lastTurnWasVoice = false;
+    orbState('idle');
+  });
+}
 settingsOverlay.addEventListener('click', (e) => {
   if (e.target === settingsOverlay) closeSettings();
 });
+
+// Settings tabs: the left nav swaps which .tab-panel is visible and updates the
+// header title. Pure DOM toggle — no per-tab state to persist.
+const settingsNav = document.getElementById('settings-nav');
+const settingsTabTitle = document.getElementById('settings-tab-title');
+if (settingsNav) {
+  const navItems = settingsNav.querySelectorAll('.snav-item');
+  const panels = document.querySelectorAll('.settings-content .tab-panel');
+  const content = document.querySelector('.settings-content');
+  function showTab(tab) {
+    navItems.forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+    panels.forEach((p) => p.classList.toggle('active', p.dataset.panel === tab));
+    const active = settingsNav.querySelector('.snav-item.active');
+    // lastChild is the label text node after the .snav-ico emoji span — use it so
+    // the header title reads "Voice", not "🎙Voice".
+    if (active && settingsTabTitle) settingsTabTitle.textContent = (active.lastChild && active.lastChild.textContent || active.textContent).trim();
+    if (content) content.scrollTop = 0;
+  }
+  navItems.forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
+}
 
 // "Discover model" buttons — probe the configured endpoint for its served
 // model list via IPC and pre-fill the model field with the recommended id. The
@@ -1604,6 +1703,10 @@ settingsSave.addEventListener('click', async () => {
   await aria.config.set('tts.voice', ttsVoice);
   await aria.config.set('wakeword.enabled', cfg.wwEnabled.checked);
   await aria.config.set('wakeword.phrase', cfg.wwPhrase.value.trim());
+  if (cfg.conversationEnabled) {
+    conversationMode = cfg.conversationEnabled.checked;
+    await aria.config.set('conversation.enabled', conversationMode);
+  }
   await aria.config.set('ui.theme', cfg.theme.value);
   applyTheme(cfg.theme.value);
   // The GPU cap is preset-driven (no separate control). Manually editing the STT

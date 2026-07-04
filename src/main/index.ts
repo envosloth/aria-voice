@@ -6,7 +6,7 @@ import { config } from './config';
 import { getSecureBackend, isSecureBackendSafe, setSecret, getSecret, deleteSecret } from './secure-storage';
 import { streamChat } from './llm-stream';
 import { listModels, normalizeChatBaseUrl } from './llm-models';
-import { coordinate, cancelCoordination } from './coordinator';
+import { coordinate, cancelCoordination, resetConversation } from './coordinator';
 import { buildManifest, missingModels, downloadModel } from './model-manager';
 import { perfEnabled, setPerfEnabled, perfMark, perfMarkExternal } from './perf';
 import { detectHardware, perfProfile, clampCap, resolveProfile, isPerfPreset, PerfPreset, ResourceProfile } from './hardware';
@@ -313,6 +313,10 @@ function setupIpcHandlers(): void {
   // Barge-in: the renderer heard the wake word (or push-to-talk) while a reply
   // was still streaming — abort generation so ARIA stops talking and listens.
   ipcMain.on(IPC.LLM_CANCEL, () => cancelCoordination());
+
+  // New session: abort anything in flight and wipe the conversation history so
+  // the next turn starts with no prior context.
+  ipcMain.on(IPC.LLM_RESET, () => { cancelCoordination(); resetConversation(); });
 
   ipcMain.on(IPC.TTS_PLAY, async (_e, text: string) => {
     try {

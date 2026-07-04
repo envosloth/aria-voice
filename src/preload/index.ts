@@ -53,6 +53,7 @@ const api = {
     send: (message: string, image?: string | null, turnId?: string) =>
       ipcRenderer.send(IPC.LLM_SEND, { message, image: image || null, turnId: turnId || '' }),
     cancel: () => ipcRenderer.send(IPC.LLM_CANCEL),
+    reset: () => ipcRenderer.send(IPC.LLM_RESET),
     test: (opts: { endpoint: string; model: string; apiKey?: string }) =>
       ipcRenderer.invoke(IPC.LLM_TEST, opts),
     // Auto-discover the model served by an OpenAI-compatible endpoint (Hermes
