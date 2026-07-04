@@ -418,7 +418,7 @@
     #onb-skip { margin-left: auto; }
   </style>
 </head>
-<body>
+<body data-state="idle">
   <canvas id="orb-canvas"></canvas>
   <div class="bg-layer">
     <div class="blob a"></div><div class="blob b"></div><div class="blob c"></div>
@@ -472,7 +472,7 @@
     <section class="panel chat">
       <div class="chat-head">
         <div class="chat-title">Current conversation</div>
-        <div class="chat-sub">aria · voice</div>
+        <div class="chat-sub" id="chat-sub">aria · voice</div>
         <div style="margin-left:auto" class="state-badge"></div>
       </div>
       <main>

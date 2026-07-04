@@ -32,10 +32,28 @@ function applyTheme(id) {
   document.documentElement.dataset.theme = id || 'midnight';
   if (window.AriaOrb && window.AriaOrb.refreshAccent) window.AriaOrb.refreshAccent();
 }
+// Chat header subtitle: show what actually answers (harness id / model),
+// like the design's "vector-cli / sonnet-5". Falls back to the LLM model.
+async function updateChatSub() {
+  const el = document.getElementById('chat-sub');
+  if (!el) return;
+  try {
+    const [hid, hmodel, lmodel] = await Promise.all([
+      aria.config.get('harness.id'), aria.config.get('harness.model'), aria.config.get('llm.model'),
+    ]);
+    const parts = [];
+    if (hid) parts.push(hid);
+    const model = hmodel || lmodel;
+    if (model) parts.push(model);
+    el.textContent = parts.length ? parts.join(' / ') : 'aria · voice';
+  } catch (e) { /* keep placeholder */ }
+}
+
 // Apply the saved theme as early as possible to avoid a flash.
 (async () => {
   try { applyTheme((await aria.config.get('ui.theme')) || 'midnight'); } catch (e) {}
   try { const v = await aria.config.get('audio.volume'); if (typeof v === 'number') setOutputVolume(v); } catch (e) {}
+  updateChatSub();
 })();
 
 const conversationEl = document.getElementById('conversation');
@@ -69,7 +87,21 @@ function ttsPlay(text) {
   try { aria.tts.play(speakable); } catch (e) {}
 }
 
+// Autoscroll only when the user is already pinned near the bottom — scrolling
+// up to read history must never be yanked back down by a streaming reply.
+function scrollIfPinned(pinned) {
+  if (pinned) conversationEl.scrollTop = conversationEl.scrollHeight;
+}
+function isPinned() {
+  return conversationEl.scrollHeight - conversationEl.scrollTop - conversationEl.clientHeight < 80;
+}
+
+// Keep the transcript DOM bounded: an always-on assistant accumulates messages
+// for days; past ~200 the old nodes only cost memory + layout time.
+const MAX_MESSAGES = 200;
+
 function addMessage(role, text) {
+  const pinned = isPinned();
   const div = document.createElement('div');
   div.className = `message ${role}`;
   div.textContent = text;
@@ -78,7 +110,8 @@ function addMessage(role, text) {
   // text checks). HH:MM in the user's locale.
   div.dataset.time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   conversationEl.appendChild(div);
-  conversationEl.scrollTop = conversationEl.scrollHeight;
+  while (conversationEl.childElementCount > MAX_MESSAGES) conversationEl.removeChild(conversationEl.firstChild);
+  scrollIfPinned(pinned);
   return div;
 }
 
@@ -593,15 +626,16 @@ function addToolChip(info) {
   if (info && info.args) chip.title = String(info.args).slice(0, 240);
   currentToolsEl.appendChild(chip);
   toolChips.set(name, { el: chip, count: 1, countEl });
-  conversationEl.scrollTop = conversationEl.scrollHeight;
+  scrollIfPinned(isPinned());
 }
 
 function flushStream() {
   streamFlushScheduled = false;
   if (!streamBuf) return;
+  const pinned = isPinned();
   if (streamTextNode) streamTextNode.nodeValue += streamBuf;
   streamBuf = '';
-  conversationEl.scrollTop = conversationEl.scrollHeight; // one reflow per frame
+  scrollIfPinned(pinned); // one reflow per frame
 }
 
 // --- Incremental TTS: speak each sentence as the LLM produces it ---------
@@ -1589,6 +1623,7 @@ settingsSave.addEventListener('click', async () => {
 
   savedMsg.textContent = 'Saved ✓';
   setTimeout(() => { savedMsg.textContent = ''; }, 2500);
+  updateChatSub();
 });
 
 // --- First-run onboarding walkthrough ---

@@ -350,11 +350,6 @@
   // Frame-rate cap per state (bounds CPU/GPU; the swirl is dt-scaled so slow
   // caps keep the same angular speed, just fewer frames).
   const STATE_MIN_MS = { idle: 33, listening: 33, processing: 33, speaking: 22 };
-  // The active profile's per-state caps (see QUALITY) override the defaults.
-  function stateMinMs(s) {
-    const q = QUALITY[quality];
-    return (q && q.stateMs[s]) || STATE_MIN_MS[s] || 33;
-  }
   // Throttled cap while an STT transcription is in flight (orb + Vulkan STT
   // together uncapped was the "crash on balanced+" symptom). Refcounted.
   let sttActive = 0;
