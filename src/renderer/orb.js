@@ -1,42 +1,48 @@
-// Reactive mesh-orb background with a visual state machine.
+// Ember-sphere orb (the Glass Observatory GUI's orb): debris rings at mixed
+// 3D orientations swirling around a white-hot core, with a visual state
+// machine. Matches the ops-rail state badge colours:
+//   idle       — blue,   dim embers, slow swirl. (default)
+//   listening  — cyan,   brighter, slightly faster.
+//   processing — violet, swirl accelerates ("thinking").
+//   speaking   — teal-cyan, core FLARES with the TTS voice level (RMS).
 //
-// States (AriaOrb.setState) — each a clearly DISTINCT hue so the state is
-// obvious at a glance:
-//   idle       — cyan,   calm. (default)
-//   listening  — purple, calm.
-//   processing — orange, calm ("thinking").
-//   speaking   — green,  surface DEFORMS dynamically from the TTS RMS.
+// Transitions are smooth by construction: colour, swirl speed and the voice
+// level are all eased (dt-scaled), and ring angles come from one accumulated
+// phase — changing speed bends the motion, never snaps it.
 //
-// Rotation runs at ONE constant speed in every state (it never speeds up when
-// the agent talks); the orb keeps a steady size and only its surface ripples
-// while speaking. State is conveyed by colour, which cross-fades smoothly
-// between states rather than snapping.
-//
-// Performance: per-point trig precomputed once; per-frame work uses reused flat
-// typed arrays (no allocations); shadow blur gated to the speaking state.
+// Performance: per-particle statics precomputed once; per-frame work uses
+// reused flat typed arrays (no allocations); no shadow blur (dots are cheap).
 
 (function (root) {
-  const LAT = 18, LON = 32;
-  const NPTS = (LAT + 1) * LON;
   const TWO_PI = Math.PI * 2;
-  // Constant rotation speed (radians/60fps-frame) — identical in every state.
-  const SPIN = 0.005;
-  // Gentle, constant "alive" breathing amplitude (NOT audio-driven), so the orb
-  // never visibly grows/shrinks with the voice.
+  // Base swirl speed (radians/60fps-frame); per-state multipliers ease on top.
+  const SPIN = 0.006;
+  // Gentle, constant "alive" breathing amplitude (NOT audio-driven).
   const BREATHE = 0.018;
+
+  // Debris rings: tilt/roll give each ring a distinct 3D orientation, rf its
+  // radius (× baseR), speed its angular rate (sign = direction), n particles.
+  const RINGS = [
+    { tilt:  1.15, roll:  0.00, rf: 1.00, speed:  1.00, n: 90 },
+    { tilt: -0.70, roll:  0.90, rf: 0.78, speed: -1.35, n: 70 },
+    { tilt:  0.35, roll: -0.60, rf: 1.18, speed:  0.70, n: 60 },
+  ];
+  const NPTS = RINGS.reduce((s, r) => s + r.n, 0);
 
   let canvas, ctx, w, h, cx, cy, baseR;
   let t = 0, audio = 0, audioSmooth = 0, raf = null;
+  let phase = 0;                 // accumulated swirl phase (smooth across speed changes)
+  let spinCur = 0.5;             // eased state speed multiplier
 
-  // State machine + colour easing. Fixed, well-separated hues (cyan / purple /
-  // orange / green) so the four states are easy to tell apart — they used to be
-  // too similar, and speaking tracked the theme accent.
+  // State colours — same family as the ops-rail badge so orb + badge always agree.
   const STATE_COLORS = {
-    idle:       [ 34, 211, 230], // cyan
-    listening:  [167,  92, 255], // purple
-    processing: [255, 146,  48], // orange (thinking)
-    speaking:   [ 42, 208, 102], // green
+    idle:       [122, 162, 255], // blue
+    listening:  [ 77, 214, 255], // cyan
+    processing: [185, 139, 255], // violet
+    speaking:   [ 77, 224, 192], // teal-cyan
   };
+  // Swirl speed multiplier per state ("swirl accelerates" while thinking).
+  const STATE_SPIN = { idle: 0.5, listening: 0.85, processing: 1.9, speaking: 1.1 };
   let state = 'idle';
   const col = STATE_COLORS.idle.slice();  // current eased colour
   let target = STATE_COLORS.idle.slice();
@@ -93,29 +99,37 @@
     if (s !== 'speaking') audio = 0; // stop dynamic deformation outside speaking
   }
 
-  // Precomputed per-point statics.
-  const sinPhi = new Float32Array(NPTS), cosPhi = new Float32Array(NPTS);
-  const sinTh = new Float32Array(NPTS), cosTh = new Float32Array(NPTS);
-  const phiArr = new Float32Array(NPTS), thArr = new Float32Array(NPTS);
-  const seed = new Float32Array(NPTS);
+  // Precomputed per-particle statics: base angle on its ring, radial jitter
+  // (debris, not a perfect circle), plane-thickness offset, size, twinkle
+  // phase, and the ring's precomputed orientation trig.
+  const pa = new Float32Array(NPTS), pr = new Float32Array(NPTS);
+  const pt = new Float32Array(NPTS), ps = new Float32Array(NPTS);
+  const pw = new Float32Array(NPTS), ring = new Uint8Array(NPTS);
+  const ringTrig = RINGS.map((r) => ({
+    st: Math.sin(r.tilt), ct: Math.cos(r.tilt),
+    sr: Math.sin(r.roll), cr: Math.cos(r.roll),
+    rf: r.rf, speed: r.speed,
+  }));
   (function build() {
+    // Deterministic pseudo-random (no Math.random: identical orb every boot).
+    let s = 42;
+    const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
     let k = 0;
-    for (let i = 0; i <= LAT; i++) {
-      const phi = (i / LAT) * Math.PI;
-      for (let j = 0; j < LON; j++, k++) {
-        const theta = (j / LON) * TWO_PI;
-        phiArr[k] = phi; thArr[k] = theta;
-        sinPhi[k] = Math.sin(phi); cosPhi[k] = Math.cos(phi);
-        sinTh[k] = Math.sin(theta); cosTh[k] = Math.cos(theta);
-        seed[k] = Math.sin(i * 12.9 + j * 78.2);
+    RINGS.forEach((r, ri) => {
+      for (let j = 0; j < r.n; j++, k++) {
+        ring[k] = ri;
+        pa[k] = (j / r.n) * TWO_PI + rnd() * 0.35;
+        pr[k] = 1 + (rnd() - 0.5) * 0.14;     // ±7% radial scatter
+        pt[k] = (rnd() - 0.5) * 0.10;         // ring-plane thickness
+        ps[k] = 0.6 + rnd() * 1.1;            // dot size seed
+        pw[k] = rnd() * TWO_PI;               // twinkle phase
       }
-    }
+    });
   })();
 
   const px = new Float32Array(NPTS), py = new Float32Array(NPTS);
   const pz = new Float32Array(NPTS), pp = new Float32Array(NPTS);
 
-  const TILT = 0.42, SIN_TILT = Math.sin(TILT), COS_TILT = Math.cos(TILT);
   let gradBucket = -1, gradCache = null, gradColKey = '';
 
   // Backing-store long-edge cap (device px) per quality. THIS is the fullscreen-
@@ -239,11 +253,16 @@
     if (state === 'speaking') audio *= Math.pow(0.92, dt); else audioSmooth *= Math.pow(0.9, dt);
     const react = Math.min(1, audioSmooth);
 
-    // Rotation is CONSTANT in every state — same smooth speed whether idle,
-    // listening, thinking, or speaking. (dt-scaled, so the angular speed is
-    // identical at 30/60/160 Hz; only smoothness changes.)
-    t += SPIN * dt;
-    const rot = t, cosR = Math.cos(rot), sinR = Math.sin(rot);
+    // Swirl speed eases toward the state's multiplier (thinking accelerates,
+    // idle settles) and speaking adds a voice-driven kick. The eased multiplier
+    // feeds ONE accumulated phase, so speed changes bend the motion smoothly —
+    // ring angles never jump.
+    const spinTarget = (STATE_SPIN[state] || 1) + (state === 'speaking' ? react * 1.4 : 0);
+    spinCur += (spinTarget - spinCur) * ease(0.06);
+    t += SPIN * dt;                    // slow clock for breathing/twinkle/yaw
+    phase += SPIN * spinCur * dt;      // swirl phase (state-speed dependent)
+    // Slow global yaw so the whole ring shell precesses.
+    const yaw = t * 0.3, cosY = Math.cos(yaw), sinY = Math.sin(yaw);
 
     ctx.clearRect(0, 0, w, h);
 
@@ -263,185 +282,62 @@
     ctx.fillStyle = gradCache;
     ctx.fillRect(0, 0, w, h);
 
-    // Steady size: only a gentle constant breathing — NO audio size-pulsing — so
-    // the orb doesn't grow/shrink when the agent talks. The voice instead shows
-    // as per-vertex surface deformation (applied in the projection loop below),
-    // which only happens while speaking.
+    // Steady overall size: gentle constant breathing only — the voice shows as
+    // the CORE flaring + a swirl kick, never as the whole shell ballooning.
     const rScale = 1 + BREATHE * Math.sin(t * 1.3);
-    const r = baseR * rScale;
-    // Speaking deformation amplitude. Tracks the (eased) voice level, so it
-    // ramps in when speaking and eases back out on a barge-in. Higher than the
-    // first pass — the deformation was too subtle — but the waves are smooth +
-    // low-frequency so it stays a rounded blob, not spikes.
-    const dAmp = react * 0.24;
+    const R = baseR * rScale;
 
-    // Organic ambient drift — independent of the audio-reactive wobble so the orb
-    // reads as alive even when it's NOT speaking. Three coupled sine waves at
-    // quasi-commensurate frequencies produce a non-repeating gentle tide. Cheap
-    // (3 sin per frame, NOT per-vertex); uniform radial scale so neighbouring
-    // vertices stay together — preserves the blob reading, no spikes.
-    const drift =
-      0.012 * Math.sin(t * 0.27) +
-      0.008 * Math.sin(t * 0.41 + 1.3) +
-      0.005 * Math.sin(t * 0.71 + 2.6);
-
-    // "Nearness" is measured by the perspective scale (pp): a larger pp means the
-    // point is closer to the viewer. Using pp (not the raw rotated z) removes any
-    // sign-convention ambiguity, so the side facing the user is reliably the one
-    // drawn thick + bright (fixes "the mesh gets thinner closer to the user").
-    let ppMin = 1e9, ppMax = -1e9;
+    // Project every debris particle: ring-local circle -> ring orientation
+    // (tilt around X, then roll around Z) -> slow global yaw (Y) -> perspective.
+    // The tiny radial "shimmer" per particle keeps the debris feeling loose
+    // without any per-frame allocation.
     for (let k = 0; k < NPTS; k++) {
-      const sp = sinPhi[k];
-      // Speaking-only surface deformation. The design goal: a NATURAL-looking
-      // bulge that "breathes" with the voice, like a soft balloon being
-      // gently squeezed on one side. Earlier iterations stacked 7+ wave
-      // components with per-vertex jitter — that produced a "rippled" or
-      // "cellular" surface that read as a glitch, not a living thing. The
-      // fix is fewer components, lower frequencies, and NO per-vertex
-      // jitter — vertices with the same (phi, theta) move the same amount,
-      // so neighbours stay phase-aligned and the surface stays smooth.
-      //
-      // Components:
-      //   1) One slow equatorial bulge (one full wave around theta, polar-
-      //      damped so the poles don't move). This is the primary
-      //      "swelling" that visibly responds to the voice.
-      //   2) One slow pole-to-pole undulation (one wave from north to south
-      //      pole, animated out of phase with #1). Adds variety in the
-      //      orthogonal direction so the bulge isn't a uniform ring.
-      //   3) One slow "breathing" — a uniform radial pulse with a
-      //      separate time multiplier. The whole orb gently inflates and
-      //      deflates a few percent, separate from the directional
-      //      bulges. Reads as the orb "breathing" with the speaker.
-      //
-      // dAmp is 0 outside speaking, so other states stay perfectly round.
-      let rk = r;
-      if (dAmp > 0.0005) {
-        const ph = phiArr[k], th = thArr[k];
-        const sp = sinPhi[k];
-        // Three slow components. No per-vertex jitter — by design. The
-        // goal is SMOOTH surface motion, not high-frequency texture.
-        //   Component 1: equatorial bulge, polar-damped, time t * 0.55.
-        //     One cycle around theta -> exactly one bump on the visible
-        //     hemisphere. As t advances, the bump slowly rotates around
-        //     the orb (because the phase advances), but stays at most one
-        //     bump wide so the surface reads as "one part of it is bigger".
-        //   Component 2: pole-to-pole undulation, time t * 0.35. One wave
-        //     from south pole to north pole, animated at a different rate
-        //     so the two don't synchronise. Adds variation in the
-        //     orthogonal direction without making the surface rippled.
-        //   Component 3: global breath, time t * 0.9 (faster than the
-        //     bulges so it feels like a separate rhythm). Uniform radial
-        //     pulse — every vertex moves in/out the same small amount.
-        const wob =
-            // Equatorial bulge: single wave around the orb's waist.
-            Math.sin(th + t * 0.55) * sp * 0.8
-            // Pole-to-pole undulation: single wave top-to-bottom.
-          + Math.cos(ph * 2 + t * 0.35) * 0.4
-            // Global breath: every vertex pulses in/out together.
-          + Math.sin(t * 0.9) * 0.3;
-        // Gentle saturation. Three components with small amplitudes sum to
-        // at most ~±1.5 raw, but in practice the bulges cancel each other
-        // most of the time so the actual peak is ~±1.0. tanh keeps the
-        // surface smooth at the extremes (no hard clamp that would flatten
-        // the bulges into a uniform ring) and guarantees |wo| < 0.45,
-        // which after dAmp * 0.55 gives at most ~25% radial deviation —
-        // well within the "blob" reading.
-        const wo = Math.tanh(wob) * 0.45;
-        rk = r * (1 + dAmp * wo * 0.55);
-      }
-      // Apply the per-frame ambient drift on top of the audio wobble.
-      rk *= 1 + drift;
-      const x = rk * sp * cosTh[k];
-      const y = rk * cosPhi[k];
-      const z = rk * sp * sinTh[k];
-      const x2 = x * cosR - z * sinR;
-      const z2 = x * sinR + z * cosR;
-      const y2 = y * COS_TILT - z2 * SIN_TILT;
-      const z3 = y * SIN_TILT + z2 * COS_TILT;
-      const persp = 540 / (540 + z3);
-      px[k] = cx + x2 * persp; py[k] = cy + y2 * persp;
-      pz[k] = z3; pp[k] = persp;
-      if (persp < ppMin) ppMin = persp; if (persp > ppMax) ppMax = persp;
+      const g = ringTrig[ring[k]];
+      const ang = pa[k] + phase * g.speed;
+      const rr = R * g.rf * pr[k] * (1 + 0.02 * Math.sin(t * 0.9 + pw[k]));
+      const x = Math.cos(ang) * rr, z = Math.sin(ang) * rr, y = pt[k] * rr;
+      let y1 = y * g.ct - z * g.st; const z1 = y * g.st + z * g.ct;   // tilt
+      const x1 = x * g.cr - y1 * g.sr; y1 = x * g.sr + y1 * g.cr;    // roll
+      const x2 = x1 * cosY + z1 * sinY, z2 = -x1 * sinY + z1 * cosY; // yaw
+      const persp = 540 / (540 + z2);
+      px[k] = cx + x2 * persp; py[k] = cy + y1 * persp;
+      pz[k] = z2; pp[k] = persp;
     }
-    const ppRange = (ppMax - ppMin) || 1;
 
-    // Bright glowing core — a hot center fading to the orb colour.
-    const coreR = baseR * (0.85 * rScale);
+    // Ember passes, painter's order: far half (dim, small) -> core -> near half
+    // (bright, larger). One fillStyle per pass keeps it at 2 draw batches.
+    // Brightness rises with state activity; sizes flare slightly with the voice.
+    const emberPass = (near) => {
+      ctx.fillStyle = near
+        ? `rgba(${Math.min(255, cr + 40)},${Math.min(255, cg + 40)},${Math.min(255, cb + 40)},${Math.min(1, 0.55 + activity * 0.45)})`
+        : `rgba(${cr},${cg},${cb},${0.22 + activity * 0.2})`;
+      ctx.beginPath();
+      for (let k = 0; k < NPTS; k++) {
+        if (near ? pz[k] > 0 : pz[k] <= 0) continue;
+        // Twinkle via size (not alpha) so passes stay single-fill batches.
+        const tw = 0.75 + 0.25 * Math.sin(t * 2 + pw[k]);
+        const dot = ps[k] * tw * pp[k] * (near ? 1.25 : 0.85) * (1 + react * 0.7);
+        ctx.moveTo(px[k] + dot, py[k]);
+        ctx.arc(px[k], py[k], dot, 0, TWO_PI);
+      }
+      ctx.fill();
+    };
+    emberPass(false);
+
+    // White-hot core: flares with the voice (radius + brightness track react),
+    // fading out through the state colour.
+    const coreR = baseR * (0.42 + react * 0.2) * rScale;
     const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR);
-    const hot = (c) => Math.min(255, c + 70);
-    core.addColorStop(0, `rgba(${hot(cr)},${hot(cg)},${hot(cb)},${0.55 + react * 0.35})`);
-    core.addColorStop(0.35, `rgba(${cr},${cg},${cb},${0.30 + react * 0.25})`);
+    const hot = (c) => Math.min(255, c + 90);
+    core.addColorStop(0, `rgba(255,255,255,${0.8 + react * 0.2})`);
+    core.addColorStop(0.3, `rgba(${hot(cr)},${hot(cg)},${hot(cb)},${0.5 + react * 0.35})`);
     core.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
     ctx.fillStyle = core;
     ctx.beginPath();
     ctx.arc(cx, cy, coreR, 0, TWO_PI);
     ctx.fill();
 
-    // Depth-shaded wireframe, BATCHED by depth bucket: one stroke per bucket
-    // instead of ~1150 individual stroke() calls. This is the main perf win
-    // (draw calls dominate 2D-canvas cost). Front buckets are thicker/brighter;
-    // the alpha floor is high enough that lines passing behind the sphere stay
-    // clearly visible (fixes "back lines barely show"). Thicker + round caps
-    // give the mesh more body.
-    // Shadow blur is the orb's most GPU-expensive op — gated + capped by the
-    // active quality profile so a low GPU cap / weak GPU disables it entirely.
-    const q = QUALITY[quality] || QUALITY.high;
-    if (q.shadows) {
-      if (react > 0.04) { ctx.shadowColor = `rgba(${cr},${cg},${cb},${0.6 + react})`; ctx.shadowBlur = Math.min(q.blurMax, 8 + react * 18); }
-      else { ctx.shadowColor = `rgba(${cr},${cg},${cb},0.4)`; ctx.shadowBlur = Math.min(q.blurMax, 4); }
-    } else {
-      ctx.shadowBlur = 0;
-    }
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    const NB = 6;
-    for (let b = 0; b < NB; b++) {
-      const d0 = b / NB, d1 = (b + 1) / NB;
-      const dc = (d0 + d1) * 0.5;            // bucket center nearness (0 back .. 1 front)
-      const last = b === NB - 1;
-      ctx.strokeStyle = `rgba(${cr},${cg},${cb},${0.20 + dc * 0.65})`; // floor 0.20
-      ctx.lineWidth = 1.3 + dc * 2.1;        // ~1.3 (back) .. ~3.3px (front)
-      ctx.beginPath();
-      // longitude segments
-      for (let j = 0; j < LON; j++) {
-        for (let i = 0; i < LAT; i++) {
-          const k = i * LON + j, k2 = k + LON;
-          const front = ((pp[k] + pp[k2]) * 0.5 - ppMin) / ppRange;
-          if (front < d0 || (front >= d1 && !last)) continue;
-          ctx.moveTo(px[k], py[k]); ctx.lineTo(px[k2], py[k2]);
-        }
-      }
-      // latitude rings
-      for (let i = 0; i <= LAT; i++) {
-        const base = i * LON;
-        for (let j = 0; j < LON; j++) {
-          const k = base + j, k2 = base + ((j + 1) % LON);
-          const front = ((pp[k] + pp[k2]) * 0.5 - ppMin) / ppRange;
-          if (front < d0 || (front >= d1 && !last)) continue;
-          ctx.moveTo(px[k], py[k]); ctx.lineTo(px[k2], py[k2]);
-        }
-      }
-      ctx.stroke();
-    }
-    ctx.shadowBlur = 0;
-
-    // Vertex dots on the near hemisphere (the half facing the user), brighter and
-    // larger the closer they are. Batched into 3 nearness buckets (one fill each).
-    for (let b = 0; b < 3; b++) {
-      const d0 = b / 3, d1 = (b + 1) / 3, dc = (d0 + d1) * 0.5, last = b === 2;
-      ctx.fillStyle = `rgba(${cr},${cg},${cb},${0.45 + dc * 0.5})`;
-      ctx.beginPath();
-      for (let k = 0; k < NPTS; k++) {
-        const front = (pp[k] - ppMin) / ppRange;
-        if (front < 0.5) continue;          // near hemisphere only
-        if (front < d0 || (front >= d1 && !last)) continue;
-        const rr = (1.0 + react * 0.9 + dc * 1.0) * pp[k];
-        ctx.moveTo(px[k] + rr, py[k]);
-        ctx.arc(px[k], py[k], rr, 0, TWO_PI);
-      }
-      ctx.fill();
-    }
+    emberPass(true);
 
     if (measuring) {
       mTime += performance.now() - t0; mFrames++;
