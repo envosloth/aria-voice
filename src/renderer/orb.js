@@ -1,73 +1,66 @@
-// Ember-sphere orb (the Glass Observatory GUI's orb): debris rings at mixed
-// 3D orientations swirling around a white-hot core, with a visual state
-// machine. Matches the ops-rail state badge colours:
+// The Glass Observatory orb — a 1:1 port of the Claude Design project's
+// canvas orb ("ember sphere": seeded star-dust core + volume dots, 8 debris
+// rings of arc segments at random 3D orientations, additive blending, and a
+// pulsing white-hot flare), wrapped in ARIA's state machine + infra.
+//
+// States (AriaOrb.setState), palettes exactly as the design's state strip:
 //   idle       — blue,   dim embers, slow swirl. (default)
-//   listening  — cyan,   brighter, slightly faster.
+//   listening  — amber,  rings spin up (the design's "tools" look).
 //   processing — violet, swirl accelerates ("thinking").
-//   speaking   — teal-cyan, core FLARES with the TTS voice level (RMS).
+//   speaking   — cyan,   core flares — boosted live by the TTS voice (RMS).
 //
-// Transitions are smooth by construction: colour, swirl speed and the voice
-// level are all eased (dt-scaled), and ring angles come from one accumulated
-// phase — changing speed bends the motion, never snaps it.
+// Transitions are smooth: palette + motion params (speed/brightness/flare)
+// are dt-eased, and ring angles come from ONE accumulated phase, so a speed
+// change bends the motion instead of snapping it.
 //
-// Performance: per-particle statics precomputed once; per-frame work uses
-// reused flat typed arrays (no allocations); no shadow blur (dots are cheap).
+// Performance: particles precomputed once (seeded, deterministic); additive
+// squares + a handful of strokes per frame, no shadow blur, no per-frame
+// allocation beyond two cached gradients.
 
 (function (root) {
-  const TWO_PI = Math.PI * 2;
-  // Base swirl speed (radians/60fps-frame); per-state multipliers ease on top.
-  const SPIN = 0.006;
-  // Gentle, constant "alive" breathing amplitude (NOT audio-driven).
-  const BREATHE = 0.018;
+  const TAU = Math.PI * 2;
 
-  // Debris rings: tilt/roll give each ring a distinct 3D orientation, rf its
-  // radius (× baseR), speed its angular rate (sign = direction), n particles.
-  const RINGS = [
-    { tilt:  1.15, roll:  0.00, rf: 1.00, speed:  1.00, n: 90 },
-    { tilt: -0.70, roll:  0.90, rf: 0.78, speed: -1.35, n: 70 },
-    { tilt:  0.35, roll: -0.60, rf: 1.18, speed:  0.70, n: 60 },
-  ];
-  const NPTS = RINGS.reduce((s, r) => s + r.n, 0);
+  // ── Design constants (verbatim from the design's _drawOrb) ──
+  // Per-state motion: spd = swirl speed, amp = ember brightness, flare = core.
+  const MODES = {
+    idle:       { spd: 0.45, amp: 0.55, flare: 0.55 },
+    listening:  { spd: 2.1,  amp: 0.95, flare: 0.85 }, // design "tools"
+    processing: { spd: 1.6,  amp: 0.85, flare: 0.8  }, // design "thinking"
+    speaking:   { spd: 1,    amp: 1,    flare: 1.15 },
+  };
+  // Per-state palette: e = ember colour, hh = hot/highlight colour.
+  const PALS = {
+    idle:       { e: [ 70, 120, 235], hh: [225, 240, 255] },
+    listening:  { e: [255, 120,  15], hh: [255, 246, 220] }, // design "tools"
+    processing: { e: [150,  80, 255], hh: [242, 232, 255] }, // design "thinking"
+    speaking:   { e: [  0, 170, 210], hh: [220, 250, 255] },
+  };
+  // Design reference size: parts are built for a 250px orb (R0 = 125) and the
+  // whole draw is uniformly scaled to ARIA's baseR at render time.
+  const SIZE0 = 250, R0 = SIZE0 / 2;
 
   let canvas, ctx, w, h, cx, cy, baseR;
-  let t = 0, audio = 0, audioSmooth = 0, raf = null;
-  let phase = 0;                 // accumulated swirl phase (smooth across speed changes)
-  let spinCur = 0.5;             // eased state speed multiplier
+  let audio = 0, audioSmooth = 0, raf = null;
+  let tSec = 0;      // design clock (seconds at 60fps normalization)
+  let phase = 0;     // accumulated swirl phase = ∫ spd dt (smooth speed changes)
 
-  // State colours — same family as the ops-rail badge so orb + badge always agree.
-  const STATE_COLORS = {
-    idle:       [122, 162, 255], // blue
-    listening:  [ 77, 214, 255], // cyan
-    processing: [185, 139, 255], // violet
-    speaking:   [ 77, 224, 192], // teal-cyan
-  };
-  // Swirl speed multiplier per state ("swirl accelerates" while thinking).
-  const STATE_SPIN = { idle: 0.5, listening: 0.85, processing: 1.9, speaking: 1.1 };
   let state = 'idle';
-  const col = STATE_COLORS.idle.slice();  // current eased colour
-  let target = STATE_COLORS.idle.slice();
+  // Eased palette (6ch: e then hh) and motion params.
+  const pal = [...PALS.idle.e, ...PALS.idle.hh];
+  let palTgt = pal.slice();
+  const mot = { ...MODES.idle };
+  let motTgt = { ...MODES.idle };
   let accent = [233, 69, 96];
 
   // Render-quality profiles, selected from the host's hardware tier + the GPU
-  // usage cap (see src/main/hardware.ts, applied via AriaOrb.setQuality). The orb
-  // is the renderer's one continuous GPU consumer, and the shadow-blur pass is by
-  // far its most expensive GPU op — on a weak GPU, full-quality blur at the
-  // speaking frame rate is what pushes the compositor toward 100% and can freeze
-  // the desktop. Lower tiers cap the frame rate and the blur radius (or drop
-  // shadows entirely), which keeps GPU work bounded while the motion still reads.
+  // usage cap (see src/main/hardware.ts, applied via AriaOrb.setQuality).
+  // Lower tiers cap the frame rate, which bounds GPU/CPU work while the motion
+  // still reads. (The ember orb has no shadow blur; the shadows/blurMax fields
+  // are kept for profile compatibility but unused.)
   //   stateMs: min ms between frames per state (higher = fewer FPS = less GPU)
-  //   shadows: whether to draw the GPU-costly shadow blur at all
-  //   blurMax: ceiling on shadowBlur radius when shadows are on
   const QUALITY = {
-    // High tier (capable GPU, focused window): render every rAF -> native display
-    // refresh (160/165/240 Hz), so the orb is buttery, not visibly capped. 4ms is a
-    // ~250 FPS ceiling that no real panel hits, so in practice it's one render per
-    // refresh. Background windows still drop to BLUR_MIN_MS (~5 FPS) in loop().
-    // The 'activeMs' is the throttled cap when an STT transcription is in flight
-    // (set by AriaOrb.beginStt/endStt from the renderer when the LLM/stt IPC
-    // fires) — 16ms = ~60 FPS, which still reads as smooth but takes the GPU
-    // from being pegged by a 240 Hz orb + Vulkan STT + speech playback, which
-    // was the "crash on balanced+" symptom.
+    // High tier: render every rAF -> native refresh; activeMs throttles to
+    // ~60 FPS while a Vulkan STT transcription is in flight (see beginStt).
     high:   { stateMs: { idle: 4, listening: 4, processing: 4, speaking: 4 }, activeMs: 16, shadows: true,  blurMax: 26 },
     medium: { stateMs: { idle: 40, listening: 40, processing: 40, speaking: 28 }, activeMs: 40, shadows: true,  blurMax: 8 },
     low:    { stateMs: { idle: 66, listening: 66, processing: 66, speaking: 40 }, activeMs: 66, shadows: false, blurMax: 0 },
@@ -76,15 +69,14 @@
   function setQuality(q) {
     if (!QUALITY[q] || q === quality) return;
     quality = q;
-    // Re-apply the backing-store resolution cap for the new quality (forces a real
-    // resize even though the element size didn't change).
-    if (canvas && ctx) { lastDpr = -1; resize(); }
+    // Re-apply the backing-store resolution cap for the new quality (forces a
+    // real resize even though the element size didn't change).
+    if (canvas && ctx) { lastBw = -1; resize(); }
   }
 
   function refreshAccent() {
-    // The orb's state colours are now fixed + distinct rather than the theme
-    // accent (so states stay easy to tell apart in every theme); this only keeps
-    // `accent` current for any other consumer and is otherwise a no-op here.
+    // State palettes are fixed by the design; this only keeps `accent` current
+    // for any other consumer.
     try {
       const v = getComputedStyle(document.documentElement)
         .getPropertyValue('--accent-rgb').trim();
@@ -93,77 +85,76 @@
   }
 
   function setState(s) {
-    if (!STATE_COLORS[s]) return;
+    if (!MODES[s]) return;
     state = s;
-    target = STATE_COLORS[s].slice();
-    if (s !== 'speaking') audio = 0; // stop dynamic deformation outside speaking
+    palTgt = [...PALS[s].e, ...PALS[s].hh];
+    motTgt = { ...MODES[s] };
+    if (s !== 'speaking') audio = 0; // voice only drives the speaking flare
   }
 
-  // Precomputed per-particle statics: base angle on its ring, radial jitter
-  // (debris, not a perfect circle), plane-thickness offset, size, twinkle
-  // phase, and the ring's precomputed orientation trig.
-  const pa = new Float32Array(NPTS), pr = new Float32Array(NPTS);
-  const pt = new Float32Array(NPTS), ps = new Float32Array(NPTS);
-  const pw = new Float32Array(NPTS), ring = new Uint8Array(NPTS);
-  const ringTrig = RINGS.map((r) => ({
-    st: Math.sin(r.tilt), ct: Math.cos(r.tilt),
-    sr: Math.sin(r.roll), cr: Math.cos(r.roll),
-    rf: r.rf, speed: r.speed,
-  }));
-  (function build() {
-    // Deterministic pseudo-random (no Math.random: identical orb every boot).
-    let s = 42;
-    const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
-    let k = 0;
-    RINGS.forEach((r, ri) => {
-      for (let j = 0; j < r.n; j++, k++) {
-        ring[k] = ri;
-        pa[k] = (j / r.n) * TWO_PI + rnd() * 0.35;
-        pr[k] = 1 + (rnd() - 0.5) * 0.14;     // ±7% radial scatter
-        pt[k] = (rnd() - 0.5) * 0.10;         // ring-plane thickness
-        ps[k] = 0.6 + rnd() * 1.1;            // dot size seed
-        pw[k] = rnd() * TWO_PI;               // twinkle phase
+  // ── Particles (verbatim port of the design's _makeParts, seed "aria") ──
+  // Deterministic: identical orb every boot, no Math.random.
+  const parts = (function makeParts(size, seedStr) {
+    let s = 2166136261;
+    for (let i = 0; i < seedStr.length; i++) s = ((s ^ seedStr.charCodeAt(i)) * 16777619) >>> 0;
+    const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+    const R = size / 2;
+    const dots = [];
+    // Hot star-dust core.
+    const nCore = Math.round(size * 0.5);
+    for (let i = 0; i < nCore; i++) {
+      const r = R * (0.02 + 0.17 * Math.pow(rnd(), 1.5));
+      const th = rnd() * TAU, ph = Math.acos(2 * rnd() - 1);
+      dots.push({ x: r * Math.sin(ph) * Math.cos(th), y: r * Math.cos(ph) * 0.8, z: r * Math.sin(ph) * Math.sin(th), s: 0.7 + rnd() * 1.7, h: 0.72 + rnd() * 0.28, tw: rnd() * TAU, w: 0.7 + rnd() * 0.8 });
+    }
+    // Dimmer volume dust filling the sphere.
+    const nVol = Math.round(size * 0.85);
+    for (let i = 0; i < nVol; i++) {
+      const r = R * (0.24 + 0.72 * Math.pow(rnd(), 0.65));
+      const th = rnd() * TAU, ph = Math.acos(2 * rnd() - 1);
+      dots.push({ x: r * Math.sin(ph) * Math.cos(th), y: r * Math.cos(ph) * 0.88, z: r * Math.sin(ph) * Math.sin(th), s: 0.5 + rnd() * 1.3, h: 0.25 + rnd() * 0.5, tw: rnd() * TAU, w: 0.5 + rnd() * 1.2 });
+    }
+    // Debris rings: random 3D orientation (front-biased normal), each carrying
+    // a few glowing arc segments and loose debris scattered along them.
+    const rings = [];
+    const nR = 8;
+    for (let b = 0; b < nR; b++) {
+      const rb = R * (0.38 + 0.6 * (b + rnd() * 0.7) / nR);
+      const nx = (rnd() - 0.5) * 1.3, ny = (rnd() - 0.5) * 1.3, nz = 0.75 + rnd() * 0.7;
+      const nl = Math.hypot(nx, ny, nz);
+      const n = [nx / nl, ny / nl, nz / nl];
+      const axv = Math.abs(n[0]) > 0.8 ? [0, 1, 0] : [1, 0, 0];
+      let u = [n[1] * axv[2] - n[2] * axv[1], n[2] * axv[0] - n[0] * axv[2], n[0] * axv[1] - n[1] * axv[0]];
+      const ul = Math.hypot(u[0], u[1], u[2]);
+      u = [u[0] / ul, u[1] / ul, u[2] / ul];
+      const v = [n[1] * u[2] - n[2] * u[1], n[2] * u[0] - n[0] * u[2], n[0] * u[1] - n[1] * u[0]];
+      const ring = { rb, u, v, w: (0.1 + rnd() * 0.35) * (rnd() < 0.45 ? -1 : 1), h: 0.35 + rnd() * 0.45, lw: 0.5 + rnd() * 1.1, segs: [], deb: [] };
+      const nSeg = 2 + Math.floor(rnd() * 4);
+      for (let g = 0; g < nSeg; g++) ring.segs.push({ a0: rnd() * TAU, len: 0.2 + rnd() * 1.3, al: 0.1 + rnd() * 0.3 });
+      const nDeb = Math.round(size * 0.16 + rnd() * size * 0.1);
+      for (let g = 0; g < nDeb; g++) {
+        const sg = ring.segs[Math.floor(rnd() * nSeg)];
+        ring.deb.push({ a: sg.a0 + rnd() * sg.len * 1.3 - sg.len * 0.15, rr: rb + (rnd() - 0.5) * R * 0.07, s: 0.5 + rnd() * 1.4, h: 0.35 + rnd() * 0.55, tw: rnd() * TAU, w: 0.8 + rnd() * 1.6 });
       }
-    });
-  })();
+      rings.push(ring);
+    }
+    return { dots, rings };
+  })(SIZE0, 'aria');
 
-  const px = new Float32Array(NPTS), py = new Float32Array(NPTS);
-  const pz = new Float32Array(NPTS), pp = new Float32Array(NPTS);
-
-  let gradBucket = -1, gradCache = null, gradColKey = '';
-
-  // Backing-store long-edge cap (device px) per quality. THIS is the fullscreen-
-  // shake fix: a fullscreen / hi-DPI canvas otherwise balloons to millions of
-  // pixels (e.g. 5120x2880), making the per-frame whole-canvas glow fills + shadow
-  // blur so expensive that frames arrive unevenly. With time-based motion, uneven
-  // frame delivery shows up as the orb "shaking"/stuttering — but ONLY at large
-  // sizes, which is why it's smooth windowed and shaky fullscreen. Rendering the
-  // soft glow at a bounded resolution and letting CSS scale it up to the element
-  // is visually identical for a glow, but keeps frame time low + steady so motion
-  // stays smooth. Lower quality caps harder (which also bounds GPU work).
-  // Caps raised from the first optimization pass (1100/1500/1920): the old 'high'
-  // cap of 1920 downsampled a 1440p / 1080p@2x fullscreen canvas and CSS upscaled
-  // it, which read as a blurry, "low-resolution" orb. 2560 renders those displays
-  // natively crisp and still bounds 4K (3840 -> 2560); the dt-scaled motion + the
-  // per-state FPS caps keep frame time steady at the higher resolution, and a weak
-  // GPU is already forced to medium/low (which cap harder) by the GPU usage tier.
+  // Backing-store long-edge cap (device px) per quality — bounds fullscreen /
+  // hi-DPI backing stores so frame time stays low + steady (the fullscreen-
+  // shake fix; see git history for the full derivation).
   const MAX_BACKING = { low: 1280, medium: 1920, high: 2560 };
-  // Pure: the effective device-pixel-ratio to use so the longest backing-store
-  // edge never exceeds the current quality's cap. On a small window it's a no-op
-  // (returns rawDpr); at fullscreen / hi-DPI it scales down. Exported for tests.
+  // Pure: the effective device-pixel-ratio so the longest backing-store edge
+  // never exceeds the current quality's cap. Exported for tests.
   function effectiveDpr(cw, ch, rawDpr) {
     const cap = MAX_BACKING[quality] || 1920;
     const longEdge = Math.max(cw, ch) * rawDpr;
     return longEdge > cap ? rawDpr * (cap / longEdge) : rawDpr;
   }
-  // Pure: integer backing-store dimensions for a (cw, ch, rawDpr), plus the EXACT
-  // axis scales that map the [0,cw]x[0,ch] drawing space onto [0,bw]x[0,bh]. Using
-  // the raw effectiveDpr in setTransform left drawing coord x=cw landing at cw*dpr
-  // (e.g. 1920.4) while the backing store was only round(cw*dpr)=1920 wide — so the
-  // rightmost fractional strip sampled OUTSIDE the backing store and shimmered. The
-  // left/top edges map to 0 exactly, which is why the jitter was right/bottom only.
-  // Deriving sx=bw/cw, sy=bh/ch makes the right/bottom edges land exactly on the
-  // backing store, killing the edge jitter. Exported for tests.
+  // Pure: integer backing-store dimensions + EXACT axis scales mapping the
+  // drawing space onto them (kills right/bottom edge shimmer at fractional
+  // DPR). Exported for tests.
   function backingFor(cw, ch, rawDpr) {
     const dpr = effectiveDpr(cw, ch, rawDpr);
     const bw = Math.max(1, Math.round(cw * dpr));
@@ -173,30 +164,24 @@
   let lastW = -1, lastH = -1, lastBw = -1, lastBh = -1;
   function resize() {
     const realDpr = window.devicePixelRatio || 1;
-    // Available CSS size = the viewport (the canvas is position:fixed inset:0). Use
-    // this, NOT the element's own box — once we set an explicit grid-snapped width
-    // below, reading the element back would stop tracking window/fullscreen resizes.
+    // Available CSS size = the viewport (the canvas is position:fixed inset:0).
     const availW = window.innerWidth || (canvas.clientWidth), availH = window.innerHeight || (canvas.clientHeight);
     if (!availW || !availH || availW < 2 || availH < 2) return;
-    // THE right-edge-jitter fix: snap the element to a WHOLE number of device pixels.
-    // At a fractional devicePixelRatio (125%/150% scaling) an integer-CSS-pixel width
-    // put the element's right/bottom edge BETWEEN device pixels; the left/top edges
-    // are pinned at 0, so only the right/bottom shimmered as the orb animated. Sizing
-    // to devW/realDpr lands those edges exactly on the device-pixel grid.
+    // Snap the element to a WHOLE number of device pixels (edge-jitter fix at
+    // fractional devicePixelRatio).
     const devW = Math.round(availW * realDpr), devH = Math.round(availH * realDpr);
     const cw = devW / realDpr, ch = devH / realDpr;
     const rawDpr = Math.min(realDpr, 2);
     const { bw, bh, sx, sy } = backingFor(cw, ch, rawDpr);
-    // No-op if neither the (snapped) layout size nor the integer backing changed, so
-    // a chatty ResizeObserver doesn't clear the canvas every tick (which flickers).
+    // No-op if nothing changed, so a chatty ResizeObserver doesn't clear the
+    // canvas every tick (which flickers).
     if (cw === lastW && ch === lastH && bw === lastBw && bh === lastBh) return;
     lastW = cw; lastH = ch; lastBw = bw; lastBh = bh;
     w = cw; h = ch;
     canvas.style.width = cw + 'px'; canvas.style.height = ch + 'px';
     canvas.width = bw; canvas.height = bh;
-    // Exact per-axis scale (≈dpr) so the drawing space fills the backing store with
-    // no fractional overhang on the right/bottom edge — see backingFor().
     ctx.setTransform(sx, 0, 0, sy, 0, 0);
+    dprX = sx; dprY = sy;
     cx = w / 2; cy = h / 2;
     baseR = Math.min(w, h) * 0.27;
     // If the layout provides an orb anchor (the ops-rail slot in the glass UI),
@@ -213,134 +198,147 @@
         baseR = Math.min(r.width, r.height) * 0.30;
       }
     }
-    gradBucket = -1;
   }
+  let dprX = 1, dprY = 1;
 
   let measuring = false, mFrames = 0, mTime = 0, mLast = 0;
 
+  // Fixed viewing tilt (design: 0.33 rad).
+  const CT = Math.cos(0.33), ST = Math.sin(0.33);
+
   let lastFrameTime = 0;
   function render(now) {
-    const t0 = measuring ? performance.now() : 0;
+    const t0m = measuring ? performance.now() : 0;
     // Time-based step (normalized to a 60 FPS frame), clamped so a hitch or a
-    // 160 Hz refresh both animate at the SAME visual speed — no shake/jitter.
+    // 160 Hz refresh both animate at the SAME visual speed.
     const dt = lastFrameTime ? Math.min(3, (now - lastFrameTime) / 16.667) : 1;
     lastFrameTime = now;
-
-    // Frame-rate-independent easing: scale each per-60fps-frame factor by dt so
-    // an ease feels identical at 60 or 160 Hz. Plain per-frame easing decays more
-    // often at high refresh, which is what made the orb shimmer/shake. (Rotation
-    // already used dt; the colour/audio filters did not.)
     const ease = (k) => 1 - Math.pow(1 - k, dt);
 
-    // Ease colour toward the target state colour. A gentle constant (~0.8s
-    // cross-fade) so switching states reads as a smooth blend, never a sudden
-    // swap.
-    const colK = ease(0.05);
-    col[0] += (target[0] - col[0]) * colK;
-    col[1] += (target[1] - col[1]) * colK;
-    col[2] += (target[2] - col[2]) * colK;
-    const cr = col[0] | 0, cg = col[1] | 0, cb = col[2] | 0;
+    // Ease palette + motion params toward the state targets (~0.8s cross-fade)
+    // so state switches blend instead of snapping.
+    const k5 = ease(0.05);
+    for (let i = 0; i < 6; i++) pal[i] += (palTgt[i] - pal[i]) * k5;
+    mot.spd += (motTgt.spd - mot.spd) * k5;
+    mot.amp += (motTgt.amp - mot.amp) * k5;
+    mot.flare += (motTgt.flare - mot.flare) * k5;
 
-    // Audio drives the speaking-state surface deformation — never rotation speed
-    // or overall size. Only 'speaking' FEEDS new audio in; other states let the
-    // residual decay out. Crucially we DON'T hard-zero react when leaving
-    // speaking: the smoothed level eases down, so a barge-in (speaking ->
-    // listening) makes the orb un-deform GRADUALLY while its colour cross-fades,
-    // instead of snapping flat. In a steady non-speaking state audioSmooth ~= 0,
-    // so there's no residual deformation.
+    // Voice level: only 'speaking' feeds new audio in; the smoothed level eases
+    // out on a barge-in instead of snapping.
     if (state !== 'speaking') audio = 0;
     audioSmooth += (audio - audioSmooth) * ease(0.15);
     if (state === 'speaking') audio *= Math.pow(0.92, dt); else audioSmooth *= Math.pow(0.9, dt);
     const react = Math.min(1, audioSmooth);
 
-    // Swirl speed eases toward the state's multiplier (thinking accelerates,
-    // idle settles) and speaking adds a voice-driven kick. The eased multiplier
-    // feeds ONE accumulated phase, so speed changes bend the motion smoothly —
-    // ring angles never jump.
-    const spinTarget = (STATE_SPIN[state] || 1) + (state === 'speaking' ? react * 1.4 : 0);
-    spinCur += (spinTarget - spinCur) * ease(0.06);
-    t += SPIN * dt;                    // slow clock for breathing/twinkle/yaw
-    phase += SPIN * spinCur * dt;      // swirl phase (state-speed dependent)
-    // Slow global yaw so the whole ring shell precesses.
-    const yaw = t * 0.3, cosY = Math.cos(yaw), sinY = Math.sin(yaw);
+    // Two clocks: tSec runs at constant rate (flicker/pulse), phase integrates
+    // the eased state speed (swirl) — smooth across speed changes.
+    tSec += dt / 60;
+    phase += (dt / 60) * mot.spd;
+
+    // Voice boosts brightness + core flare while speaking (the design's hero
+    // orb reacting to the agent's voice).
+    const amp = mot.amp * (1 + react * 0.35);
+    const flare = mot.flare + react * 0.9;
+
+    // Design colour ramp: ember -> hot, quadratic in q.
+    const ramp = (q, a) => {
+      const wq = Math.min(1, q) * Math.min(1, q);
+      return 'rgba(' + Math.round(pal[0] + (pal[3] - pal[0]) * wq) + ',' + Math.round(pal[1] + (pal[4] - pal[1]) * wq) + ',' + Math.round(pal[2] + (pal[5] - pal[2]) * wq) + ',' + Math.min(1, a).toFixed(3) + ')';
+    };
 
     ctx.clearRect(0, 0, w, h);
+    ctx.save();
+    // Center the design-space orb (built around R0,R0) on ARIA's (cx,cy) and
+    // scale the whole draw so it fills the ops-rail slot (or ~54% of the
+    // viewport's short edge in the fallback).
+    const k = (baseR * 1.55) / R0;
+    ctx.translate(cx, cy);
+    ctx.scale(k, k);
+    ctx.translate(-R0, -R0);
+    ctx.globalCompositeOperation = 'lighter';
 
-    // Glow gradient — rebuilt when the level bucket or colour shifts notably.
-    const activity = Math.max(react, state === 'idle' ? 0.05 : 0.18);
-    const bucket = (activity * 12) | 0;
-    const colKey = `${cr},${cg},${cb}`;
-    if (bucket !== gradBucket || colKey !== gradColKey) {
-      gradBucket = bucket; gradColKey = colKey;
-      const glowR = baseR * (1.8 + activity * 0.9);
-      const g = ctx.createRadialGradient(cx, cy, baseR * 0.1, cx, cy, glowR);
-      g.addColorStop(0, `rgba(${cr},${cg},${cb},${0.16 + activity * 0.3})`);
-      g.addColorStop(0.5, `rgba(${cr},${cg},${cb},${0.05 + activity * 0.12})`);
-      g.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
-      gradCache = g;
-    }
-    ctx.fillStyle = gradCache;
-    ctx.fillRect(0, 0, w, h);
-
-    // Steady overall size: gentle constant breathing only — the voice shows as
-    // the CORE flaring + a swirl kick, never as the whole shell ballooning.
-    const rScale = 1 + BREATHE * Math.sin(t * 1.3);
-    const R = baseR * rScale;
-
-    // Project every debris particle: ring-local circle -> ring orientation
-    // (tilt around X, then roll around Z) -> slow global yaw (Y) -> perspective.
-    // The tiny radial "shimmer" per particle keeps the debris feeling loose
-    // without any per-frame allocation.
-    for (let k = 0; k < NPTS; k++) {
-      const g = ringTrig[ring[k]];
-      const ang = pa[k] + phase * g.speed;
-      const rr = R * g.rf * pr[k] * (1 + 0.02 * Math.sin(t * 0.9 + pw[k]));
-      const x = Math.cos(ang) * rr, z = Math.sin(ang) * rr, y = pt[k] * rr;
-      let y1 = y * g.ct - z * g.st; const z1 = y * g.st + z * g.ct;   // tilt
-      const x1 = x * g.cr - y1 * g.sr; y1 = x * g.sr + y1 * g.cr;    // roll
-      const x2 = x1 * cosY + z1 * sinY, z2 = -x1 * sinY + z1 * cosY; // yaw
-      const persp = 540 / (540 + z2);
-      px[k] = cx + x2 * persp; py[k] = cy + y1 * persp;
-      pz[k] = z2; pp[k] = persp;
-    }
-
-    // Ember passes, painter's order: far half (dim, small) -> core -> near half
-    // (bright, larger). One fillStyle per pass keeps it at 2 draw batches.
-    // Brightness rises with state activity; sizes flare slightly with the voice.
-    const emberPass = (near) => {
-      ctx.fillStyle = near
-        ? `rgba(${Math.min(255, cr + 40)},${Math.min(255, cg + 40)},${Math.min(255, cb + 40)},${Math.min(1, 0.55 + activity * 0.45)})`
-        : `rgba(${cr},${cg},${cb},${0.22 + activity * 0.2})`;
-      ctx.beginPath();
-      for (let k = 0; k < NPTS; k++) {
-        if (near ? pz[k] > 0 : pz[k] <= 0) continue;
-        // Twinkle via size (not alpha) so passes stay single-fill batches.
-        const tw = 0.75 + 0.25 * Math.sin(t * 2 + pw[k]);
-        const dot = ps[k] * tw * pp[k] * (near ? 1.25 : 0.85) * (1 + react * 0.7);
-        ctx.moveTo(px[k] + dot, py[k]);
-        ctx.arc(px[k], py[k], dot, 0, TWO_PI);
-      }
-      ctx.fill();
+    const R = R0;
+    const ay = phase * 0.45;                    // global yaw (design: t*0.45*spd)
+    const ca = Math.cos(ay), sa = Math.sin(ay);
+    const PX = [0, 0, 0, 0];
+    const proj = (x, y, z) => {
+      const x1 = x * ca + z * sa, z1 = -x * sa + z * ca;
+      const y2 = y * CT - z1 * ST, z2 = y * ST + z1 * CT;
+      const pr = 1 / (1 - z2 / (R * 3.2));
+      PX[0] = R + x1 * pr; PX[1] = R + y2 * pr; PX[2] = z2; PX[3] = pr;
+      return PX;
     };
-    emberPass(false);
 
-    // White-hot core: flares with the voice (radius + brightness track react),
-    // fading out through the state colour.
-    const coreR = baseR * (0.42 + react * 0.2) * rScale;
-    const core = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR);
-    const hot = (c) => Math.min(255, c + 90);
-    core.addColorStop(0, `rgba(255,255,255,${0.8 + react * 0.2})`);
-    core.addColorStop(0.3, `rgba(${hot(cr)},${hot(cg)},${hot(cb)},${0.5 + react * 0.35})`);
-    core.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
-    ctx.fillStyle = core;
-    ctx.beginPath();
-    ctx.arc(cx, cy, coreR, 0, TWO_PI);
-    ctx.fill();
+    // Debris rings: glowing arc segments + loose debris squares.
+    for (let ri = 0; ri < parts.rings.length; ri++) {
+      const rg = parts.rings[ri];
+      const a = rg.w * phase;                   // design: rg.w * t * spd
+      const u = rg.u, v = rg.v;
+      for (let gi = 0; gi < rg.segs.length; gi++) {
+        const sg = rg.segs[gi];
+        const CH = 3, NS = 5;
+        for (let ci = 0; ci < CH; ci++) {
+          ctx.beginPath();
+          let zsum = 0, prsum = 0;
+          for (let si = 0; si <= NS; si++) {
+            const th = sg.a0 + a + sg.len * (ci + si / NS) / CH;
+            const c1 = Math.cos(th), s1 = Math.sin(th);
+            const p = proj(rg.rb * (u[0] * c1 + v[0] * s1), rg.rb * (u[1] * c1 + v[1] * s1), rg.rb * (u[2] * c1 + v[2] * s1));
+            if (si === 0) ctx.moveTo(p[0], p[1]); else ctx.lineTo(p[0], p[1]);
+            zsum += p[2]; prsum += p[3];
+          }
+          const shade = 0.25 + 0.75 * ((zsum / (NS + 1)) / rg.rb + 1) * 0.5;
+          ctx.strokeStyle = ramp(rg.h, sg.al * amp * shade);
+          ctx.lineWidth = rg.lw * (prsum / (NS + 1));
+          ctx.stroke();
+        }
+      }
+      for (let di = 0; di < rg.deb.length; di++) {
+        const d = rg.deb[di];
+        const th = d.a + a;
+        const c1 = Math.cos(th), s1 = Math.sin(th);
+        const p = proj(d.rr * (u[0] * c1 + v[0] * s1), d.rr * (u[1] * c1 + v[1] * s1), d.rr * (u[2] * c1 + v[2] * s1));
+        const shade = 0.25 + 0.75 * (p[2] / d.rr + 1) * 0.5;
+        const fl = 0.5 + 0.5 * Math.sin(tSec * 2.4 * d.w + d.tw);
+        const ss = Math.max(0.4, d.s * p[3]);
+        ctx.fillStyle = ramp(d.h, (0.2 + 0.6 * fl) * amp * shade);
+        ctx.fillRect(p[0] - ss / 2, p[1] - ss / 2, ss, ss);
+      }
+    }
 
-    emberPass(true);
+    // Core + volume dust.
+    for (let i = 0; i < parts.dots.length; i++) {
+      const d = parts.dots[i];
+      const p = proj(d.x, d.y, d.z);
+      const rr = Math.hypot(d.x, d.y, d.z) || 1;
+      const shade = 0.3 + 0.7 * (p[2] / rr + 1) * 0.5;
+      const fl = 0.55 + 0.45 * Math.sin(tSec * 2 * d.w + d.tw);
+      const ss = Math.max(0.4, d.s * p[3]);
+      ctx.fillStyle = ramp(d.h, Math.min(1, (0.3 + 0.7 * fl) * shade * amp));
+      ctx.fillRect(p[0] - ss / 2, p[1] - ss / 2, ss, ss);
+    }
+
+    // White-hot core flare (pulses; flares harder with the voice) + soft
+    // ambient sphere.
+    const pulse = (1 + 0.1 * Math.sin(tSec * 3.1) + 0.05 * Math.sin(tSec * 7.7)) * flare;
+    const cr2 = R * 0.5 * Math.max(0.3, pulse);
+    let g = ctx.createRadialGradient(R, R, 0, R, R, cr2);
+    g.addColorStop(0, ramp(1, 0.9));
+    g.addColorStop(0.35, ramp(0.62, 0.4));
+    g.addColorStop(0.7, ramp(0.3, 0.13));
+    g.addColorStop(1, ramp(0.2, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(R, R, cr2, 0, TAU); ctx.fill();
+    g = ctx.createRadialGradient(R, R, R * 0.55, R, R, R);
+    g.addColorStop(0, ramp(0.35, 0.05));
+    g.addColorStop(1, ramp(0.3, 0));
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(R, R, R, 0, TAU); ctx.fill();
+
+    ctx.restore();
 
     if (measuring) {
-      mTime += performance.now() - t0; mFrames++;
+      mTime += performance.now() - t0m; mFrames++;
       if (now - mLast >= 1000) {
         const avg = mTime / mFrames;
         console.log(`[orb] render ${avg.toFixed(2)}ms/frame -> max ${(1000 / avg) | 0} FPS`);
@@ -349,43 +347,23 @@
     }
   }
 
-  // Frame-rate cap per state. Every state is capped now: running the heavy mesh
-  // render UNCAPPED at the display's native refresh (144/165/240 Hz) pegged a CPU
-  // core at 80-100% and could crash the app — and a slow constant rotation looks
-  // identical at 30 FPS because the spin is dt-scaled (same angular speed, just
-  // fewer frames). speaking gets a higher cap so the voice-driven surface ripple
-  // stays smooth. The rotation no longer needs native refresh to look right.
+  // Frame-rate cap per state (bounds CPU/GPU; the swirl is dt-scaled so slow
+  // caps keep the same angular speed, just fewer frames).
   const STATE_MIN_MS = { idle: 33, listening: 33, processing: 33, speaking: 22 };
-  // The active profile's per-state caps (see QUALITY) override the defaults above
-  // so a lower GPU cap throttles the orb's frame rate. Falls back to STATE_MIN_MS.
+  // The active profile's per-state caps (see QUALITY) override the defaults.
   function stateMinMs(s) {
     const q = QUALITY[quality];
     return (q && q.stateMs[s]) || STATE_MIN_MS[s] || 33;
   }
-  // The throttled cap while an STT transcription is in flight (the GPU STT path
-  // is the other continuous GPU consumer alongside the orb; allowing both to
-  // run uncapped on a 240 Hz monitor is the "crash on balanced+" symptom).
-  // Refcounted so concurrent STT streams (or rapid re-fires) don't un-throttle
-  // prematurely. Defaults to the full-speed per-state cap when no STT is active.
+  // Throttled cap while an STT transcription is in flight (orb + Vulkan STT
+  // together uncapped was the "crash on balanced+" symptom). Refcounted.
   let sttActive = 0;
   function beginStt() { sttActive++; }
   function endStt() { sttActive = Math.max(0, sttActive - 1); }
-  // When the window isn't focused (ARIA living in the background, common for a
-  // voice assistant) drop to ~5 FPS regardless of state — nobody's watching the
-  // orb, so there's no reason to burn CPU repainting it. document.hidden already
-  // makes rAF stop, but a VISIBLE-but-unfocused window keeps animating at full
-  // rate; this is what catches that case.
+  // Background (visible but unfocused) throttle: ~5 FPS, nobody's watching.
   const BLUR_MIN_MS = 200;
-  // While the window IS focused the user is actually watching the orb, so it must
-  // look smooth even under a power preset (power-saver maps to the 'low' tier,
-  // whose per-state caps are ~15 FPS — visibly choppy). The per-tier caps exist to
-  // bound GPU WORK, but the costly part is the shadow blur + backing-store
-  // resolution (both still gated by the quality profile in render()), NOT the
-  // frame cadence. So a focused window renders at AT LEAST ~60 FPS regardless of
-  // tier — and faster on the 'high' tier, whose 4ms cap already means native
-  // refresh. Power is still saved where it matters: a backgrounded window throttles
-  // to BLUR_MIN_MS. 60 FPS is well short of the uncapped native-refresh rate that
-  // used to peg a CPU core, so this stays safe on weak hardware.
+  // Focused floor: at least ~60 FPS so low-tier caps don't read as choppy while
+  // the user is actually looking at the orb.
   const FOCUS_SMOOTH_MS = 16;
   let windowFocused = (typeof document === 'undefined') || document.hasFocus();
   let lastRenderAt = 0;
@@ -393,31 +371,24 @@
   let fpsVisible = false, fpsCount = 0, fpsLast = 0, fpsValue = 0;
   let renderWarned = false;
   function loop(now) {
-    // Throttle to ~5 FPS in the background, EXCEPT while speaking — the
-    // voice-driven ripple is the signature visual and speaking is short-lived, so
-    // keep it smooth even if the window isn't focused. Idle/listening/processing
-    // in the background (the always-on drain) drop to 5 FPS.
+    // Throttle to ~5 FPS in the background, EXCEPT while speaking — the voice
+    // flare is the signature visual and speaking is short-lived.
     const blurred = !windowFocused && state !== 'speaking';
-    // When an STT transcription is in flight on a high-tier host, swap in the
-    // throttled cap so the orb doesn't pin the GPU alongside Vulkan STT. The
-    // per-state cap still wins when no STT is active.
     const q = QUALITY[quality];
     const stateMs = (q && q.stateMs[state]) || STATE_MIN_MS[state] || 33;
     const activeMs = (q && q.activeMs) || stateMs;
     const capMs = sttActive > 0 ? Math.max(stateMs, activeMs) : stateMs;
-    // Focused -> smooth (>=60 FPS, native on the high tier); backgrounded -> ~5 FPS.
     const minMs = blurred ? BLUR_MIN_MS : Math.min(capMs, FOCUS_SMOOTH_MS);
     if (now - lastRenderAt >= minMs) {
       lastRenderAt = now;
-      // A single bad frame (e.g. a transient state during a resize) must never
-      // throw out of the rAF loop — that would freeze the orb permanently. Catch,
-      // log once, and keep animating.
+      // A single bad frame must never throw out of the rAF loop — that would
+      // freeze the orb permanently. Catch, log once, keep animating.
       try {
         render(now);
         fpsCount++;
         if (now - fpsLast >= 500) { fpsValue = Math.round((fpsCount * 1000) / (now - fpsLast)); fpsCount = 0; fpsLast = now; }
         if (fpsVisible) {
-          ctx.save(); ctx.shadowBlur = 0;
+          ctx.save();
           ctx.font = '600 13px system-ui, sans-serif';
           ctx.fillStyle = fpsValue >= 160 ? '#2ecc71' : fpsValue >= 60 ? '#e0e0e0' : '#f39c12';
           ctx.fillText(`${fpsValue} FPS · ${state}`, 12, 22);
@@ -433,10 +404,8 @@
   function init() {
     canvas = document.getElementById('orb-canvas');
     if (!canvas) return;
-    // NOT desynchronized: the low-latency desync path tears/jitters on the right &
-    // bottom edges on some Linux compositors, and raising the orb to native refresh
-    // made that shimmer visible again. The vsync'd path is tear-free; an ambient orb
-    // doesn't need the latency win.
+    // NOT desynchronized: the desync path tears/jitters on some Linux
+    // compositors; an ambient orb doesn't need the latency win.
     ctx = canvas.getContext('2d', { alpha: true });
     refreshAccent();
     resize();
@@ -446,14 +415,11 @@
     if (typeof ResizeObserver !== 'undefined') {
       new ResizeObserver(() => resize()).observe(canvas);
     }
-    // Re-resize when the window is shown again or regains focus / changes DPR
-    // (e.g. dragged to another monitor) so the backing store never goes stale.
+    // Re-resize on show/focus/DPR changes so the backing store never goes stale.
     document.addEventListener('visibilitychange', () => {
       windowFocused = !document.hidden && document.hasFocus();
       if (!document.hidden) resize();
     });
-    // Track focus so the loop can throttle to ~5 FPS in the background. Resize on
-    // focus regain too (DPR/monitor may have changed while hidden).
     window.addEventListener('focus', () => { windowFocused = true; resize(); });
     window.addEventListener('blur', () => { windowFocused = false; });
     window.addEventListener('pageshow', resize);
@@ -479,9 +445,8 @@
   }
   function toggleFps() { fpsVisible = !fpsVisible; return fpsVisible; }
 
-  // Synchronously advance the animation by `frames` (~16.7ms each) in the current
-  // state, so colour easing + motion settle deterministically. Used by headless
-  // screenshot/boot tests where the window is hidden and rAF is throttled.
+  // Synchronously advance the animation by `frames` (~16.7ms each) in the
+  // current state — used by headless screenshot/boot tests where rAF throttles.
   function pump(frames) {
     frames = frames || 60;
     let now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
