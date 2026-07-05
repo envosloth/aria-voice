@@ -147,7 +147,7 @@ const defaults: AppConfig = {
     volume: 1.0,
   },
   ui: {
-    globalShortcut: 'Super+Shift+A',
+    globalShortcut: 'Ctrl+Shift+A',
     theme: 'system',
     onboarded: false,
     gpuCap: 50,

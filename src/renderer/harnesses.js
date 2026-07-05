@@ -23,15 +23,15 @@
     {
       id: 'hermes', name: 'Hermes Agent', kind: 'agent',
       endpoint: 'http://localhost:8642/v1/chat/completions',
-      defaultModel: 'minimax-m3', keyHint: 'gateway key',
+      defaultModel: 'minimax-m3', keyHint: 'gateway key', detect: true,
       note: 'Hermes serves its OpenAI-compatible gateway on port 8642 (not 8000). '
-        + 'Use a Hermes gateway API key — not your conversational-LLM key.',
+        + 'ARIA can auto-detect the gateway key from ~/.hermes/.env — no need to find it yourself.',
     },
     {
       id: 'openclaw', name: 'OpenClaw', kind: 'agent',
       endpoint: 'http://localhost:3000/v1/chat/completions',
-      defaultModel: 'default', keyHint: '',
-      note: 'Point ARIA at your OpenClaw server endpoint.',
+      defaultModel: 'default', keyHint: '', detect: true,
+      note: 'Point ARIA at your OpenClaw server endpoint — ARIA tries to auto-detect its key.',
     },
     {
       id: 'goose', name: 'Goose', kind: 'agent',

@@ -62,6 +62,11 @@ const api = {
     // { ok, models[], recommended?, endpoint, error? }.
     listModels: (opts: { endpoint: string; apiKey?: string }) =>
       ipcRenderer.invoke(IPC.LLM_LIST_MODELS, opts),
+    // Auto-detect a local harness's endpoint + API key from its on-disk config
+    // (Hermes' ~/.hermes/.env, etc.). Returns { found, endpoint?, model?,
+    // apiKey?, source?, message }. Settings/onboarding call this to pre-fill.
+    detectHarness: (id: string) =>
+      ipcRenderer.invoke(IPC.LLM_DETECT_HARNESS, id),
     onToken: (cb: (token: string) => void) =>
       ipcRenderer.on(IPC.LLM_TOKEN, (_e, token) => cb(token)),
     onTool: (cb: (info: { name: string; args?: string }) => void) =>

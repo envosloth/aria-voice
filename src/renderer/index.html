@@ -378,9 +378,9 @@
     .discover-row { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
     .discover-row input { flex: 1; min-width: 0; margin-top: 0; }
     .discover-row button { flex: none; padding: 7px 14px; font-size: 12px; }
-    #discover-llm-status, #discover-harness-status { display: block; margin-top: 6px; min-height: 1em; }
-    #discover-llm-status.ok, #discover-harness-status.ok { color: var(--success); }
-    #discover-llm-status.err, #discover-harness-status.err { color: var(--error); }
+    #discover-llm-status, #discover-harness-status, #detect-harness-status { display: block; margin-top: 6px; min-height: 1em; }
+    #discover-llm-status.ok, #discover-harness-status.ok, #detect-harness-status.ok { color: var(--success); }
+    #discover-llm-status.err, #discover-harness-status.err, #detect-harness-status.err { color: var(--error); }
     .remote-row { display: flex; gap: 8px; align-items: stretch; }
     .remote-row label { display: flex; flex-direction: column; }
     .remote-row input { margin-top: 0; }
@@ -622,7 +622,11 @@
           <span class="hint" id="discover-harness-status"></span>
         </label>
         <label>API Key <span class="hint">(optional, OS keyring)</span>
-          <input type="password" id="cfg-harness-key" placeholder="optional — leave blank to keep existing">
+          <div class="discover-row">
+            <input type="password" id="cfg-harness-key" placeholder="optional — leave blank to keep existing">
+            <button id="detect-harness" class="ghost-btn" type="button" hidden>Auto-detect</button>
+          </div>
+          <span class="hint" id="detect-harness-status"></span>
         </label>
       </section>
       </div><!-- /connections -->
@@ -863,6 +867,8 @@
         <label>API Key
           <input type="password" id="onb-key" placeholder="optional">
         </label>
+        <p class="hint" id="onb-detect-status" style="margin:-6px 0 12px;"></p>
+        <button id="onb-detect" class="onboard-secondary" hidden>Auto-detect key</button>
         <button id="onb-test" class="onboard-secondary">Test connection</button>
         <span id="onb-test-result"></span>
       </div>

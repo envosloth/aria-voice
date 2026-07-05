@@ -1094,6 +1094,8 @@ const cfg = {
   discoverHarness: document.getElementById('discover-harness'),
   discoverLlmStatus: document.getElementById('discover-llm-status'),
   discoverHarnessStatus: document.getElementById('discover-harness-status'),
+  detectHarness: document.getElementById('detect-harness'),
+  detectHarnessStatus: document.getElementById('detect-harness-status'),
   sttModel: document.getElementById('cfg-stt-model'),
   sttBackend: document.getElementById('cfg-stt-backend'),
   ttsVoice: document.getElementById('cfg-tts-voice'),
@@ -1166,16 +1168,52 @@ cfg.llmProvider.addEventListener('change', () => {
   if (p.defaultModel) cfg.llmModel.value = p.defaultModel;
 });
 
-// Pick a harness preset -> prefill its endpoint/model + note (all editable).
+// Auto-detect a local harness's endpoint + API key from its own on-disk config
+// (Hermes -> ~/.hermes/.env, etc.) so the user never has to hunt for the key.
+// `force` overwrites already-filled fields (the manual "Auto-detect" button);
+// otherwise only blanks are filled (the silent run when a harness is picked).
+// Shared by Settings + onboarding — pass whichever element set that surface has.
+async function detectHarnessInto(id, els, opts) {
+  const { endpointEl, modelEl, keyEl, statusEl } = els;
+  const force = !!(opts && opts.force);
+  if (statusEl) { statusEl.textContent = 'Looking for a local key…'; statusEl.style.color = 'var(--text-muted)'; }
+  let r;
+  try { r = await aria.llm.detectHarness(id); }
+  catch { if (statusEl) statusEl.textContent = ''; return null; }
+  if (r.endpoint && endpointEl && (force || !endpointEl.value.trim())) endpointEl.value = r.endpoint;
+  if (r.model && modelEl && (force || !modelEl.value.trim())) modelEl.value = r.model;
+  if (r.apiKey && keyEl && (force || !keyEl.value.trim())) keyEl.value = r.apiKey;
+  if (statusEl) {
+    statusEl.textContent = (r.found ? '✓ ' : '') + (r.message || '');
+    statusEl.style.color = r.found ? 'var(--success)' : 'var(--text-muted)';
+  }
+  return r;
+}
+
+// Pick a harness preset -> prefill its endpoint/model + note (all editable), and
+// reveal the Auto-detect button for harnesses ARIA can read a local key for.
 function applyHarnessSelection(id, opts) {
   const h = window.AriaHarnesses.byId(id) || window.AriaHarnesses.byId('custom');
   cfg.harnessNote.textContent = h.note || '';
+  if (cfg.detectHarness) cfg.detectHarness.hidden = !h.detect;
+  if (!h.detect && cfg.detectHarnessStatus) cfg.detectHarnessStatus.textContent = '';
   if (opts && opts.prefill) {
     if (h.endpoint) cfg.harnessEndpoint.value = h.endpoint;
     if (h.defaultModel) cfg.harnessModel.value = h.defaultModel;
   }
 }
-cfg.harness.addEventListener('change', () => applyHarnessSelection(cfg.harness.value, { prefill: true }));
+function detectHarnessSettings(force) {
+  return detectHarnessInto(cfg.harness.value, {
+    endpointEl: cfg.harnessEndpoint, modelEl: cfg.harnessModel,
+    keyEl: cfg.harnessKey, statusEl: cfg.detectHarnessStatus,
+  }, { force });
+}
+cfg.harness.addEventListener('change', () => {
+  applyHarnessSelection(cfg.harness.value, { prefill: true });
+  const h = window.AriaHarnesses.byId(cfg.harness.value);
+  if (h && h.detect) detectHarnessSettings(false); // silent auto-detect on pick
+});
+if (cfg.detectHarness) cfg.detectHarness.addEventListener('click', () => detectHarnessSettings(true));
 
 // --- Remote access (SSH tunnel) ---------------------------------------
 // Each input writes its value to the corresponding config key on change;
@@ -1744,6 +1782,8 @@ const onb = {
   model: document.getElementById('onb-model'),
   keyDesc: document.getElementById('onb-key-desc'),
   key: document.getElementById('onb-key'),
+  detect: document.getElementById('onb-detect'),
+  detectStatus: document.getElementById('onb-detect-status'),
   test: document.getElementById('onb-test'),
   testResult: document.getElementById('onb-test-result'),
   llmProvider: document.getElementById('onb-llm-provider'),
@@ -1814,8 +1854,20 @@ function onbApplyHarness() {
   if (h.endpoint) onb.endpoint.value = h.endpoint;
   if (h.defaultModel) onb.model.value = h.defaultModel;
   onb.key.placeholder = 'optional';
+  if (onb.detect) onb.detect.hidden = !h.detect;
+  if (!h.detect && onb.detectStatus) onb.detectStatus.textContent = '';
 }
-onb.harness.addEventListener('change', onbApplyHarness);
+function onbDetect(force) {
+  return detectHarnessInto(onb.harness.value, {
+    endpointEl: onb.endpoint, modelEl: onb.model, keyEl: onb.key, statusEl: onb.detectStatus,
+  }, { force });
+}
+onb.harness.addEventListener('change', () => {
+  onbApplyHarness();
+  const h = onbSelectedHarness();
+  if (h && h.detect) onbDetect(false); // silent auto-detect on pick; key shows on step 2
+});
+if (onb.detect) onb.detect.addEventListener('click', () => onbDetect(true));
 
 function onbResolveEndpoint() {
   return onb.endpoint.value.trim();

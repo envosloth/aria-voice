@@ -45,3 +45,6 @@ credentials.json
 
 # Local progress backups
 RALPH_PROGRESS.prev.md
+
+# Claude Code / ralph-loop session-local files
+.claude/

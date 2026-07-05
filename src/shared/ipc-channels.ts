@@ -34,6 +34,9 @@ export const IPC = {
   // (Hermes on :8642) or LLM (any other). Returns the default-recommended model.
   LLM_LIST_MODELS: 'llm:list-models',
   LLM_TEST: 'llm:test',        // renderer -> main: test a provider endpoint/key
+  // Auto-detect a local harness's endpoint + API key from the config it wrote on
+  // disk (e.g. Hermes' ~/.hermes/.env), so users don't have to find the key.
+  LLM_DETECT_HARNESS: 'llm:detect-harness',
   LLM_ROUTE: 'llm:route',      // main -> renderer: which target answered (llm|harness)
 
   CONFIG_GET: 'config:get',

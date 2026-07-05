@@ -6,6 +6,7 @@ import { config } from './config';
 import { getSecureBackend, isSecureBackendSafe, setSecret, getSecret, deleteSecret } from './secure-storage';
 import { streamChat } from './llm-stream';
 import { listModels, normalizeChatBaseUrl } from './llm-models';
+import { detectHarness } from './harness-detect';
 import { coordinate, cancelCoordination, resetConversation } from './coordinator';
 import { buildManifest, missingModels, downloadModel } from './model-manager';
 import { perfEnabled, setPerfEnabled, perfMark, perfMarkExternal } from './perf';
@@ -202,14 +203,32 @@ function registerGlobalShortcut(): void {
   registerInWindowShortcut();
 }
 
-// Focused fallback: when the window has focus, intercept the same chord via
-// before-input-event so the hotkey still works even if the global portal failed.
+// Does a keyDown event match an Electron accelerator string (e.g.
+// "Ctrl+Shift+A")? All modifiers must match exactly so a superset chord doesn't
+// trigger it. ponytail: CmdOrCtrl is treated as Ctrl (ARIA's primary target is
+// Linux); split per-platform if a Mac build needs Cmd here.
+function matchesAccelerator(input: Electron.Input, accel: string): boolean {
+  const parts = (accel || '').toLowerCase().split('+').map((s) => s.trim()).filter(Boolean);
+  const key = parts[parts.length - 1] || '';
+  const has = (...names: string[]) => parts.some((p) => names.includes(p));
+  return (
+    input.control === has('ctrl', 'control', 'cmdorctrl', 'commandorcontrol') &&
+    input.alt === has('alt', 'option') &&
+    input.shift === has('shift') &&
+    input.meta === has('super', 'meta', 'cmd', 'command') &&
+    input.key.toLowerCase() === key
+  );
+}
+
+// Focused fallback: when the window has focus, intercept the configured chord
+// via before-input-event so the hotkey still works even if the global portal
+// failed (common on Wayland). Reads ui.globalShortcut so it always matches
+// whatever the global shortcut is set to.
 function registerInWindowShortcut(): void {
   if (!mainWindow) return;
   mainWindow.webContents.on('before-input-event', (_event, input) => {
     if (input.type !== 'keyDown') return;
-    // Match Super+Shift+A (the configured default chord)
-    if (input.meta && input.shift && input.key.toLowerCase() === 'a') {
+    if (matchesAccelerator(input, config.get('ui.globalShortcut') as string)) {
       toggleListening();
     }
   });
@@ -360,6 +379,12 @@ function setupIpcHandlers(): void {
   ipcMain.handle(IPC.LLM_LIST_MODELS, async (_e, opts: { endpoint: string; apiKey?: string }) => {
     return await listModels(opts.endpoint, opts.apiKey || '');
   });
+
+  // Auto-detect a local harness's connection from the config it wrote on disk
+  // (Hermes → ~/.hermes/.env, etc.). Reads the endpoint + gateway key so the
+  // Settings/onboarding fields can pre-fill without the user hunting for the
+  // key. Read-only; never persists — the renderer saves via the normal path.
+  ipcMain.handle(IPC.LLM_DETECT_HARNESS, (_e, id: string) => detectHarness(id || ''));
 
   // Mic PCM from the renderer (getUserMedia, 16kHz mono s16le). Always feed the
   // always-on wake-word sidecar; also feed STT while an utterance is active.
