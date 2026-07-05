@@ -50,18 +50,19 @@ class WakewordSidecar(BaseSidecar):
         # phrase trigger it.
         self.partial_threshold = float(os.environ.get("ARIA_WAKEWORD_PARTIAL_THRESHOLD", "0.3"))
         # Silero VAD gate. openWakeWord ZEROES a detection whose VAD speech score
-        # is below this. Onset lag once made a strong gate the "doesn't activate
-        # when spoken" cause, so it was disabled. It's back at a LIGHT 0.2 default
-        # (paired with the multi-frame debounce below, which gives Silero time to
-        # ramp before we ever fire) to reject non-speech room noise — fan hum,
-        # keyboard, distant TV — which was firing the bare model. Set
-        # ARIA_WAKEWORD_VAD_THRESHOLD=0 to disable the gate entirely.
-        self.vad_threshold = float(os.environ.get("ARIA_WAKEWORD_VAD_THRESHOLD", "0.2"))
-        # Debounce: the score must stay >= threshold for this many CONSECUTIVE
-        # 80ms frames before we fire. A real spoken wake word sustains well past
-        # this (~0.5s); a transient noise spike does not — this is the main
-        # background-noise false-positive reducer, and it barely costs recall.
-        self.min_frames = max(1, int(os.environ.get("ARIA_WAKEWORD_MIN_FRAMES", "2")))
+        # is below this. Silero lags at speech onset, so ANY non-zero gate
+        # suppresses a quick/normally-spoken wake word before the VAD ramps — the
+        # documented "doesn't activate when spoken" root cause. Reliability is the
+        # priority, so it DEFAULTS OFF (0.0); the model's own confidence +
+        # post-detection cooldown are the discriminators. Set
+        # ARIA_WAKEWORD_VAD_THRESHOLD>0 only for a very noisy room (trades recall).
+        self.vad_threshold = float(os.environ.get("ARIA_WAKEWORD_VAD_THRESHOLD", "0.0"))
+        # Debounce: fire only after the score stays >= threshold for this many
+        # CONSECUTIVE 80ms frames. min_frames=1 = fire on the first frame (most
+        # reliable — no onset penalty); raise to 2+ to filter single-frame noise
+        # spikes at the cost of some recall. Default 1: consistent activation wins;
+        # the 1.5s cooldown below still prevents a single word double-firing.
+        self.min_frames = max(1, int(os.environ.get("ARIA_WAKEWORD_MIN_FRAMES", "1")))
         # After a detection, ignore further detections for this long so one spoken
         # wake word can't double-fire as its score lingers above threshold.
         self.cooldown_s = float(os.environ.get("ARIA_WAKEWORD_COOLDOWN", "1.5"))
