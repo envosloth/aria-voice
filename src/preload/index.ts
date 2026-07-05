@@ -43,8 +43,8 @@ const api = {
   },
 
   wakeword: {
-    onDetected: (cb: (phrase: string) => void) =>
-      ipcRenderer.on(IPC.WAKEWORD_DETECTED, (_e, phrase) => cb(phrase)),
+    onDetected: (cb: (phrase: string, score: number) => void) =>
+      ipcRenderer.on(IPC.WAKEWORD_DETECTED, (_e, phrase, score) => cb(phrase, score)),
     onState: (cb: (state: string) => void) =>
       ipcRenderer.on(IPC.WAKEWORD_STATE, (_e, state) => cb(state)),
   },

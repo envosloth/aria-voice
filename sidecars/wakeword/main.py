@@ -22,6 +22,20 @@ FRAME_BYTES = 1280 * 2  # 80ms at 16kHz, 16-bit mono = 2560 bytes
 DEFAULT_MODEL = os.environ.get("ARIA_WAKEWORD_MODEL", "hey_jarvis")
 
 
+def _debounce_step(consec, above_threshold, min_frames):
+    """Pure multi-frame debounce. Given the running count of consecutive
+    above-threshold frames, whether THIS frame is above threshold, and the
+    required run length, return (new_consec, should_fire). A wake word must stay
+    above threshold for min_frames consecutive frames before firing, so a
+    single-frame noise spike can't trigger it."""
+    if not above_threshold:
+        return 0, False
+    consec += 1
+    if consec >= min_frames:
+        return 0, True
+    return consec, False
+
+
 class WakewordSidecar(BaseSidecar):
     def __init__(self):
         super().__init__("wakeword")
@@ -36,18 +50,23 @@ class WakewordSidecar(BaseSidecar):
         # phrase trigger it.
         self.partial_threshold = float(os.environ.get("ARIA_WAKEWORD_PARTIAL_THRESHOLD", "0.3"))
         # Silero VAD gate. openWakeWord ZEROES a detection whose VAD speech score
-        # is below this. It was the main "doesn't activate when spoken" cause:
-        # Silero lags at speech onset, so a short/quick wake word fires the model
-        # but the VAD hasn't ramped yet and the detection is suppressed. Lowering
-        # it (0.5 -> 0.2) wasn't enough, so it now DEFAULTS TO 0.0 = gate OFF; the
-        # wake-word model itself is the discriminator and the post-detection
-        # cooldown bounds double-fires. Set ARIA_WAKEWORD_VAD_THRESHOLD>0 to re-arm
-        # the gate (e.g. for a very noisy room trading recall for fewer false fires).
-        self.vad_threshold = float(os.environ.get("ARIA_WAKEWORD_VAD_THRESHOLD", "0.0"))
+        # is below this. Onset lag once made a strong gate the "doesn't activate
+        # when spoken" cause, so it was disabled. It's back at a LIGHT 0.2 default
+        # (paired with the multi-frame debounce below, which gives Silero time to
+        # ramp before we ever fire) to reject non-speech room noise — fan hum,
+        # keyboard, distant TV — which was firing the bare model. Set
+        # ARIA_WAKEWORD_VAD_THRESHOLD=0 to disable the gate entirely.
+        self.vad_threshold = float(os.environ.get("ARIA_WAKEWORD_VAD_THRESHOLD", "0.2"))
+        # Debounce: the score must stay >= threshold for this many CONSECUTIVE
+        # 80ms frames before we fire. A real spoken wake word sustains well past
+        # this (~0.5s); a transient noise spike does not — this is the main
+        # background-noise false-positive reducer, and it barely costs recall.
+        self.min_frames = max(1, int(os.environ.get("ARIA_WAKEWORD_MIN_FRAMES", "2")))
         # After a detection, ignore further detections for this long so one spoken
         # wake word can't double-fire as its score lingers above threshold.
         self.cooldown_s = float(os.environ.get("ARIA_WAKEWORD_COOLDOWN", "1.5"))
         self._last_detect = 0.0
+        self._consec = 0  # running count of consecutive above-threshold frames
         self._np = None
         self._buffer = bytearray()
 
@@ -90,18 +109,27 @@ class WakewordSidecar(BaseSidecar):
 
             now = time.time()
             if now - self._last_detect < self.cooldown_s:
+                self._consec = 0
                 continue  # still cooling down from the last trigger — don't re-fire
+
+            # Highest-scoring model above threshold this frame (if any).
+            best_name, best_score = None, 0.0
             for model_name, score in prediction.items():
-                if score >= self.threshold:
-                    self._last_detect = now
-                    self.emit({
-                        "type": "wakeword_detected",
-                        "phrase": model_name,
-                        "score": float(score),
-                        "ts": now,
-                    })
-                    self.model.reset()
-                    break
+                if score >= self.threshold and score > best_score:
+                    best_name, best_score = model_name, float(score)
+
+            self._consec, should_fire = _debounce_step(
+                self._consec, best_name is not None, self.min_frames
+            )
+            if should_fire:
+                self._last_detect = now
+                self.emit({
+                    "type": "wakeword_detected",
+                    "phrase": best_name,
+                    "score": best_score,
+                    "ts": now,
+                })
+                self.model.reset()
 
     @staticmethod
     def _normalize(name: str) -> str:
@@ -188,4 +216,13 @@ class WakewordSidecar(BaseSidecar):
 
 
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        # min_frames=2: one above-threshold frame must NOT fire; two in a row must.
+        assert _debounce_step(0, True, 2) == (1, False)
+        assert _debounce_step(1, True, 2) == (0, True)
+        assert _debounce_step(1, False, 2) == (0, False)  # a gap resets the run
+        assert _debounce_step(0, False, 2) == (0, False)
+        assert _debounce_step(0, True, 1) == (0, True)  # min_frames=1 fires at once
+        print("wakeword debounce self-test OK")
+        sys.exit(0)
     WakewordSidecar().run()

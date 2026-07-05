@@ -1079,9 +1079,18 @@ aria.llm.onError((error) => {
   speakOnly("Sorry, I ran into a problem answering that one.");
 });
 
-aria.wakeword.onDetected((phrase) => {
+// While ARIA is speaking, only a confidently-heard wake word should barge in.
+// The sidecar already gates emission at ~0.4, but marginal fires (0.4–0.6) while
+// ARIA is talking are almost always its own leaked audio or room noise — those
+// were cutting the reply off mid-sentence. A deliberate user interruption scores
+// well above this, so genuine barge-in still works.
+const BARGE_IN_MIN_SCORE = 0.6;
+aria.wakeword.onDetected((phrase, score) => {
+  if (orbStateName === 'speaking' && typeof score === 'number' && score < BARGE_IN_MIN_SCORE) {
+    return; // too weak to be a real interruption — don't cut off the reply
+  }
   // Wake word heard -> open a hands-free STT utterance with VAD endpointing:
-  // it ends automatically after ~800ms of silence (or the 8s safety cap).
+  // it ends automatically after ~550ms of silence (or the 8s safety cap).
   beginUtterance({ vad: true });
 });
 

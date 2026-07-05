@@ -1130,7 +1130,10 @@ function routeSidecarMessage(name: SidecarName, msg: Record<string, unknown>): v
       mainWindow?.webContents.send(IPC.STT_PARTIAL, msg.text);
       break;
     case 'wakeword_detected':
-      mainWindow?.webContents.send(IPC.WAKEWORD_DETECTED, msg.phrase);
+      // Forward the confidence too: the renderer requires a stronger score to
+      // barge in on ARIA's own speech than to wake it from idle, so leaked TTS
+      // audio / marginal room noise can't self-interrupt a reply mid-sentence.
+      mainWindow?.webContents.send(IPC.WAKEWORD_DETECTED, msg.phrase, msg.score);
       void ensureSidecar('stt');
       break;
     case 'tts_chunk':
