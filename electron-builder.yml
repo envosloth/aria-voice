@@ -121,11 +121,16 @@ deb:
     - gnome-keyring
     - libnotify4
     - libnss3
-    - libasound2
+    # Ubuntu 24.04+ (incl. the 26.04 target) renamed several libs in the 64-bit
+    # time_t (t64) transition: libasound2 -> libasound2t64. Plain `libasound2` is
+    # no longer installable there, so a bare depends made the .deb uninstallable
+    # on the target OS. The `t64 | old` alternative satisfies BOTH post-t64
+    # (24.04/26.04) and pre-t64 (22.04) systems.
+    - libasound2t64 | libasound2
     - libvulkan1      # whisper.cpp Vulkan backend (GPU STT)
     - libgomp1        # OpenMP runtime for whisper.cpp
   recommends:
-    - libfuse2                # AppImage runtime on older targets
+    - libfuse2t64 | libfuse2  # AppImage runtime (t64-renamed on 24.04+)
     - mesa-vulkan-drivers     # Vulkan driver (RADV) for AMD/Intel GPUs
 
 appImage:
