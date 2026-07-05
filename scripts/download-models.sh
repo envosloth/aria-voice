@@ -10,16 +10,15 @@ WHISPER_BASE="https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
 PIPER_VOICE="en_GB-alan-medium"
 PIPER_BASE="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium"
 
+# Keys mirror the STT models the app actually selects across presets
+# (power-saver/weak-hardware = tiny.en, default = base.en, high tier = small/medium;
+# see src/main/hardware.ts). tiny.en was missing, so low-end users whose preset
+# needs it couldn't pre-fetch it.
 declare -A WHISPER_MODELS=(
+  ["tiny.en"]="ggml-tiny.en.bin"
   ["base.en"]="ggml-base.en.bin"
   ["small"]="ggml-small.bin"
   ["medium"]="ggml-medium.bin"
-)
-
-declare -A WHISPER_CHECKSUMS=(
-  ["base.en"]=""
-  ["small"]=""
-  ["medium"]=""
 )
 
 download_with_resume() {
@@ -38,7 +37,9 @@ echo "=== ARIA Model Download ==="
 echo "Target directory: $MODELS_DIR"
 echo
 
-STT_MODEL="${1:-small}"
+# Default matches the app's DEFAULT_STT_MODEL (src/shared/constants.ts) so a
+# no-arg run pre-fetches exactly what a fresh install uses — no wasted download.
+STT_MODEL="${1:-base.en}"
 echo "[1/3] STT: whisper.cpp model '$STT_MODEL'"
 if [ -z "${WHISPER_MODELS[$STT_MODEL]+x}" ]; then
   echo "  Unknown model: $STT_MODEL (available: ${!WHISPER_MODELS[*]})"

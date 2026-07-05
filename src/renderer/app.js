@@ -884,6 +884,13 @@ function armIdleAtAudioEnd() {
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
     if (orbStateName !== 'speaking') return;
+    // A "hold on" filler just finished playing but the REAL reply hasn't started
+    // streaming yet (awaitingFirstToken is still set) — the turn is NOT over. Do
+    // not drop to idle or re-open the mic for a follow-up; the filler is not the
+    // end of the turn. Stay 'speaking' and keep waiting. The first real token
+    // (speakChunk clears the filler + re-arms) or a failure (onError clears
+    // awaitingFirstToken then speaks) will drive the true end-of-turn idle.
+    if (awaitingFirstToken) return;
     orbState('idle');
     // The spoken reply has now finished playing — mark the true end of the turn so
     // the latency panel's "full reply" is measured to here (not to turn_complete,
