@@ -110,6 +110,22 @@ export function resetConversation(): void {
   sessions.startNewSession(); // next turn opens a fresh persisted session
 }
 
+// Reopen a persisted conversation: restore its transcript as the live history so
+// follow-ups continue it, and mark it current so new turns append to it. The
+// Hermes session rotates (a fresh server session), but the restored text still
+// carries the context to both targets via the shared history. Returns the record
+// so the renderer can repaint the transcript.
+export function resumeSession(id: string): sessions.SessionRecord | null {
+  const rec = sessions.getSession(id);
+  if (!rec) return null;
+  history = rec.turns.map((t) => ({ role: t.role, content: t.content }));
+  if (history.length > MAX_TURNS) history = history.slice(-MAX_TURNS);
+  lastTarget = null;
+  harnessSessionId = null;
+  sessions.setCurrentSession(id);
+  return rec;
+}
+
 /**
  * Abort the in-flight reply, if any. Called when the user interrupts (wake word
  * or push-to-talk while ARIA is still speaking). The aborted request's tokens

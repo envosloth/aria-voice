@@ -11,6 +11,7 @@ const api = {
     list: () => ipcRenderer.invoke(IPC.SESSIONS_LIST),
     get: (id: string) => ipcRenderer.invoke(IPC.SESSIONS_GET, id),
     delete: (id: string) => ipcRenderer.invoke(IPC.SESSIONS_DELETE, id),
+    resume: (id: string) => ipcRenderer.invoke(IPC.SESSIONS_RESUME, id),
   },
 
   secure: {

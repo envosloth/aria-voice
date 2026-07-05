@@ -45,6 +45,7 @@ export const IPC = {
   SESSIONS_LIST: 'sessions:list',     // renderer -> main: summaries of past conversations
   SESSIONS_GET: 'sessions:get',       // renderer -> main: full transcript of one session
   SESSIONS_DELETE: 'sessions:delete', // renderer -> main: remove a saved session
+  SESSIONS_RESUME: 'sessions:resume', // renderer -> main: reopen a session as the live one
 
   SECURE_STORE_GET: 'secure:get',
   SECURE_STORE_SET: 'secure:set',

@@ -14,7 +14,7 @@ export interface SessionRecord {
   updatedAt: number;
   turns: SessionTurn[];
 }
-export interface SessionSummary { id: string; title: string; updatedAt: number; turns: number; }
+export interface SessionSummary { id: string; title: string; updatedAt: number; turns: number; current: boolean; }
 
 // ponytail: newest MAX_SESSIONS kept, whole array rewritten on every turn. n is
 // tiny and writes are turn-paced, so a naive full rewrite is fine; switch to an
@@ -45,6 +45,12 @@ export function startNewSession(): void {
   currentId = null;
 }
 
+// Make an existing session the current one, so subsequent turns append to it
+// (used when the user reopens a past conversation from the sidebar).
+export function setCurrentSession(id: string): void {
+  currentId = id;
+}
+
 export function recordTurn(role: 'user' | 'assistant', content: string): void {
   const text = (content || '').trim();
   if (!text) return;
@@ -68,7 +74,7 @@ export function recordTurn(role: 'user' | 'assistant', content: string): void {
 // Summaries for the sidebar list, newest activity first.
 export function listSessions(): SessionSummary[] {
   return all()
-    .map((s) => ({ id: s.id, title: s.title || '(untitled)', updatedAt: s.updatedAt, turns: s.turns.length }))
+    .map((s) => ({ id: s.id, title: s.title || '(untitled)', updatedAt: s.updatedAt, turns: s.turns.length, current: s.id === currentId }))
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 

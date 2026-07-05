@@ -625,10 +625,6 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && settingsOverlay.classList.contains('visible')) {
     closeSettings();
   }
-  const historyOv = document.getElementById('history-overlay');
-  if (e.key === 'Escape' && historyOv && historyOv.classList.contains('visible')) {
-    historyOv.classList.remove('visible');
-  }
 });
 
 // Which target (LLM vs Agent harness) the coordinator routed to.
@@ -858,6 +854,7 @@ aria.llm.onDone((fullText) => {
   // them. A short spoken nudge is the "asked something and got no answer" fix.
   else if (!ttsTurnSpeaking) speakChunk("Sorry, I didn't get an answer for that — could you try again?");
   ttsTurnSpeaking = false; // next response starts a fresh turn
+  try { renderSessionList(); } catch (e) {} // this turn was just persisted — refresh the list
 });
 
 // --- TTS PCM playback via Web Audio (gapless sentence-chunk scheduling) ---
@@ -1782,24 +1779,19 @@ if (newSessionBtn) {
     currentAssistantMsg = null;
     lastTurnWasVoice = false;
     orbState('idle');
+    renderSessionList(); // the prior conversation (if any) is now a past session
   });
 }
 settingsOverlay.addEventListener('click', (e) => {
   if (e.target === settingsOverlay) closeSettings();
 });
 
-// --- Past conversations (history) -----------------------------------------
-// Sessions are persisted in the main process (src/main/sessions.ts). This
-// overlay lists them newest-first and shows the read-only transcript of the one
-// you click. Reuses the .message bubble styles from the live conversation.
-const historyOverlay = document.getElementById('history-overlay');
-const historyBtn = document.getElementById('history-btn');
-const historyClose = document.getElementById('history-close');
-const historyListEl = document.getElementById('history-list');
-const historyTranscriptEl = document.getElementById('history-transcript');
-const historyViewTitle = document.getElementById('history-view-title');
-const historyDeleteBtn = document.getElementById('history-delete');
-let historySelectedId = null;
+// --- Past conversations (inline sidebar list) -----------------------------
+// Sessions are persisted in the main process (src/main/sessions.ts). They show
+// as a clickable list under "Current conversation"; clicking one reopens it —
+// main restores that transcript as the live history so you can continue it.
+const sessionListEl = document.getElementById('session-list');
+const currentSessionTile = document.getElementById('current-session-tile');
 
 function relTime(ts) {
   const s = Math.max(0, (Date.now() - ts) / 1000);
@@ -1810,73 +1802,53 @@ function relTime(ts) {
   return d < 7 ? d + 'd ago' : new Date(ts).toLocaleDateString();
 }
 
-async function refreshHistoryList() {
+async function renderSessionList() {
+  if (!sessionListEl) return;
   let list = [];
   try { list = await aria.sessions.list(); } catch (e) {}
-  historyListEl.replaceChildren();
+  sessionListEl.replaceChildren();
+  // Highlight the "Current conversation" tile only when the live conversation is
+  // a fresh, unsaved one (no persisted session is current); otherwise the active
+  // list item below carries the highlight.
+  const anyCurrent = !!(list && list.some((s) => s.current));
+  if (currentSessionTile) currentSessionTile.classList.toggle('sel', !anyCurrent);
   if (!list || !list.length) {
     const empty = document.createElement('div');
-    empty.className = 'history-empty';
+    empty.className = 'session-empty';
     empty.textContent = 'No past conversations yet.';
-    historyListEl.appendChild(empty);
+    sessionListEl.appendChild(empty);
     return;
   }
   for (const s of list) {
     const item = document.createElement('button');
     item.type = 'button';
-    item.className = 'history-item' + (s.id === historySelectedId ? ' active' : '');
-    const t = document.createElement('div'); t.className = 'h-title'; t.textContent = s.title;
-    const m = document.createElement('div'); m.className = 'h-meta';
+    item.className = 'session-item' + (s.current ? ' active' : '');
+    const t = document.createElement('div'); t.className = 's-title'; t.textContent = s.title;
+    const m = document.createElement('div'); m.className = 's-meta';
     m.textContent = `${relTime(s.updatedAt)} · ${s.turns} message${s.turns === 1 ? '' : 's'}`;
     item.append(t, m);
-    item.addEventListener('click', () => showHistorySession(s.id));
-    historyListEl.appendChild(item);
+    item.addEventListener('click', () => reopenSession(s.id));
+    sessionListEl.appendChild(item);
   }
 }
 
-async function showHistorySession(id) {
-  historySelectedId = id;
-  await refreshHistoryList(); // repaint the active highlight
+// Reopen a past conversation: main restores it as the live history, and we
+// repaint its transcript into the main view so the user can continue it.
+async function reopenSession(id) {
+  bargeIn(); // stop anything in flight before swapping conversations
   let rec = null;
-  try { rec = await aria.sessions.get(id); } catch (e) {}
-  historyTranscriptEl.replaceChildren();
-  if (!rec) { historyViewTitle.textContent = 'Conversation not found'; historyDeleteBtn.hidden = true; return; }
-  historyViewTitle.textContent = rec.title || 'Conversation';
-  historyDeleteBtn.hidden = false;
-  for (const turn of rec.turns) {
-    const div = document.createElement('div');
-    div.className = `message ${turn.role}`;
-    div.textContent = turn.content;
-    historyTranscriptEl.appendChild(div);
-  }
+  try { rec = await aria.sessions.resume(id); } catch (e) {}
+  if (!rec) return;
+  conversationEl.replaceChildren();
+  for (const turn of rec.turns) addMessage(turn.role, turn.content);
+  partialEl.textContent = '';
+  currentAssistantMsg = null;
+  lastTurnWasVoice = false;
+  orbState('idle');
+  await renderSessionList(); // repaint the active highlight
 }
 
-async function openHistory() {
-  historySelectedId = null;
-  historyDeleteBtn.hidden = true;
-  historyViewTitle.textContent = 'Past conversations';
-  historyTranscriptEl.replaceChildren();
-  await refreshHistoryList();
-  historyOverlay.classList.add('visible');
-}
-function closeHistory() { historyOverlay.classList.remove('visible'); }
-
-if (historyBtn) historyBtn.addEventListener('click', openHistory);
-if (historyClose) historyClose.addEventListener('click', closeHistory);
-if (historyDeleteBtn) {
-  historyDeleteBtn.addEventListener('click', async () => {
-    if (!historySelectedId) return;
-    try { await aria.sessions.delete(historySelectedId); } catch (e) {}
-    historySelectedId = null;
-    historyDeleteBtn.hidden = true;
-    historyViewTitle.textContent = 'Past conversations';
-    historyTranscriptEl.replaceChildren();
-    await refreshHistoryList();
-  });
-}
-if (historyOverlay) {
-  historyOverlay.addEventListener('click', (e) => { if (e.target === historyOverlay) closeHistory(); });
-}
+renderSessionList(); // populate on startup
 
 // Settings tabs: the left nav swaps which .tab-panel is visible and updates the
 // header title. Pure DOM toggle — no per-tab state to persist.
