@@ -86,9 +86,17 @@ check('sttThrottle.refcounted', (() => {
   // concurrent transcription doesn't prematurely un-throttle). This is purely
   // refcount-correctness; the visible effect is the frame cap, which we don't
   // have a pure hook to inspect from here.
-  try { Orb.beginStt(); Orb.beginStt(); Orb.endStt(); } catch (e) { return false; }
+  try { Orb.beginStt(); Orb.beginStt(); Orb.endStt(); Orb.endStt(); } catch (e) { return false; }
   return true;
 })());
+
+// --- Adaptive GPU-pressure detector: relief engages only on a SLOW frame once
+// the slow-frame run is long enough; a healthy frame never engages, and a slow
+// frame with a short run doesn't either (hysteresis stops the mode from flapping). ---
+check('pressure.exists', typeof Orb.pressureShouldEngage === 'function');
+check('pressure.healthy-never', Orb.pressureShouldEngage(false, 1e6) === false);
+check('pressure.slow-short-no', Orb.pressureShouldEngage(true, 0) === false);
+check('pressure.slow-long-yes', Orb.pressureShouldEngage(true, 1e6) === true);
 
 // --- Deformation diversity (item 5). The new wobble formula uses 5 sine
 // components + a position-hash jitter term, and clamps the magnitude so a

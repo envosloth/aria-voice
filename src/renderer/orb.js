@@ -145,10 +145,24 @@
   // hi-DPI backing stores so frame time stays low + steady (the fullscreen-
   // shake fix; see git history for the full derivation).
   const MAX_BACKING = { low: 1280, medium: 1920, high: 2560 };
+  // GPU-relief mode: while a Vulkan STT transcription is in flight (and while the
+  // adaptive pressure detector trips), the orb's own GPU cost is cut HARD so it
+  // doesn't contend with STT/TTS on the GPU — the documented crash combo. This
+  // caps the 2D-canvas backing store far below the quality cap (backing-store
+  // pixels are the dominant GPU cost) and, in the loop, honours a real FPS cap
+  // instead of the focus floor. Restored the instant relief clears, so idle
+  // latency/quality are untouched.
+  const RELIEF_BACKING = 1024; // device-px long edge while under relief
+  let gpuRelief = false;
+  function setRelief(on) {
+    if (on === gpuRelief) return;
+    gpuRelief = on;
+    if (canvas && ctx) { lastBw = -1; resize(); } // re-apply the (relief) backing cap
+  }
   // Pure: the effective device-pixel-ratio so the longest backing-store edge
   // never exceeds the current quality's cap. Exported for tests.
   function effectiveDpr(cw, ch, rawDpr) {
-    const cap = MAX_BACKING[quality] || 1920;
+    const cap = (gpuRelief ? RELIEF_BACKING : MAX_BACKING[quality]) || 1920;
     const longEdge = Math.max(cw, ch) * rawDpr;
     return longEdge > cap ? rawDpr * (cap / longEdge) : rawDpr;
   }
@@ -353,8 +367,39 @@
   // Throttled cap while an STT transcription is in flight (orb + Vulkan STT
   // together uncapped was the "crash on balanced+" symptom). Refcounted.
   let sttActive = 0;
-  function beginStt() { sttActive++; }
-  function endStt() { sttActive = Math.max(0, sttActive - 1); }
+  const RELIEF_MS = 33; // ~30 FPS cap for the orb while under GPU relief
+  // Relief has two sources: an explicit STT transcription (beginStt/endStt) and
+  // the adaptive pressure detector below. gpuRelief is the OR of the two.
+  let pressureRelief = false;
+  function updateRelief() { setRelief(sttActive > 0 || pressureRelief); }
+  function beginStt() { sttActive++; updateRelief(); }
+  function endStt() { sttActive = Math.max(0, sttActive - 1); updateRelief(); }
+
+  // Adaptive GPU-pressure detector. When the orb is rendering at full speed but
+  // frames keep landing far later than asked (the GPU/compositor is saturated —
+  // e.g. a heavy app is sharing the GPU), engage relief to shed the orb's own
+  // GPU cost. After a cooldown we drop relief and re-measure ("probe"): if the
+  // system recovered we stay full-speed, else we re-engage. Idle/unloaded runs
+  // never trip it, so latency and quality are untouched when there's headroom.
+  const SLOW_MS = 45;      // a frame this late (while wanting ~16ms) is dropped
+  const ENGAGE_N = 20;     // consecutive slow frames before relief kicks in
+  const PROBE_MS = 6000;   // stay relieved this long, then re-measure at full speed
+  let slowCount = 0, reliefUntil = 0;
+  // Pure: should the pressure detector ENGAGE given the running slow-frame count?
+  function pressureShouldEngage(slow, n) { return slow && n + 1 >= ENGAGE_N; }
+  function trackPressure(now, dt) {
+    if (pressureRelief) {
+      if (now >= reliefUntil) { pressureRelief = false; slowCount = 0; updateRelief(); } // probe
+      return;
+    }
+    if (gpuRelief) { slowCount = 0; return; } // STT relief active — don't measure
+    const slow = dt > SLOW_MS;
+    if (pressureShouldEngage(slow, slowCount)) {
+      pressureRelief = true; slowCount = 0; reliefUntil = now + PROBE_MS; updateRelief();
+    } else {
+      slowCount = slow ? slowCount + 1 : 0;
+    }
+  }
   // Background (visible but unfocused) throttle: ~5 FPS, nobody's watching.
   const BLUR_MIN_MS = 200;
   // Focused floor: at least ~60 FPS so low-tier caps don't read as choppy while
@@ -373,9 +418,16 @@
     const stateMs = (q && q.stateMs[state]) || STATE_MIN_MS[state] || 33;
     const activeMs = (q && q.activeMs) || stateMs;
     const capMs = sttActive > 0 ? Math.max(stateMs, activeMs) : stateMs;
-    const minMs = blurred ? BLUR_MIN_MS : Math.min(capMs, FOCUS_SMOOTH_MS);
+    // Under GPU relief, honour a real ~30 FPS cap (the focus floor below would
+    // otherwise force ~60 FPS during a Vulkan STT transcription — the throttle
+    // that beginStt is supposed to apply was being defeated by that floor).
+    const minMs = blurred ? BLUR_MIN_MS
+      : gpuRelief ? Math.max(capMs, RELIEF_MS)
+      : Math.min(capMs, FOCUS_SMOOTH_MS);
     if (now - lastRenderAt >= minMs) {
+      const dt = now - lastRenderAt; // actual interval since the last render
       lastRenderAt = now;
+      if (!blurred) trackPressure(now, dt); // adaptive GPU-pressure backoff
       // A single bad frame must never throw out of the rAF loop — that would
       // freeze the orb permanently. Catch, log once, keep animating.
       try {
@@ -448,7 +500,7 @@
     for (let i = 0; i < frames; i++) { now += 16.67; try { render(now); } catch (e) {} }
   }
 
-  root.AriaOrb = { init, setLevel, setState, setQuality, beginStt, endStt, effectiveDpr, backingFor, measure, benchmark, refreshAccent, toggleFps, pump, MAX_BACKING };
+  root.AriaOrb = { init, setLevel, setState, setQuality, beginStt, endStt, effectiveDpr, backingFor, measure, benchmark, refreshAccent, toggleFps, pump, MAX_BACKING, pressureShouldEngage };
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);
 })(typeof self !== 'undefined' ? self : this);
