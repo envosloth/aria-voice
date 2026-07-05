@@ -76,7 +76,9 @@ interface AppConfig {
   };
   ui: {
     globalShortcut: string;
-    theme: 'system' | 'light' | 'dark';
+    // Themes from the Glass Observatory UI redesign. 'system'/'dark' are legacy
+    // values no longer offered (migrated to 'midnight' on load — see migrateConfig).
+    theme: 'midnight' | 'nord' | 'solarized' | 'synthwave' | 'forest' | 'light';
     onboarded: boolean;
     // Cap on ARIA's own GPU work (percent), 20..100. Bounds the orb animation +
     // on-device STT so a spoken reply can't drive the GPU to 100% and freeze the
@@ -148,7 +150,7 @@ const defaults: AppConfig = {
   },
   ui: {
     globalShortcut: 'Ctrl+Shift+A',
-    theme: 'system',
+    theme: 'midnight',
     onboarded: false,
     gpuCap: 50,
     perfPreset: 'auto',

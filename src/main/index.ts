@@ -913,6 +913,15 @@ function migrateConfig(): void {
   if (eng === 'piper' && /^(af_|am_|bf_|bm_)/.test(voice)) {
     config.set('tts.engine', 'kokoro');
   }
+  // The UI redesign replaced the old system/light/dark themes with named ones
+  // (midnight, nord, …). A legacy 'system'/'dark' value is no longer a dropdown
+  // option, so it left the Theme select blank and applied an unstyled
+  // data-theme. Map the dead values to the new default so existing installs
+  // (and the old config default) land on a real theme.
+  const theme = config.get('ui.theme') as string;
+  if (theme === 'system' || theme === 'dark') {
+    config.set('ui.theme', 'midnight');
+  }
 }
 
 // Flip the active resource preset to 'custom' when the user hand-edits one of the
