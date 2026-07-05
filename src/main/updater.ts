@@ -297,17 +297,29 @@ async function installDebUpdate(deb: DebInfo): Promise<void> {
   // The deb asset is ~210MB; GitHub doesn't always send content-length through the
   // CDN redirect, so report progress against the known release size when present.
   emit({ state: 'downloading', version: deb.version, percent: 0 });
+  const out = fs.createWriteStream(dest);
   try {
-    const out = fs.createWriteStream(dest);
-    await httpGet(deb.url, (chunk) => {
-      received += chunk.length;
-      hash.update(chunk);
-      out.write(chunk);
-      // ~211MB; coarse percent so the bar moves without a content-length header.
-      emit({ state: 'downloading', version: deb.version, percent: Math.min(99, Math.round((received / 211_200_000) * 100)) });
+    // Fold the write stream's own 'error' (e.g. a full disk mid-download) into
+    // the same rejection path as a network error. Without a listener, a
+    // WriteStream 'error' is an uncaught exception that crashes the main
+    // process mid-update instead of surfacing a clean "Download failed".
+    await new Promise<void>((resolve, reject) => {
+      // Resolve only on a genuine 'finish' (all bytes flushed) and reject on any
+      // write 'error' — whichever fires first wins. Using out.end(resolve) here
+      // would resolve even on a mid-download disk error, letting a truncated
+      // .deb slip past to the install step.
+      out.on('error', reject);
+      out.on('finish', resolve);
+      httpGet(deb.url, (chunk) => {
+        received += chunk.length;
+        hash.update(chunk);
+        out.write(chunk);
+        // ~211MB; coarse percent so the bar moves without a content-length header.
+        emit({ state: 'downloading', version: deb.version, percent: Math.min(99, Math.round((received / 211_200_000) * 100)) });
+      }).then(() => out.end()).catch(reject);
     });
-    await new Promise<void>((r) => out.end(r));
   } catch (e) {
+    try { out.destroy(); } catch { /* ignore */ }
     try { fs.unlinkSync(dest); } catch { /* ignore */ }
     emit({ state: 'error', message: `Download failed: ${(e as Error).message}` });
     return;
