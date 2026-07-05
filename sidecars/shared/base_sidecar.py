@@ -153,7 +153,15 @@ class BaseSidecar(ABC):
         """Read raw PCM bytes from the socket (used by STT/wakeword)."""
         if self._socket:
             try:
-                return self._socket.recv(bufsize)
+                data = self._socket.recv(bufsize)
+                if not data:
+                    # The socket is blocking, so an empty read is an orderly EOF
+                    # (the supervisor closed the connection), not a transient "no
+                    # data yet" — recv would keep returning b"" instantly. Stop so
+                    # main_loop exits cleanly instead of spinning a core at 100%
+                    # CPU; the supervisor restarts the sidecar if it's still wanted.
+                    self._running = False
+                return data
             except (ConnectionResetError, OSError):
                 self._running = False
                 return b""
