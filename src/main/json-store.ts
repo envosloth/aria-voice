@@ -31,7 +31,12 @@ export class JsonStore<T extends Record<string, any>> {
     const parts = key.split('.');
     let current: Record<string, unknown> = this.data;
     for (let i = 0; i < parts.length - 1; i++) {
-      if (!(parts[i] in current) || typeof current[parts[i]] !== 'object') {
+      const child = current[parts[i]];
+      // Replace a missing OR non-object intermediate with a fresh object. Note
+      // `typeof null === 'object'`, so null MUST be checked explicitly — without
+      // it a null intermediate (e.g. a hand-edited/corrupt `"llm": null` loaded
+      // from disk) would make `current` null and the next step throw.
+      if (child === null || typeof child !== 'object') {
         current[parts[i]] = {};
       }
       current = current[parts[i]] as Record<string, unknown>;
@@ -44,8 +49,11 @@ export class JsonStore<T extends Record<string, any>> {
     const parts = key.split('.');
     let current: Record<string, unknown> = this.data;
     for (let i = 0; i < parts.length - 1; i++) {
-      if (!(parts[i] in current)) return;
-      current = current[parts[i]] as Record<string, unknown>;
+      const child = current[parts[i]];
+      // Path doesn't exist (missing, null, or a non-object) — nothing to delete.
+      // Guards the same `typeof null === 'object'` trap as set().
+      if (child === null || typeof child !== 'object') return;
+      current = child as Record<string, unknown>;
     }
     delete current[parts[parts.length - 1]];
     this.save();
