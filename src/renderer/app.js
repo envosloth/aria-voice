@@ -1093,10 +1093,34 @@ aria.wakeword.onDetected((phrase, score) => {
   if (orbStateName === 'speaking' && typeof score === 'number' && score < BARGE_IN_MIN_SCORE) {
     return; // too weak to be a real interruption — don't cut off the reply
   }
+  playWakeChime(); // audible "I'm listening" confirmation
   // Wake word heard -> open a hands-free STT utterance with VAD endpointing:
   // it ends automatically after ~550ms of silence (or the 8s safety cap).
   beginUtterance({ vad: true });
 });
+
+// Short ascending two-note chime on wake-word activation, so the user hears that
+// ARIA started listening. Synthesized with WebAudio (no asset, no dependency)
+// and routed through the master gain so it respects the volume slider.
+function playWakeChime() {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const dest = ttsGain || ctx.destination;
+  const now = ctx.currentTime;
+  for (const [freq, t] of [[1319, 0], [1976, 0.075]]) { // E6 -> B6
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    const start = now + t;
+    g.gain.setValueAtTime(0.0001, start);
+    g.gain.exponentialRampToValueAtTime(0.14, start + 0.012); // soft attack
+    g.gain.exponentialRampToValueAtTime(0.0001, start + 0.13); // short decay
+    osc.connect(g); g.connect(dest);
+    osc.start(start);
+    osc.stop(start + 0.15);
+  }
+}
 
 // Lifecycle statuses that actually change a sidecar's health. The supervisor also
 // forwards EVERY sidecar stdout line as status 'log' (and emits heartbeats etc.) —
