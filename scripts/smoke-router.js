@@ -40,6 +40,12 @@ check('sticky-escape', route('just chat for a sec', { ...both, lastTarget: 'harn
 check('no-sticky-long', route('what is the capital of France and tell me about its history please', { ...both, lastTarget: 'harness' }), 'llm');
 // No stickiness when the LLM handled the previous turn
 check('llm-no-sticky', route('Austin, Texas', { ...both, lastTarget: 'llm' }), 'llm');
+// Cross-context: after chatting with the direct LLM, a tool/action request still
+// routes to the tool-capable harness (it isn't stuck on the LLM) — this is what
+// lets the LLM "hand tool things to the agent" mid-conversation.
+check('tool-after-llm-chat', route('now what is the weather', { ...both, lastTarget: 'llm' }), 'harness');
+check('action-after-llm-chat', route('open my email', { ...both, lastTarget: 'llm' }), 'harness');
+check('lookup-after-llm-chat', route('search for a good pasta recipe', { ...both, lastTarget: 'llm' }), 'harness');
 // A long answer to a harness question still goes to the harness (lastWasQuestion)
 check('answer-to-question', route('I am currently located in Austin, Texas in the United States', { ...both, lastTarget: 'harness', lastWasQuestion: true }), 'harness');
 
