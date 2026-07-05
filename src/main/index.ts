@@ -44,6 +44,12 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let supervisor: Supervisor;
 let isQuitting = false;
+// Renderer crash circuit breaker (see render-process-gone). Timestamps of recent
+// crashes + a window during which HARDWARE_INFO reports a stepped-down GPU cap so
+// the reloaded renderer starts conservative instead of re-crashing on the same
+// config. Only ever engaged AFTER a real crash, so it never costs idle latency.
+let renderCrashes: number[] = [];
+let crashSafeUntil = 0;
 
 const SMOKE = process.env.ARIA_SMOKE === '1';
 
@@ -111,12 +117,20 @@ function createWindow(): BrowserWindow {
 
   // Renderer crash recovery: if the renderer process dies (GPU/canvas fault, a
   // fatal JS error), reload the window instead of leaving a blank, dead app.
-  // 'clean-exit' is a normal teardown (e.g. quit) and is left alone.
+  // 'clean-exit' is a normal teardown (e.g. quit) and is left alone. Crucially we
+  // reload into a STEPPED-DOWN GPU profile (see crashSafeUntil + HARDWARE_INFO) so
+  // we don't reload straight back into the config that just crashed, and we bound
+  // reload storms: 3+ crashes in 60s means a fast reload loop, so back off longer.
   win.webContents.on('render-process-gone', (_e, details) => {
     console.error('[ARIA] renderer gone:', details.reason);
-    if (!isQuitting && details.reason !== 'clean-exit' && !win.isDestroyed()) {
-      win.reload();
-    }
+    if (isQuitting || details.reason === 'clean-exit' || win.isDestroyed()) return;
+    const now = Date.now();
+    renderCrashes = renderCrashes.filter((t) => now - t < 60000);
+    renderCrashes.push(now);
+    const storming = renderCrashes.length >= 3;
+    crashSafeUntil = now + (storming ? 120000 : 30000); // run the orb safe for a while
+    const delay = storming ? 3000 : 250; // don't hot-loop reloads
+    setTimeout(() => { if (!isQuitting && !win.isDestroyed()) { try { win.reload(); } catch { /* nothing else */ } } }, delay);
   });
 
   // A hung renderer (Chromium fires this after ~30s of an unresponsive UI) is
@@ -323,7 +337,10 @@ function setupIpcHandlers(): void {
   // Settings → Performance panel can show what ARIA detected and how it adapted.
   ipcMain.handle(IPC.HARDWARE_INFO, () => {
     const hw = detectHardware();
-    const cap = clampCap(config.get('ui.gpuCap'));
+    let cap = clampCap(config.get('ui.gpuCap'));
+    // Just crashed? Report a low cap for the cooldown so the reloaded renderer
+    // brings the orb up at low quality/backing instead of the config that faulted.
+    if (Date.now() < crashSafeUntil) cap = Math.min(cap, 35);
     return { hardware: hw, profile: perfProfile(hw, cap) };
   });
 
