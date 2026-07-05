@@ -37,6 +37,11 @@ interface SidecarState {
   ready: boolean;
   readyPromise: Promise<void>;
   readyResolve: () => void;
+  // Trailing partial stdout line held between 'data' events. Sidecar stdout is
+  // line-framed JSON, but a single line can be split across two chunks (or two
+  // rapid messages can share one chunk) — buffer the remainder so a split line
+  // still parses instead of being lost. Reset on each (re)spawn.
+  stdoutBuf: string;
 }
 
 type StatusCallback = (name: SidecarName, status: string, detail?: string) => void;
@@ -79,6 +84,9 @@ export class Supervisor {
     // before the sidecar is usable again, so any pending waitForReady() blocks
     // until the new process emits 'ready'.
     this.resetReadyLatch(state);
+    // Drop any half-line left over from a crashed process so it can't corrupt
+    // the first message of the new one.
+    state.stdoutBuf = '';
 
     const server = net.createServer((conn) => {
       state.socket = conn;
@@ -239,11 +247,24 @@ export class Supervisor {
   }
 
   private handleStdioMessage(name: SidecarName, data: Buffer): void {
-    const lines = data.toString().split('\n').filter(Boolean);
+    const state = this.sidecars.get(name);
+    // Reassemble line-framed JSON across chunk boundaries: prepend the partial
+    // line held from the previous 'data' event, split on '\n', and keep the new
+    // trailing partial for next time. Without this a message split across two
+    // chunks fails to parse and is lost (same framing as llm-stream.ts's SSE
+    // reader). Cap the buffer so a newline-less runaway can't grow unbounded.
+    let buffered = (state?.stdoutBuf ?? '') + data.toString();
+    if (buffered.length > 262144 && !buffered.includes('\n')) {
+      this.onStatus(name, 'log', buffered.slice(0, 200) + '…(oversized line dropped)');
+      buffered = '';
+    }
+    const lines = buffered.split('\n');
+    const remainder = lines.pop() ?? '';
+    if (state) state.stdoutBuf = remainder;
     for (const line of lines) {
+      if (!line) continue;
       try {
         const msg = JSON.parse(line);
-        const state = this.sidecars.get(name);
         // Any structured message counts as liveness, not just heartbeats.
         if (state) state.lastHeartbeat = Date.now();
 
@@ -448,6 +469,7 @@ export class Supervisor {
         ready: false,
         readyPromise: Promise.resolve(),
         readyResolve: () => {},
+        stdoutBuf: '',
       };
       this.resetReadyLatch(state);
       this.sidecars.set(name, state);
