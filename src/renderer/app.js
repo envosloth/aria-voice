@@ -1305,6 +1305,54 @@ for (const [elKey, cfgKey, prop, parse, fallback] of remoteBindings) {
   });
 }
 
+// Parse host:port out of an OpenAI-compatible endpoint URL so the SSH tunnel's
+// remote host/port can be derived from the harness/LLM endpoint the user already
+// configured — they shouldn't have to re-type it. localhost -> 127.0.0.1 (ssh -L
+// binds the loopback the remote service listens on).
+function parseHostPort(ep) {
+  try {
+    const u = new URL(ep);
+    const host = u.hostname === 'localhost' ? '127.0.0.1' : u.hostname;
+    const port = u.port ? parseInt(u.port, 10) : (u.protocol === 'https:' ? 443 : 80);
+    if (!host || !Number.isFinite(port)) return null;
+    return { host, port };
+  } catch (e) { return null; }
+}
+
+// Fill the Advanced remote host/port from the selected endpoint and explain, in
+// plain words, what the tunnel will do. `adopt` (target just changed) overwrites
+// the fields; otherwise we only adopt when they're still at the shipped defaults
+// so a power-user's manual Advanced values survive a Settings reopen.
+async function syncRemoteDerived(adopt) {
+  if (!cfg.remoteTarget) return;
+  const info = document.getElementById('remote-derived');
+  const target = cfg.remoteTarget.value || 'harness';
+  if (target === 'custom') {
+    if (info) info.textContent = 'ARIA just opens the local port; paste “Copy URL” into whatever should use it.';
+    return;
+  }
+  const ep = await aria.config.get(target === 'llm' ? 'llm.endpoint' : 'harness.endpoint');
+  const hp = parseHostPort(ep);
+  const what = target === 'llm' ? 'LLM' : 'harness';
+  if (!hp) {
+    if (info) info.textContent = `Set your ${what} endpoint first (Providers tab) so ARIA knows what to forward.`;
+    return;
+  }
+  const curHost = cfg.remoteRemoteHost.value;
+  const curPort = parseInt(cfg.remoteRemotePort.value, 10);
+  const atDefault = (!curHost || curHost === '127.0.0.1') && (!curPort || curPort === 8080);
+  if (adopt || atDefault) {
+    cfg.remoteRemoteHost.value = hp.host;
+    cfg.remoteRemotePort.value = hp.port;
+    aria.config.set('remote.remoteHost', hp.host);
+    aria.config.set('remote.remotePort', hp.port);
+  }
+  const usedHost = cfg.remoteRemoteHost.value || hp.host;
+  const usedPort = cfg.remoteRemotePort.value || hp.port;
+  if (info) info.textContent = `ARIA forwards ${usedHost}:${usedPort} on the remote box to a free local port and points the ${what} at it.`;
+}
+if (cfg.remoteTarget) cfg.remoteTarget.addEventListener('change', () => syncRemoteDerived(true));
+
 // Render the live tunnel status into the dot + label + endpoint text.
 function paintTunnel(s) {
   if (!cfg.tunnelDot || !cfg.tunnelLabel) return;
@@ -1656,6 +1704,7 @@ async function loadSettings() {
     cfg.remoteLocalPort.value       = (await aria.config.get('remote.localPort')) || 0;
     cfg.remoteAutoReconnect.checked = !!(await aria.config.get('remote.autoReconnect'));
     cfg.remoteRawCommand.value      = (await aria.config.get('remote.rawCommand')) || '';
+    await syncRemoteDerived(false); // fill remote host/port from the endpoint + explain
     if (aria.tunnel && aria.tunnel.snapshot) {
       try { paintTunnel(await aria.tunnel.snapshot()); } catch (e) { /* ignore */ }
     }

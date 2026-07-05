@@ -393,6 +393,10 @@
     .tunnel-endpoint { font-family: var(--mono); font-size: 11px; color: var(--text-muted); margin-left: auto; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .remote-actions { display: flex; gap: 6px; margin-top: 6px; }
     .remote-actions button { flex: 1; padding: 7px 10px; font-size: 12px; }
+    .remote-advanced { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 8px; }
+    .remote-advanced summary { cursor: pointer; font-size: 12px; font-weight: 500; color: var(--text-muted); user-select: none; }
+    .remote-advanced summary:hover { color: var(--text); }
+    #remote-derived:empty { display: none; }
     .settings-warning { display: none; padding: 10px 14px; margin-bottom: 16px; background: color-mix(in srgb, var(--warning) 12%, transparent); border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent); border-radius: 10px; color: var(--warning); font-size: 12px; }
     .settings-warning.visible { display: block; }
     .settings-footer { display: flex; align-items: center; gap: 12px; flex: none; padding: 14px 22px; border-top: 1px solid var(--border); background: rgba(255,255,255,.02); }
@@ -633,61 +637,69 @@
 
       <div class="tab-panel" data-panel="remote">
       <section>
-        <h3>Remote access <span class="hint">(SSH tunnel)</span></h3>
+        <h3>Remote harness <span class="hint">(over SSH)</span></h3>
+        <p class="hint" style="margin:2px 0 10px;">Your agent harness runs on another machine (a dev box, a server)? ARIA tunnels to it over SSH so the voice pipeline stays local. Enter the SSH target, pick what's running there, and Connect — ARIA figures out the rest from your endpoint.</p>
         <label class="checkbox-label">
           <input type="checkbox" id="cfg-remote-enabled">
-          Connect to the harness (or LLM) over SSH
+          Reach the harness over SSH
         </label>
-        <p class="hint" style="margin:2px 0 8px;">ARIA spawns <code>ssh -N -L</code> locally and rewrites the endpoint to <code>http://127.0.0.1:&lt;localPort&gt;/v1/chat/completions</code>. Useful when the agent harness runs on a remote dev box (Claude Code, Codex) and you want the LLM/audio pipeline to stay local.</p>
-        <label>Target
+        <label style="margin-top:10px;">SSH target
+          <input type="text" id="cfg-remote-sshhost" placeholder="user@remote-host">
+          <span class="hint">The machine you'd <code>ssh</code> into — e.g. <code>me@devbox</code> or <code>me@203.0.113.4</code>.</span>
+        </label>
+        <label>What's running there
           <select id="cfg-remote-target">
-            <option value="harness">Rewrite harness endpoint (Claude Code, Codex, etc.)</option>
-            <option value="llm">Rewrite conversational LLM endpoint</option>
-            <option value="custom">Custom — don't rewrite, just expose the local port</option>
+            <option value="harness">My agent harness (Claude Code, Codex, …)</option>
+            <option value="llm">My conversational LLM server</option>
+            <option value="custom">Something else — just open the port</option>
           </select>
         </label>
-        <div class="remote-row">
-          <label style="flex:2;">SSH host
-            <input type="text" id="cfg-remote-sshhost" placeholder="user@hostname">
-          </label>
-          <label style="flex:0 0 80px;">SSH port
-            <input type="number" id="cfg-remote-sshport" min="1" max="65535" value="22">
-          </label>
-        </div>
-        <label>Identity file <span class="hint">(optional)</span>
-          <input type="text" id="cfg-remote-identity" placeholder="~/.ssh/id_ed25519">
-        </label>
-        <div class="remote-row">
-          <label style="flex:2;">Remote host <span class="hint">(on the SSH target)</span>
-            <input type="text" id="cfg-remote-remotehost" placeholder="127.0.0.1" value="127.0.0.1">
-          </label>
-          <label style="flex:1;">Remote port
-            <input type="number" id="cfg-remote-remoteport" min="1" max="65535" value="8080">
-          </label>
-        </div>
-        <div class="remote-row">
-          <label style="flex:1;">Local port <span class="hint">(0 = any free port)</span>
-            <input type="number" id="cfg-remote-localport" min="0" max="65535" value="0">
-          </label>
-          <label class="checkbox-label" style="flex:0 0 auto;align-self:end;padding-bottom:8px;">
-            <input type="checkbox" id="cfg-remote-autoreconnect" checked>
-            Auto-reconnect
-          </label>
-        </div>
-        <label>Raw command <span class="hint">(optional override)</span>
-          <input type="text" id="cfg-remote-rawcommand" placeholder="ssh -N -L 8080:127.0.0.1:8080 user@host -i ~/.ssh/key">
-        </label>
-        <p class="hint" style="margin:2px 0 6px;">When non-empty, the raw command runs verbatim instead of the structured form. Use for password auth via <code>sshpass</code> or non-default ssh flags. Power-user override; arbitrary shell strings are a foot-gun.</p>
+        <p class="hint" id="remote-derived" style="margin:2px 0 8px;"></p>
         <div class="tunnel-status" id="tunnel-status">
           <span class="tunnel-dot" id="tunnel-dot"></span>
           <span class="tunnel-label" id="tunnel-label">Tunnel: idle</span>
           <span class="tunnel-endpoint" id="tunnel-endpoint"></span>
         </div>
         <div class="remote-actions">
-          <button id="tunnel-connect" class="ghost-btn" type="button">Connect</button>
+          <button id="tunnel-connect" class="ghost-btn" type="button">Connect &amp; test</button>
           <button id="tunnel-disconnect" class="ghost-btn" type="button">Disconnect</button>
           <button id="tunnel-copy-url" class="ghost-btn" type="button">Copy URL</button>
         </div>
+        <p class="hint" style="margin:6px 0 0;">Connecting also tests it — watch the status dot above turn green (or red with the reason).</p>
+
+        <details class="remote-advanced">
+          <summary>Advanced</summary>
+          <p class="hint" style="margin:6px 0 8px;">ARIA pre-fills these from your endpoint. Only touch them for a non-standard setup.</p>
+          <div class="remote-row">
+            <label style="flex:0 0 90px;">SSH port
+              <input type="number" id="cfg-remote-sshport" min="1" max="65535" value="22">
+            </label>
+            <label style="flex:1;">Identity file <span class="hint">(key path)</span>
+              <input type="text" id="cfg-remote-identity" placeholder="~/.ssh/id_ed25519">
+            </label>
+          </div>
+          <div class="remote-row">
+            <label style="flex:2;">Remote host <span class="hint">(on the SSH target)</span>
+              <input type="text" id="cfg-remote-remotehost" placeholder="127.0.0.1" value="127.0.0.1">
+            </label>
+            <label style="flex:1;">Remote port
+              <input type="number" id="cfg-remote-remoteport" min="1" max="65535" value="8080">
+            </label>
+          </div>
+          <div class="remote-row">
+            <label style="flex:1;">Local port <span class="hint">(0 = any free port)</span>
+              <input type="number" id="cfg-remote-localport" min="0" max="65535" value="0">
+            </label>
+            <label class="checkbox-label" style="flex:0 0 auto;align-self:end;padding-bottom:8px;">
+              <input type="checkbox" id="cfg-remote-autoreconnect" checked>
+              Auto-reconnect
+            </label>
+          </div>
+          <label>Raw command <span class="hint">(override)</span>
+            <input type="text" id="cfg-remote-rawcommand" placeholder="ssh -N -L 8080:127.0.0.1:8080 user@host -i ~/.ssh/key">
+          </label>
+          <p class="hint" style="margin:2px 0 6px;">When set, this runs verbatim instead of the structured form. Use for password auth via <code>sshpass</code> or non-default ssh flags. Arbitrary shell strings are a foot-gun.</p>
+        </details>
       </section>
       </div><!-- /remote -->
 
