@@ -277,16 +277,24 @@ export async function coordinate(
       onTool: cb.onTool,
       onDone: (fullText) => finishWith(fullText),
       onError: (err) => {
-        // This target can't accept the screen image — retry it WITHOUT the image
-        // so the user still gets a text answer instead of a hard 400.
-        if (withImage && isVisionUnsupportedError(err)) {
-          void run(target, isFallback, false);
-          return;
-        }
-        // On a connection failure, try the OTHER configured target once (no image).
-        if (!isFallback && fallback && isConnectionError(err)) {
-          void run(fallback, true, false);
-          return;
+        // Invariant: never retry or fall back once reply TEXT has streamed to the
+        // renderer. A second stream would concatenate onto the partial reply
+        // already shown (and re-spoken by TTS) — e.g. a harness that drops the
+        // socket mid-answer. Past this point, surface the error instead. (Both
+        // retry cases below normally fire before any token, so this only guards
+        // the mid-stream-drop edge.)
+        if (!sawFirstToken) {
+          // This target can't accept the screen image — retry it WITHOUT the image
+          // so the user still gets a text answer instead of a hard 400.
+          if (withImage && isVisionUnsupportedError(err)) {
+            void run(target, isFallback, false);
+            return;
+          }
+          // On a connection failure, try the OTHER configured target once (no image).
+          if (!isFallback && fallback && isConnectionError(err)) {
+            void run(fallback, true, false);
+            return;
+          }
         }
         const which = target === 'harness' ? 'agent harness' : 'LLM';
         const ep = endpoint.replace(/^(https?:\/\/[^/]+).*/, '$1');
