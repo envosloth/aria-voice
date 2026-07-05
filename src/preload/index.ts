@@ -7,6 +7,12 @@ const api = {
     set: (key: string, value: unknown) => ipcRenderer.invoke(IPC.CONFIG_SET, key, value),
   },
 
+  sessions: {
+    list: () => ipcRenderer.invoke(IPC.SESSIONS_LIST),
+    get: (id: string) => ipcRenderer.invoke(IPC.SESSIONS_GET, id),
+    delete: (id: string) => ipcRenderer.invoke(IPC.SESSIONS_DELETE, id),
+  },
+
   secure: {
     getBackend: () => ipcRenderer.invoke(IPC.SECURE_BACKEND),
     get: (key: string) => ipcRenderer.invoke(IPC.SECURE_STORE_GET, key),

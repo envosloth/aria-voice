@@ -4,6 +4,7 @@ import { getSecret } from './secure-storage';
 import { streamChat, LlmCallbacks, ChatMessage, ChatHandle } from './llm-stream';
 import { route, visionDetailFor, Target } from './router';
 import { perfMark } from './perf';
+import * as sessions from './sessions';
 
 export interface CoordinatorCallbacks extends LlmCallbacks {
   onRoute?: (info: { target: Target; name: string }) => void;
@@ -106,6 +107,7 @@ export function resetConversation(): void {
   history = [];
   lastTarget = null;
   harnessSessionId = null; // next harness turn opens a fresh Hermes session
+  sessions.startNewSession(); // next turn opens a fresh persisted session
 }
 
 /**
@@ -191,6 +193,7 @@ export async function coordinate(
   // size — the image is attached to this request alone.
   history.push({ role: 'user', content: userMessage });
   if (history.length > MAX_TURNS) history = history.slice(-MAX_TURNS);
+  sessions.recordTurn('user', userMessage); // persist for the "past sessions" list
 
   // Did the previous reply end with a question? (it's the message just before the
   // user turn we pushed above) — used to keep an answer on the same target.
@@ -279,7 +282,10 @@ export async function coordinate(
 
     const finishWith = (fullText: string) => {
       lastTarget = target;
-      if (fullText && fullText.trim()) history.push({ role: 'assistant', content: fullText });
+      if (fullText && fullText.trim()) {
+        history.push({ role: 'assistant', content: fullText });
+        sessions.recordTurn('assistant', fullText);
+      }
       if (history.length > MAX_TURNS) history = history.slice(-MAX_TURNS);
       perfMark(turnId, 'llm_done', { chars: (fullText || '').length });
       cb.onDone(fullText);

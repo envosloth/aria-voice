@@ -8,6 +8,7 @@ import { streamChat } from './llm-stream';
 import { listModels, normalizeChatBaseUrl } from './llm-models';
 import { detectHarness } from './harness-detect';
 import { coordinate, cancelCoordination, resetConversation } from './coordinator';
+import * as sessions from './sessions';
 import { buildManifest, missingModels, downloadModel } from './model-manager';
 import { perfEnabled, setPerfEnabled, perfMark, perfMarkExternal } from './perf';
 import { detectHardware, perfProfile, clampCap, resolveProfile, isPerfPreset, PerfPreset, ResourceProfile } from './hardware';
@@ -235,6 +236,10 @@ function registerInWindowShortcut(): void {
 }
 
 function setupIpcHandlers(): void {
+  ipcMain.handle(IPC.SESSIONS_LIST, () => sessions.listSessions());
+  ipcMain.handle(IPC.SESSIONS_GET, (_e, id: string) => sessions.getSession(id));
+  ipcMain.handle(IPC.SESSIONS_DELETE, (_e, id: string) => sessions.deleteSession(id));
+
   ipcMain.handle(IPC.CONFIG_GET, (_e, key: string) => config.get(key));
   ipcMain.handle(IPC.CONFIG_SET, (_e, key: string, value: unknown) => {
     const changed = config.get(key) !== value;

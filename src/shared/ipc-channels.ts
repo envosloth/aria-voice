@@ -42,6 +42,10 @@ export const IPC = {
   CONFIG_GET: 'config:get',
   CONFIG_SET: 'config:set',
 
+  SESSIONS_LIST: 'sessions:list',     // renderer -> main: summaries of past conversations
+  SESSIONS_GET: 'sessions:get',       // renderer -> main: full transcript of one session
+  SESSIONS_DELETE: 'sessions:delete', // renderer -> main: remove a saved session
+
   SECURE_STORE_GET: 'secure:get',
   SECURE_STORE_SET: 'secure:set',
   SECURE_STORE_DELETE: 'secure:delete',
