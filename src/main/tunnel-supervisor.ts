@@ -199,6 +199,9 @@ export class TunnelSupervisor extends EventEmitter {
         // port). The check is cheap and bounded by a timeout.
         this.probeLocalPort(m).then((ok) => {
           if (ok) {
+            // Successful connect — reset the backoff so a later drop retries
+            // from 1s, not from the capped 30s left over by earlier attempts.
+            this.attempts = 0;
             this.setState('connected', `tunnel up: 127.0.0.1:${m} → ${r.remoteHost}:${r.remotePort}`);
           } else {
             // Port printed but isn't accepting — usually a hostname
@@ -259,7 +262,8 @@ export class TunnelSupervisor extends EventEmitter {
   }
 
   // Reconnect with exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s (capped).
-  // Resets `attempts` on a successful connect.
+  // `attempts` is reset to 0 on a successful connect (see the stderr probe),
+  // so the backoff restarts from 1s after any period of stable connection.
   private scheduleReconnect(reason: string): void {
     const r = config.get('remote') as { autoReconnect: boolean; enabled: boolean };
     if (!r.enabled) {
@@ -279,9 +283,10 @@ export class TunnelSupervisor extends EventEmitter {
     }, delay);
   }
 
-  // Called by the supervisor on a successful `connected` transition.
-  // Resets the backoff counter and, if the target is harness/llm,
-  // rewrites the corresponding endpoint to the tunneled URL.
+  // Called by the supervisor on a successful `connected` transition. If the
+  // target is harness/llm, rewrites the corresponding endpoint to the tunneled
+  // URL. (The backoff counter is reset at the connect point, not here, so a
+  // `custom`-target tunnel still gets its backoff reset.)
   private applyEndpointRewrite(): void {
     if (this.state !== 'connected' || !this.actualPort) return;
     const r = config.get('remote') as { target: 'harness' | 'llm' | 'custom' };
