@@ -88,6 +88,10 @@ export interface ChatOptions {
   messages?: ChatMessage[];     // full conversation (takes precedence)
   tools?: unknown[];            // OpenAI tool/function definitions (optional)
   timeoutMs?: number;
+  // Extra request headers. Used to carry X-Hermes-Session-Id so a local Hermes
+  // gateway keeps every turn in ONE session instead of deriving a fresh one per
+  // request (unknown to other harnesses, which ignore it).
+  headers?: Record<string, string>;
 }
 
 // Handle returned by streamChat so a caller can abort an in-flight request
@@ -104,7 +108,7 @@ export interface ChatHandle {
  * further callbacks — used for barge-in (interrupt mid-reply).
  */
 export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHandle {
-  const { endpoint, model, apiKey, message, messages, tools, timeoutMs = 30000 } = opts;
+  const { endpoint, model, apiKey, message, messages, tools, timeoutMs = 30000, headers: extraHeaders } = opts;
 
   // Once cancelled we destroy the socket AND swallow any late callbacks, so an
   // aborted reply never reaches the renderer (no stray tokens after barge-in).
@@ -190,6 +194,7 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
         Accept: 'text/event-stream',
         'Content-Length': Buffer.byteLength(body),
         ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+        ...(extraHeaders || {}),
       },
     },
     (res) => {

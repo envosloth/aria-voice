@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { config } from './config';
 import { getSecret } from './secure-storage';
 import { streamChat, LlmCallbacks, ChatMessage, ChatHandle } from './llm-stream';
@@ -85,6 +86,18 @@ const MAX_TURNS = 24; // cap history (messages, excluding system) to bound paylo
 let history: ChatMessage[] = [];
 let lastTarget: Target | null = null;
 
+// One stable session id for the whole conversation, sent to the agent harness as
+// X-Hermes-Session-Id so a local Hermes gateway keeps every turn in the SAME
+// session (same sandbox + server-side transcript) instead of hashing the request
+// to derive — and rotate — a new session per message. Rotated only by
+// resetConversation() (the UI "New session" button), which is exactly when the
+// user wants a fresh Hermes session. Non-Hermes harnesses ignore the header.
+let harnessSessionId: string | null = null;
+function harnessSession(): string {
+  if (!harnessSessionId) harnessSessionId = `aria-${randomUUID()}`;
+  return harnessSessionId;
+}
+
 // Handle to the request currently streaming a reply, so a barge-in (the user
 // says the wake word while ARIA is talking) can abort generation immediately.
 let activeHandle: ChatHandle | null = null;
@@ -92,6 +105,7 @@ let activeHandle: ChatHandle | null = null;
 export function resetConversation(): void {
   history = [];
   lastTarget = null;
+  harnessSessionId = null; // next harness turn opens a fresh Hermes session
 }
 
 /**
@@ -271,7 +285,14 @@ export async function coordinate(
       cb.onDone(fullText);
     };
 
-    activeHandle = streamChat({ endpoint, model, apiKey, messages }, {
+    // Harness turns: pin the Hermes session (continuity across messages) and give
+    // the agent room to run tools. A web search / browse / code run can sit silent
+    // well past the 30s default inactivity timeout — that silent kill is the "asked
+    // the agent and it never answered" bug. The direct LLM keeps the tight default.
+    const harnessHeaders = target === 'harness' ? { 'X-Hermes-Session-Id': harnessSession() } : undefined;
+    const timeoutMs = target === 'harness' ? 120000 : 30000;
+
+    activeHandle = streamChat({ endpoint, model, apiKey, messages, headers: harnessHeaders, timeoutMs }, {
       onToken: (token) => { markFirstToken(); cb.onToken(token); },
       // The harness streams its own server-side tool calls as UI chips via onTool.
       onTool: cb.onTool,

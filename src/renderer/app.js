@@ -181,8 +181,16 @@ let thinkingTimer = null;
 let thinkingTimer2 = null;
 let awaitingFirstToken = false;
 let fillerSpeaking = false;
-const HOLD_FIRST_MS = 2000;
-const HOLD_ESCALATE_MS = 12000;
+let pendingFillerPhrase = null; // computed at submit, spoken only if the harness route drags
+// The filler ("one moment, let me look that up") is only worth speaking when the
+// reply will genuinely take a while — i.e. the agent harness is off running
+// tools. The direct LLM answers fast and never needs it, so we don't even arm
+// the timer until onRoute confirms the turn went to the harness. And even then
+// only after a real silence: a tool-less harness reply streams its first token
+// within a couple seconds, so 5s of dead air is the "this one's actually long"
+// signal — long enough not to fire on quick replies, short enough to reassure.
+const HOLD_FIRST_MS = 5000;
+const HOLD_ESCALATE_MS = 15000;
 
 function holdOnPhrase(text) {
   const t = text.toLowerCase();
@@ -203,11 +211,24 @@ function speakFiller(phrase) {
   fillerSpeaking = true;
 }
 
+// Called at submit, BEFORE the route is known. We only remember the turn is
+// in flight and pre-compute the phrase; the timers are started later by
+// armFillerForHarness() once onRoute says the agent harness took the turn.
 function armThinkingHold(text) {
   clearTimeout(thinkingTimer);
   clearTimeout(thinkingTimer2);
   awaitingFirstToken = true;
-  const phrase = holdOnPhrase(text);
+  pendingFillerPhrase = holdOnPhrase(text);
+}
+
+// The turn routed to the agent harness — the only path slow enough to warrant a
+// spoken "hold on". Start the two hold timers now. The fast LLM path calls
+// cancelThinkingHold() instead, so it never speaks a filler.
+function armFillerForHarness() {
+  if (!awaitingFirstToken || !pendingFillerPhrase) return;
+  const phrase = pendingFillerPhrase;
+  clearTimeout(thinkingTimer);
+  clearTimeout(thinkingTimer2);
   thinkingTimer = setTimeout(() => {
     if (awaitingFirstToken) speakFiller(phrase);
   }, HOLD_FIRST_MS);
@@ -218,6 +239,7 @@ function armThinkingHold(text) {
 
 function cancelThinkingHold() {
   awaitingFirstToken = false;
+  pendingFillerPhrase = null;
   clearTimeout(thinkingTimer);
   clearTimeout(thinkingTimer2);
   thinkingTimer = null;
@@ -609,6 +631,12 @@ window.addEventListener('keydown', (e) => {
 let pendingRoute = null;
 aria.llm.onRoute((info) => {
   pendingRoute = info;
+  // Only the agent harness runs tools long enough to need a spoken "hold on".
+  // Arm the filler for it; the fast LLM path cancels the hold so it stays quiet
+  // until it actually replies. (onRoute always arrives after armThinkingHold ran
+  // synchronously in submitUserMessage, so pendingFillerPhrase is already set.)
+  if (info && info.target === 'harness') armFillerForHarness();
+  else cancelThinkingHold();
   // Tag the in-flight turn so the latency panel can label the LLM/Agent stage
   // with which target actually answered (and whether it was a fallback).
   try { perf.setTurnMeta(currentTurnId, { target: info && info.name }); } catch (e) {}
@@ -821,6 +849,10 @@ aria.llm.onDone((fullText) => {
   ttsStreamBuf = '';
   if (rest) speakChunk(rest);
   else if (!ttsTurnSpeaking && fullText && fullText.trim()) speakChunk(fullText.trim());
+  // The agent finished but produced nothing to say (e.g. it only ran tools and
+  // returned no summary) — don't leave the user in silence wondering if it heard
+  // them. A short spoken nudge is the "asked something and got no answer" fix.
+  else if (!ttsTurnSpeaking) speakChunk("Sorry, I didn't get an answer for that — could you try again?");
   ttsTurnSpeaking = false; // next response starts a fresh turn
 });
 
@@ -1032,8 +1064,12 @@ aria.llm.onError((error) => {
   currentToolsEl = null;
   toolChips = null;
   resetTtsStream(); // drop any half-buffered sentence; turn is over
-  orbState('idle');
   showError(`LLM error: ${error}. Text input remains available.`);
+  // Speak a short apology (the banner keeps the actionable detail) so a voice
+  // turn that failed — most often the agent running past its time budget — isn't
+  // just dead air. speakOnly() stops any in-flight filler and flips the orb to
+  // 'speaking'; it drains back to idle when the phrase finishes.
+  speakOnly("Sorry, I ran into a problem answering that one.");
 });
 
 aria.wakeword.onDetected((phrase) => {
