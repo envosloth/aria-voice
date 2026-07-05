@@ -903,6 +903,11 @@ function stopPlayback(cancelSidecar) {
   // intentional ttsPlay() re-arms playback — otherwise the sidecar's already-
   // emitted tail would leak out after we've "stopped".
   ttsMuted = true;
+  // Also drop any pending half-sample carry byte. Without this, an interruption
+  // that left an odd trailing byte would prepend it to the NEXT reply's first
+  // PCM segment, misaligning every 16-bit sample and turning the whole reply
+  // into noise.
+  pcmCarryByte = -1;
   if (cancelSidecar) { try { aria.tts.stop(); } catch (e) {} }
 }
 
