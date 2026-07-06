@@ -149,7 +149,11 @@
     .session-item .s-meta { font: 400 9.5px var(--mono); color: var(--text-muted); }
     .session-menu-btn { width: 24px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 18px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
     .session-menu-btn:hover, .session-menu-btn[aria-expanded="true"] { color: var(--text); background: rgba(255,255,255,.08); }
-    .session-menu { position: absolute; right: 6px; top: 32px; z-index: 40; min-width: 148px; padding: 5px; border-radius: 10px; border: 1px solid var(--glass-border); background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(18px) saturate(1.2); -webkit-backdrop-filter: blur(18px) saturate(1.2); box-shadow: 0 14px 40px rgba(0,0,0,.42); }
+    /* Fixed + re-parented onto <body> at open time (see app.js): the sidebar
+       .panel has overflow:hidden AND a backdrop-filter, so an in-item dropdown
+       (absolute or fixed) is clipped by the panel — the "options are hidden away"
+       report. left/top are set from the button's viewport rect. */
+    .session-menu { position: fixed; left: 0; top: 0; z-index: 90; min-width: 148px; padding: 5px; border-radius: 10px; border: 1px solid var(--glass-border); background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(18px) saturate(1.2); -webkit-backdrop-filter: blur(18px) saturate(1.2); box-shadow: 0 14px 40px rgba(0,0,0,.42); }
     .session-menu[hidden] { display: none; }
     .session-menu button { width: 100%; text-align: left; padding: 7px 9px; border: 0; border-radius: 7px; background: transparent; color: var(--text); cursor: pointer; font: 500 11px var(--mono); }
     .session-menu button:hover { background: rgba(255,255,255,.08); }
@@ -313,7 +317,14 @@
     body[data-state="processing"] .ops-sub::after { content: 'thinking it through'; }
     body[data-state="speaking"] .ops-sub::after { content: 'speaking'; }
 
-    .ops-foot { width: 100%; margin-top: auto; border-top: 1px solid var(--border); padding-top: 12px;
+    /* Per-conversation token spend, split by backend. margin-top:auto pins this
+       (and the foot below it) to the bottom of the orb rail. */
+    .ops-tokens { width: 100%; margin-top: auto; display: flex; flex-direction: column; gap: 3px; }
+    .ops-tok-cap { font: 500 8.5px var(--mono); letter-spacing: .14em; color: color-mix(in srgb, var(--text) 42%, transparent); margin-bottom: 2px; }
+    .ops-tok-row { display: flex; justify-content: space-between; align-items: baseline; font: 400 10.5px var(--mono); color: var(--text-muted); }
+    .ops-tok-row b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+    .ops-foot { width: 100%; border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px;
       display: flex; align-items: center; gap: 8px; font: 400 10px var(--mono); color: var(--text-muted); }
     .ops-foot .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); box-shadow: 0 0 6px var(--success); }
 
@@ -567,6 +578,11 @@
       <div class="orb-slot" id="orb-anchor"></div>
       <div class="state-badge"></div>
       <div class="ops-sub"></div>
+      <div class="ops-tokens" id="ops-tokens" title="Tokens spent in this conversation">
+        <div class="ops-tok-cap">TOKENS THIS SESSION</div>
+        <div class="ops-tok-row"><span>Direct LLM</span><b id="ops-tok-llm">0</b></div>
+        <div class="ops-tok-row"><span>Agent harness</span><b id="ops-tok-harness">0</b></div>
+      </div>
       <div class="ops-foot"><span class="dot"></span>ARIA · local-first</div>
     </aside>
   </div>

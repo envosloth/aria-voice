@@ -34,7 +34,13 @@ export interface LlmCallbacks {
   // omitted for the harness path (the harness runs its own tools), where tool
   // events just drive onTool chips and onDone fires normally.
   onToolCalls?: (calls: ToolCall[]) => void;
+  // Token usage for the turn, reported by OpenAI-compatible servers in the final
+  // stream chunk (we ask for it via stream_options.include_usage). Fires at most
+  // once, just before onDone/onToolCalls. Absent if the server doesn't report it.
+  onUsage?: (usage: TokenUsage) => void;
 }
+
+export interface TokenUsage { prompt: number; completion: number; total: number; }
 
 // Pull tool/function names out of one parsed SSE JSON object. Supports the
 // OpenAI streaming + non-streaming `tool_calls` shape (the de-facto standard a
@@ -126,6 +132,7 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
     onError: (e) => { if (!cancelled) callbacks.onError(e); },
     onTool: (info) => { if (!cancelled) callbacks.onTool?.(info); },
     onToolCalls: (calls) => { if (!cancelled) callbacks.onToolCalls?.(calls); },
+    onUsage: (usage) => { if (!cancelled) callbacks.onUsage?.(usage); },
   };
   // Accumulate streamed tool calls (id/name arrive once, arguments fragment
   // across many deltas) keyed by their stream index, for callers that execute
@@ -172,6 +179,10 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
     model,
     messages: chatMessages,
     stream: true,
+    // Ask the server to append a final usage chunk (prompt/completion tokens) so
+    // ARIA can show tokens-spent per session. Standard OpenAI param; servers that
+    // don't support it ignore it (usage simply stays unreported).
+    stream_options: { include_usage: true },
     ...(tools && tools.length ? { tools, tool_choice: 'auto' } : {}),
   });
 
@@ -209,6 +220,7 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
 
       let fullText = '';
       let buffer = '';
+      let usage: TokenUsage | null = null;
 
       res.on('data', (chunk: Buffer) => {
         if (cancelled) return;
@@ -250,6 +262,15 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
               fullText += delta;
               cb.onToken(delta);
             }
+            // The include_usage final chunk carries usage with an empty choices
+            // array. Some servers also attach usage to the last content chunk —
+            // keep the latest non-null reading either way.
+            const u = parsed.usage;
+            if (u && (u.prompt_tokens != null || u.completion_tokens != null || u.total_tokens != null)) {
+              const prompt = Number(u.prompt_tokens) || 0;
+              const completion = Number(u.completion_tokens) || 0;
+              usage = { prompt, completion, total: Number(u.total_tokens) || prompt + completion };
+            }
           } catch {
             // skip malformed SSE lines
           }
@@ -257,6 +278,7 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
       });
 
       res.on('end', () => {
+        if (usage) cb.onUsage?.(usage); // report tokens before ending the turn
         // If the model finished by requesting tool calls and the caller wants to
         // execute them, hand them over INSTEAD of ending the turn. Otherwise end
         // normally (the harness path, or a plain text answer).

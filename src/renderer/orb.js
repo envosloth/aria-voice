@@ -365,15 +365,31 @@
   // caps keep the same angular speed, just fewer frames).
   const STATE_MIN_MS = { idle: 33, listening: 33, processing: 33, speaking: 22 };
   // Throttled cap while an STT transcription is in flight (orb + Vulkan STT
-  // together uncapped was the "crash on balanced+" symptom). Refcounted.
-  let sttActive = 0;
+  // together uncapped was the "crash on balanced+" symptom). There is only ever
+  // ONE transcription at a time, so this is a boolean, not a refcount: a refcount
+  // LEAKED when a barge-in abandoned a transcription whose result never arrived
+  // (endStt missed), pinning the orb at the low relief resolution until restart —
+  // the "orb goes low-res sometimes and stays there" report. The watchdog is the
+  // backstop: STT can't outrun the 8s utterance hard cap + compute, so relief
+  // self-clears well before 12s even if endStt is somehow missed.
+  let sttActive = false;
+  let sttReliefTimer = null;
   const RELIEF_MS = 33; // ~30 FPS cap for the orb while under GPU relief
   // Relief has two sources: an explicit STT transcription (beginStt/endStt) and
   // the adaptive pressure detector below. gpuRelief is the OR of the two.
   let pressureRelief = false;
-  function updateRelief() { setRelief(sttActive > 0 || pressureRelief); }
-  function beginStt() { sttActive++; updateRelief(); }
-  function endStt() { sttActive = Math.max(0, sttActive - 1); updateRelief(); }
+  function updateRelief() { setRelief(sttActive || pressureRelief); }
+  function beginStt() {
+    sttActive = true;
+    clearTimeout(sttReliefTimer);
+    sttReliefTimer = setTimeout(endStt, 12000); // failsafe: never stick low-res
+    updateRelief();
+  }
+  function endStt() {
+    clearTimeout(sttReliefTimer); sttReliefTimer = null;
+    sttActive = false;
+    updateRelief();
+  }
 
   // Adaptive GPU-pressure detector. When the orb is rendering at full speed but
   // frames keep landing far later than asked (the GPU/compositor is saturated —
@@ -417,7 +433,7 @@
     const q = QUALITY[quality];
     const stateMs = (q && q.stateMs[state]) || STATE_MIN_MS[state] || 33;
     const activeMs = (q && q.activeMs) || stateMs;
-    const capMs = sttActive > 0 ? Math.max(stateMs, activeMs) : stateMs;
+    const capMs = sttActive ? Math.max(stateMs, activeMs) : stateMs;
     // Under GPU relief, honour a real ~30 FPS cap (the focus floor below would
     // otherwise force ~60 FPS during a Vulkan STT transcription — the throttle
     // that beginStt is supposed to apply was being defeated by that floor).

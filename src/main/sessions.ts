@@ -7,6 +7,10 @@ import { randomUUID } from 'crypto';
 import { JsonStore } from './json-store';
 
 export interface SessionTurn { role: 'user' | 'assistant'; content: string; ts: number; }
+// Tokens spent in a session, split by which backend answered: the direct
+// conversational LLM vs the agent harness. Accumulated across the conversation's
+// turns; shown at the bottom of the orb/ops rail.
+export interface SessionTokens { llm: number; harness: number; }
 export interface SessionRecord {
   id: string;
   title: string;
@@ -19,6 +23,7 @@ export interface SessionRecord {
   // conversation is reopened, and lets Delete remove the matching harness
   // session instead of only hiding ARIA's local transcript.
   harnessSessionId?: string;
+  tokens?: SessionTokens;
 }
 export interface SessionSummary {
   id: string;
@@ -28,6 +33,7 @@ export interface SessionSummary {
   current: boolean;
   pinned: boolean;
   hasHarnessSession: boolean;
+  tokens: SessionTokens;
 }
 
 // ponytail: newest MAX_SESSIONS kept, whole array rewritten on every turn. n is
@@ -100,6 +106,7 @@ export function listSessions(): SessionSummary[] {
       current: s.id === currentId,
       pinned: !!s.pinned,
       hasHarnessSession: !!s.harnessSessionId,
+      tokens: { llm: s.tokens?.llm || 0, harness: s.tokens?.harness || 0 },
     }))
     .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt);
 }
@@ -116,6 +123,21 @@ export function setCurrentHarnessSession(harnessSessionId: string): SessionRecor
   cur.harnessSessionId = harnessSessionId;
   persist(list);
   return cur;
+}
+
+// Add tokens spent on a completed turn to the CURRENT session, attributed to the
+// backend that answered ('llm' or 'harness'). No-op when there's no current
+// session or the count is non-positive. Turn-paced, so the naive full rewrite is
+// fine (same as recordTurn).
+export function addSessionTokens(target: 'llm' | 'harness', total: number): void {
+  const n = Math.round(Number(total) || 0);
+  if (!currentId || n <= 0) return;
+  const list = all();
+  const cur = list.find((s) => s.id === currentId);
+  if (!cur) return;
+  if (!cur.tokens) cur.tokens = { llm: 0, harness: 0 };
+  cur.tokens[target] = (cur.tokens[target] || 0) + n;
+  persist(list);
 }
 
 export function setSessionPinned(id: string, pinned: boolean): SessionRecord | null {

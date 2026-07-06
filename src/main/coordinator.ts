@@ -4,7 +4,7 @@ import https from 'https';
 import { URL } from 'url';
 import { config } from './config';
 import { getSecret } from './secure-storage';
-import { streamChat, LlmCallbacks, ChatMessage, ChatHandle } from './llm-stream';
+import { streamChat, LlmCallbacks, ChatMessage, ChatHandle, TokenUsage } from './llm-stream';
 import { route, visionDetailFor, Target } from './router';
 import { perfMark } from './perf';
 import * as sessions from './sessions';
@@ -14,6 +14,21 @@ export interface CoordinatorCallbacks extends LlmCallbacks {
 }
 
 const TARGET_NAMES: Record<Target, string> = { llm: 'LLM', harness: 'Agent' };
+
+// Text length of a chat message's content (image_url/vision parts skipped) —
+// used only for the ~chars/4 token estimate when a server doesn't report usage.
+function textLength(content: ChatMessage['content']): number {
+  if (typeof content === 'string') return content.length;
+  if (Array.isArray(content)) {
+    let n = 0;
+    for (const part of content) {
+      const t = (part as Record<string, unknown>)?.text;
+      if (typeof t === 'string') n += t.length;
+    }
+    return n;
+  }
+  return 0;
+}
 
 // Shared conversation history. BOTH the conversational LLM and the agent harness
 // receive the same running transcript, so context is preserved across a handoff
@@ -411,6 +426,7 @@ export async function coordinate(
     perfMark(turnId, 'llm_request', { target, model });
     let sawFirstToken = false;
     const markFirstToken = () => { if (!sawFirstToken) { sawFirstToken = true; perfMark(turnId, 'first_token'); } };
+    let turnUsage: TokenUsage | null = null;
 
     const finishWith = (fullText: string) => {
       lastTarget = target;
@@ -419,6 +435,13 @@ export async function coordinate(
         sessions.recordTurn('assistant', fullText);
       }
       if (history.length > MAX_TURNS) history = history.slice(-MAX_TURNS);
+      // Attribute tokens spent to the current session, split by target. Prefer the
+      // server-reported usage; fall back to a ~chars/4 estimate so the meter still
+      // moves for endpoints that don't report usage.
+      const spent = turnUsage
+        ? (turnUsage.total || turnUsage.prompt + turnUsage.completion)
+        : Math.round((messages.reduce((n, m) => n + textLength(m.content), 0) + (fullText || '').length) / 4);
+      sessions.addSessionTokens(target, spent);
       perfMark(turnId, 'llm_done', { chars: (fullText || '').length });
       cb.onDone(fullText);
     };
@@ -439,6 +462,7 @@ export async function coordinate(
       onToken: (token) => { markFirstToken(); cb.onToken(token); },
       // The harness streams its own server-side tool calls as UI chips via onTool.
       onTool: cb.onTool,
+      onUsage: (u) => { turnUsage = u; },
       onDone: (fullText) => finishWith(fullText),
       onError: (err) => {
         // Invariant: never retry or fall back once reply TEXT has streamed to the

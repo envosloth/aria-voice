@@ -468,7 +468,6 @@ let vadSafetyTimer = null;
 // without re-saying the wake word. Off by default (config conversation.enabled).
 let conversationMode = false;
 let lastTurnWasVoice = false;   // was the turn being answered started by voice?
-let followupTimer = null;       // delay between reply-end and re-listening
 let noSpeechTimer = null;       // closes a follow-up window if nobody speaks
 let discardSttResult = false;   // drop the next STT result (silent follow-up)
 // How long a follow-up window waits for the user to START talking before it
@@ -495,7 +494,6 @@ function orbState(s) { orbStateName = s; document.body.dataset.state = s; if (wi
 // you cut ARIA off mid-answer with "hey jarvis…" to redirect it.
 function bargeIn() {
   cancelThinkingHold();
-  clearTimeout(followupTimer); followupTimer = null; // cancel a queued auto-listen
   try { aria.llm.cancel(); } catch (e) {}   // stop generating server-side
   stopPlayback(true);                        // halt audio + cancel TTS synthesis
   resetTtsStream();                          // drop any half-buffered sentence
@@ -528,11 +526,14 @@ function beginUtterance(opts) {
   // VAD endpointing only for hands-free (wake-word) turns; push-to-talk ends on
   // button release.
   vadActive = !!(opts && opts.vad);
-  // Endpoint after ~550ms of silence (not the old 800ms) so transcription starts
-  // sooner once the user stops talking — the single biggest perceived-latency win
-  // for hands-free turns. Still long enough to ride over a natural mid-sentence
-  // pause; the 8s hard cap below bounds a stuck utterance.
-  vad = vadActive ? new window.AriaAudio.VadEndpointer({ frameMs: 20, hangMs: 550 }) : null;
+  // Endpoint after ~850ms of silence. 550ms was too eager — it clipped users who
+  // paused mid-thought ("can you, um…"), the "it starts replying before I'm done"
+  // report. 850ms rides over natural sentence-internal pauses while still starting
+  // transcription promptly once the user is actually finished; the 8s hard cap
+  // below bounds a stuck utterance.
+  // ponytail: fixed hang. If a slow speaker still gets clipped, this is the knob —
+  // consider a longer hang only after the first speech pause vs after a full stop.
+  vad = vadActive ? new window.AriaAudio.VadEndpointer({ frameMs: 20, hangMs: 850 }) : null;
   clearTimeout(vadSafetyTimer);
   if (vadActive) vadSafetyTimer = setTimeout(endUtterance, 8000); // hard cap
   // Follow-up (conversation-mode) window: if no speech starts within a few
@@ -573,15 +574,16 @@ function endUtterance(opts) {
 }
 
 // Re-open the mic after a spoken reply so the user can continue the conversation
-// hands-free. Only for voice turns, only when enabled, and only if nothing else
-// grabbed the pipeline in the meantime.
+// hands-free. Only for voice turns and only when enabled. Called from the
+// end-of-reply idle arm (armIdleAtAudioEnd), which already confirmed we're still
+// in this turn (orb === 'speaking'). We roll speaking -> listening DIRECTLY with
+// no idle step: the old 500ms idle gap flashed the orb blue ("IDLE") for half a
+// second between the reply and re-listening — the "it says idle then starts
+// listening" report. The reply's audio already ended ~250ms before this fires, so
+// the mic won't catch ARIA's own tail.
 function maybeStartFollowup() {
   if (!conversationMode || !lastTurnWasVoice) return;
-  clearTimeout(followupTimer);
-  followupTimer = setTimeout(() => {
-    if (orbStateName !== 'idle') return; // a barge-in / manual action took over
-    beginUtterance({ vad: true, followup: true });
-  }, 500);
+  beginUtterance({ vad: true, followup: true });
 }
 
 micBtn.addEventListener('mousedown', beginUtterance);
@@ -897,13 +899,14 @@ function armIdleAtAudioEnd() {
     // (speakChunk clears the filler + re-arms) or a failure (onError clears
     // awaitingFirstToken then speaks) will drive the true end-of-turn idle.
     if (awaitingFirstToken) return;
-    orbState('idle');
     // The spoken reply has now finished playing — mark the true end of the turn so
     // the latency panel's "full reply" is measured to here (not to turn_complete,
     // which is only when the LLM text finished and can precede the audio).
     try { perf.mark(currentTurnId, 'tts_done'); } catch (e) {}
-    // Conversation mode: reply's done, listen for a natural follow-up.
-    maybeStartFollowup();
+    // Conversation mode: roll straight from speaking into listening for the
+    // follow-up — no idle flash in between. Otherwise settle to idle.
+    if (conversationMode && lastTurnWasVoice) { maybeStartFollowup(); return; }
+    orbState('idle');
   }, remainMs + 250);
 }
 
@@ -1820,6 +1823,24 @@ settingsOverlay.addEventListener('click', (e) => {
 // main restores that transcript as the live history so you can continue it.
 const sessionListEl = document.getElementById('session-list');
 const currentSessionTile = document.getElementById('current-session-tile');
+const tokLlmEl = document.getElementById('ops-tok-llm');
+const tokHarnessEl = document.getElementById('ops-tok-harness');
+
+// Compact token count: 999 -> "999", 1200 -> "1.2k", 123456 -> "123k".
+function fmtTokens(n) {
+  n = Math.max(0, Math.round(Number(n) || 0));
+  if (n < 1000) return String(n);
+  const k = n / 1000;
+  return (k >= 100 ? Math.round(k) : k.toFixed(1)) + 'k';
+}
+// Update the orb-rail token meter with the CURRENT conversation's spend (or zeros
+// when there's no live session yet). Fed from the session summaries in
+// renderSessionList, which refreshes after every completed turn.
+function updateTokenMeter(tokens) {
+  const t = tokens || { llm: 0, harness: 0 };
+  if (tokLlmEl) tokLlmEl.textContent = fmtTokens(t.llm);
+  if (tokHarnessEl) tokHarnessEl.textContent = fmtTokens(t.harness);
+}
 
 function relTime(ts) {
   const s = Math.max(0, (Date.now() - ts) / 1000);
@@ -1830,17 +1851,45 @@ function relTime(ts) {
   return d < 7 ? d + 'd ago' : new Date(ts).toLocaleDateString();
 }
 
-function closeSessionMenus(except) {
-  if (!sessionListEl) return;
-  sessionListEl.querySelectorAll('.session-menu.open').forEach((menu) => {
-    if (menu === except) return;
-    menu.classList.remove('open');
-    menu.hidden = true;
-  });
-  sessionListEl.querySelectorAll('.session-menu-btn[aria-expanded="true"]').forEach((btn) => {
-    const item = btn.closest('.session-item');
-    if (!item || !except || !item.contains(except)) btn.setAttribute('aria-expanded', 'false');
-  });
+// The session overflow (⋮) menu is position:fixed and re-parented onto <body>
+// while open. It has to escape the sidebar: .panel has BOTH overflow:hidden and a
+// backdrop-filter, so an in-item menu (absolute OR fixed) gets clipped by the
+// panel — that's why the options looked "hidden away". Parking it on <body> (no
+// clip, no transformed/filtered ancestor) lets fixed viewport coords place it
+// right next to the button. Only ever one menu open at a time.
+let openSessionMenu = null; // { menu, btn } currently shown on <body>, or null
+
+function closeSessionMenus() {
+  if (!openSessionMenu) return;
+  const { menu, btn } = openSessionMenu;
+  openSessionMenu = null;
+  menu.classList.remove('open');
+  menu.hidden = true;
+  menu.remove(); // drop the body-parked node; reopening re-appends it
+  if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+function positionSessionMenu(menu, btn) {
+  const r = btn.getBoundingClientRect();
+  const mw = menu.offsetWidth || 156;
+  const mh = menu.offsetHeight || 84;
+  let left = r.right - mw;                  // right-align the menu under the ⋮
+  if (left < 8) left = 8;
+  let top = r.bottom + 4;                   // below the button by default…
+  if (top + mh > window.innerHeight - 8) {  // …flip above if it would spill off
+    top = Math.max(8, r.top - mh - 4);
+  }
+  menu.style.left = Math.round(left) + 'px';
+  menu.style.top = Math.round(top) + 'px';
+}
+
+function openSessionMenuFor(menu, btn) {
+  document.body.appendChild(menu); // escape the sidebar panel's overflow clip
+  menu.hidden = false;
+  menu.classList.add('open');
+  btn.setAttribute('aria-expanded', 'true');
+  positionSessionMenu(menu, btn);  // measure + place once it's laid out
+  openSessionMenu = { menu, btn };
 }
 
 function resetConversationViewAfterSessionDelete() {
@@ -1853,6 +1902,7 @@ function resetConversationViewAfterSessionDelete() {
 
 async function renderSessionList() {
   if (!sessionListEl) return;
+  closeSessionMenus(); // dispose any body-parked menu before we rebuild the items
   let list = [];
   try { list = await aria.sessions.list(); } catch (e) {}
   sessionListEl.replaceChildren();
@@ -1861,6 +1911,9 @@ async function renderSessionList() {
   // list item below carries the highlight.
   const anyCurrent = !!(list && list.some((s) => s.current));
   if (currentSessionTile) currentSessionTile.classList.toggle('sel', !anyCurrent);
+  // Token meter reflects the live conversation (or zeros for a fresh, unsaved one).
+  const curSummary = list && list.find((s) => s.current);
+  updateTokenMeter(curSummary ? curSummary.tokens : null);
   if (!list || !list.length) {
     const empty = document.createElement('div');
     empty.className = 'session-empty';
@@ -1932,11 +1985,9 @@ async function renderSessionList() {
     menu.append(pin, del);
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const willOpen = menu.hidden;
-      closeSessionMenus(menu);
-      menu.hidden = !willOpen;
-      menu.classList.toggle('open', willOpen);
-      menuBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+      const wasOpen = !!openSessionMenu && openSessionMenu.menu === menu;
+      closeSessionMenus();
+      if (!wasOpen) openSessionMenuFor(menu, menuBtn);
     });
 
     item.append(open, menuBtn, menu);
@@ -1960,9 +2011,16 @@ async function reopenSession(id) {
   await renderSessionList(); // repaint the active highlight
 }
 
+// Close the overflow menu on any click that isn't on a session item or inside the
+// (body-parked) menu itself. Scrolling the list or resizing the window would slide
+// the button out from under the fixed menu, so those close it too.
 document.addEventListener('click', (e) => {
-  if (!e.target.closest || !e.target.closest('.session-item')) closeSessionMenus();
+  if (!e.target.closest) return closeSessionMenus();
+  if (e.target.closest('.session-item') || e.target.closest('.session-menu')) return;
+  closeSessionMenus();
 });
+if (sessionListEl) sessionListEl.addEventListener('scroll', closeSessionMenus, { passive: true });
+window.addEventListener('resize', closeSessionMenus);
 
 renderSessionList(); // populate on startup
 

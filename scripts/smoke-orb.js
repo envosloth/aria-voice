@@ -81,11 +81,12 @@ check('backingFor.deterministic', a1.bw === a2.bw && a1.bh === a2.bh && a1.sx ==
 // happening" — the high-quality frame cap then drops to the throttled cap so
 // the GPU isn't pegged by 240 Hz + Vulkan STT in parallel. ---
 check('sttThrottle.beginEndExists', typeof Orb.beginStt === 'function' && typeof Orb.endStt === 'function');
-check('sttThrottle.refcounted', (() => {
-  // beginStt x2 -> endStt x1 must still leave the orb "active" (so a second
-  // concurrent transcription doesn't prematurely un-throttle). This is purely
-  // refcount-correctness; the visible effect is the frame cap, which we don't
-  // have a pure hook to inspect from here.
+check('sttThrottle.beginEndBalanced', (() => {
+  // Relief is a boolean + watchdog (not a refcount): only one STT runs at a time,
+  // and a refcount could LEAK on a barge-in-abandoned transcription, pinning the
+  // orb at the low relief resolution. Repeated begin/end must run without throwing
+  // and clear the watchdog timer so nothing dangles. The visible effect (frame cap
+  // + backing-store drop) has no pure hook to inspect from here.
   try { Orb.beginStt(); Orb.beginStt(); Orb.endStt(); Orb.endStt(); } catch (e) { return false; }
   return true;
 })());

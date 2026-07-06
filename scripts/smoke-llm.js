@@ -37,6 +37,9 @@ function makeServer() {
       return;
     }
 
+    // Streams tokens, then an include_usage-style final chunk (empty choices +
+    // usage) before [DONE] — proves streamChat parses usage and fires onUsage.
+    const withUsage = req.url === '/usage';
     res.writeHead(200, { 'Content-Type': 'text/event-stream' });
     const tokens = ['Hello', ', ', 'world', '!'];
     let i = 0;
@@ -46,6 +49,9 @@ function makeServer() {
         res.write(`data: ${JSON.stringify(chunk)}\n\n`);
         i++;
       } else {
+        if (withUsage) {
+          res.write(`data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 12, completion_tokens: 5, total_tokens: 17 } })}\n\n`);
+        }
         res.write('data: [DONE]\n\n');
         clearInterval(timer);
         res.end();
@@ -60,11 +66,13 @@ function runCase(name, opts) {
     const tools = [];
     let done = null;
     let error = null;
+    let usage = null;
     streamChat(opts, {
       onToken: (t) => tokens.push(t),
       onTool: (info) => tools.push(info),
-      onDone: (full) => { done = full; resolve({ name, tokens, tools, done, error }); },
-      onError: (e) => { error = e; resolve({ name, tokens, tools, done, error }); },
+      onUsage: (u) => { usage = u; },
+      onDone: (full) => { done = full; resolve({ name, tokens, tools, done, error, usage }); },
+      onError: (e) => { error = e; resolve({ name, tokens, tools, done, error, usage }); },
     });
   });
 }
@@ -108,6 +116,13 @@ async function main() {
     names[0] === 'web_search' && names[1] === 'open_url' && !c5.error;
   console.log(`[tools]     tools=${JSON.stringify(names)} done="${c5.done}" -> ${c5ok ? 'PASS' : 'FAIL'}`);
   pass = pass && c5ok;
+
+  // Case 6: include_usage final chunk parsed and surfaced via onUsage
+  const c6 = await runCase('usage', { endpoint: `${base}/usage`, model: 'mock', message: 'hi' });
+  const c6ok = c6.done === 'Hello, world!' && c6.usage &&
+    c6.usage.prompt === 12 && c6.usage.completion === 5 && c6.usage.total === 17;
+  console.log(`[usage]     usage=${JSON.stringify(c6.usage)} -> ${c6ok ? 'PASS' : 'FAIL'}`);
+  pass = pass && c6ok;
 
   server.close();
   console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
