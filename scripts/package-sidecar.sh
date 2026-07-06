@@ -29,6 +29,10 @@ rm -rf "$OUT/$NAME" "$SIDECAR_DIR/build" "$SIDECAR_DIR"/*.spec
 EXTRA_ARGS=()
 if [ "$NAME" = "wakeword" ]; then
   EXTRA_ARGS+=(--collect-data openwakeword)
+  # openWakeWord runs its bundled ONNX models through onnxruntime. PyInstaller's
+  # default analysis can miss the native provider DLLs on Windows, leaving the
+  # wake-word sidecar to start but fail before detection. Collect them explicitly.
+  EXTRA_ARGS+=(--collect-binaries onnxruntime)
 fi
 if [ "$NAME" = "tts" ]; then
   # onnxruntime native libs + Kokoro/espeak-ng/phonemizer data so the frozen

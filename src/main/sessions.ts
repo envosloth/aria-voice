@@ -13,8 +13,22 @@ export interface SessionRecord {
   startedAt: number;
   updatedAt: number;
   turns: SessionTurn[];
+  pinned?: boolean;
+  // Hermes/OpenAI-compatible harness session id (X-Hermes-Session-Id) used by
+  // the agent path. Persisting it lets ARIA keep server-side continuity when a
+  // conversation is reopened, and lets Delete remove the matching harness
+  // session instead of only hiding ARIA's local transcript.
+  harnessSessionId?: string;
 }
-export interface SessionSummary { id: string; title: string; updatedAt: number; turns: number; current: boolean; }
+export interface SessionSummary {
+  id: string;
+  title: string;
+  updatedAt: number;
+  turns: number;
+  current: boolean;
+  pinned: boolean;
+  hasHarnessSession: boolean;
+}
 
 // ponytail: newest MAX_SESSIONS kept, whole array rewritten on every turn. n is
 // tiny and writes are turn-paced, so a naive full rewrite is fine; switch to an
@@ -51,6 +65,10 @@ export function setCurrentSession(id: string): void {
   currentId = id;
 }
 
+export function getCurrentSessionId(): string | null {
+  return currentId;
+}
+
 export function recordTurn(role: 'user' | 'assistant', content: string): void {
   const text = (content || '').trim();
   if (!text) return;
@@ -58,7 +76,7 @@ export function recordTurn(role: 'user' | 'assistant', content: string): void {
   const now = Date.now();
   let cur = currentId ? list.find((s) => s.id === currentId) : null;
   if (!cur) {
-    cur = { id: randomUUID(), title: '', startedAt: now, updatedAt: now, turns: [] };
+    cur = { id: randomUUID(), title: '', startedAt: now, updatedAt: now, turns: [], pinned: false };
     currentId = cur.id;
     list.push(cur);
   }
@@ -74,17 +92,48 @@ export function recordTurn(role: 'user' | 'assistant', content: string): void {
 // Summaries for the sidebar list, newest activity first.
 export function listSessions(): SessionSummary[] {
   return all()
-    .map((s) => ({ id: s.id, title: s.title || '(untitled)', updatedAt: s.updatedAt, turns: s.turns.length, current: s.id === currentId }))
-    .sort((a, b) => b.updatedAt - a.updatedAt);
+    .map((s) => ({
+      id: s.id,
+      title: s.title || '(untitled)',
+      updatedAt: s.updatedAt,
+      turns: s.turns.length,
+      current: s.id === currentId,
+      pinned: !!s.pinned,
+      hasHarnessSession: !!s.harnessSessionId,
+    }))
+    .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt);
 }
 
 export function getSession(id: string): SessionRecord | null {
   return all().find((s) => s.id === id) || null;
 }
 
-export function deleteSession(id: string): void {
-  persist(all().filter((s) => s.id !== id));
+export function setCurrentHarnessSession(harnessSessionId: string): SessionRecord | null {
+  if (!currentId || !harnessSessionId) return null;
+  const list = all();
+  const cur = list.find((s) => s.id === currentId);
+  if (!cur) return null;
+  cur.harnessSessionId = harnessSessionId;
+  persist(list);
+  return cur;
+}
+
+export function setSessionPinned(id: string, pinned: boolean): SessionRecord | null {
+  const list = all();
+  const rec = list.find((s) => s.id === id);
+  if (!rec) return null;
+  rec.pinned = !!pinned;
+  persist(list);
+  return rec;
+}
+
+export function deleteSession(id: string): SessionRecord | null {
+  const list = all();
+  const rec = list.find((s) => s.id === id) || null;
+  if (!rec) return null;
+  persist(list.filter((s) => s.id !== id));
   if (currentId === id) currentId = null;
+  return rec;
 }
 
 // --- self-check (run: `node -e "require('./dist/main/sessions').__selftest()"`) --

@@ -11,6 +11,7 @@ const api = {
     list: () => ipcRenderer.invoke(IPC.SESSIONS_LIST),
     get: (id: string) => ipcRenderer.invoke(IPC.SESSIONS_GET, id),
     delete: (id: string) => ipcRenderer.invoke(IPC.SESSIONS_DELETE, id),
+    pin: (id: string, pinned: boolean) => ipcRenderer.invoke(IPC.SESSIONS_PIN, id, pinned),
     resume: (id: string) => ipcRenderer.invoke(IPC.SESSIONS_RESUME, id),
   },
 

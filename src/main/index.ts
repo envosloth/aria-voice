@@ -7,7 +7,7 @@ import { getSecureBackend, isSecureBackendSafe, setSecret, getSecret, deleteSecr
 import { streamChat } from './llm-stream';
 import { listModels, normalizeChatBaseUrl } from './llm-models';
 import { detectHarness } from './harness-detect';
-import { coordinate, cancelCoordination, resetConversation, resumeSession } from './coordinator';
+import { coordinate, cancelCoordination, resetConversation, resumeSession, deletePersistedSession } from './coordinator';
 import * as sessions from './sessions';
 import { buildManifest, missingModels, downloadModel } from './model-manager';
 import { perfEnabled, setPerfEnabled, perfMark, perfMarkExternal } from './perf';
@@ -252,7 +252,8 @@ function registerInWindowShortcut(): void {
 function setupIpcHandlers(): void {
   ipcMain.handle(IPC.SESSIONS_LIST, () => sessions.listSessions());
   ipcMain.handle(IPC.SESSIONS_GET, (_e, id: string) => sessions.getSession(id));
-  ipcMain.handle(IPC.SESSIONS_DELETE, (_e, id: string) => sessions.deleteSession(id));
+  ipcMain.handle(IPC.SESSIONS_DELETE, (_e, id: string) => deletePersistedSession(id));
+  ipcMain.handle(IPC.SESSIONS_PIN, (_e, id: string, pinned: boolean) => sessions.setSessionPinned(id, pinned));
   ipcMain.handle(IPC.SESSIONS_RESUME, (_e, id: string) => resumeSession(id));
 
   ipcMain.handle(IPC.CONFIG_GET, (_e, key: string) => config.get(key));

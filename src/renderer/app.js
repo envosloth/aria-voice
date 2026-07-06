@@ -549,6 +549,7 @@ function beginUtterance(opts) {
 
 function endUtterance(opts) {
   if (!listening) return;
+  const shouldPlayDoneChime = !(opts && opts.discard);
   listening = false;
   vadActive = false;
   vad = null;
@@ -565,6 +566,10 @@ function endUtterance(opts) {
     orbState('processing'); // STT + LLM working
   }
   aria.stt.end();
+  // Let the main process flip sttListening=false before the WebAudio tone starts,
+  // so the confirmation chime is not captured into the utterance being
+  // transcribed. (It can still be heard by the user immediately.)
+  if (shouldPlayDoneChime) setTimeout(playDoneListeningChime, 35);
 }
 
 // Re-open the mic after a spoken reply so the user can continue the conversation
@@ -1116,6 +1121,29 @@ function playWakeChime() {
     osc.connect(g); g.connect(dest);
     osc.start(start);
     osc.stop(start + 0.15);
+  }
+}
+
+// Distinct descending two-note chime when ARIA stops listening. It confirms that
+// the utterance was endpointed and transcription is starting, without reusing the
+// ascending wake-word tone that means "start talking now".
+function playDoneListeningChime() {
+  const ctx = getAudioCtx();
+  if (!ctx) return;
+  const dest = ttsGain || ctx.destination;
+  const now = ctx.currentTime;
+  for (const [freq, t] of [[1175, 0], [784, 0.07]]) { // D6 -> G5
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.value = freq;
+    const start = now + t;
+    g.gain.setValueAtTime(0.0001, start);
+    g.gain.exponentialRampToValueAtTime(0.10, start + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, start + 0.12);
+    osc.connect(g); g.connect(dest);
+    osc.start(start);
+    osc.stop(start + 0.14);
   }
 }
 
@@ -1802,6 +1830,27 @@ function relTime(ts) {
   return d < 7 ? d + 'd ago' : new Date(ts).toLocaleDateString();
 }
 
+function closeSessionMenus(except) {
+  if (!sessionListEl) return;
+  sessionListEl.querySelectorAll('.session-menu.open').forEach((menu) => {
+    if (menu === except) return;
+    menu.classList.remove('open');
+    menu.hidden = true;
+  });
+  sessionListEl.querySelectorAll('.session-menu-btn[aria-expanded="true"]').forEach((btn) => {
+    const item = btn.closest('.session-item');
+    if (!item || !except || !item.contains(except)) btn.setAttribute('aria-expanded', 'false');
+  });
+}
+
+function resetConversationViewAfterSessionDelete() {
+  conversationEl.replaceChildren();
+  partialEl.textContent = '';
+  currentAssistantMsg = null;
+  lastTurnWasVoice = false;
+  orbState('idle');
+}
+
 async function renderSessionList() {
   if (!sessionListEl) return;
   let list = [];
@@ -1820,14 +1869,77 @@ async function renderSessionList() {
     return;
   }
   for (const s of list) {
-    const item = document.createElement('button');
-    item.type = 'button';
-    item.className = 'session-item' + (s.current ? ' active' : '');
+    const item = document.createElement('div');
+    item.className = 'session-item' + (s.current ? ' active' : '') + (s.pinned ? ' pinned' : '');
+
+    const open = document.createElement('button');
+    open.type = 'button';
+    open.className = 'session-open';
+    open.title = `Open ${s.title}`;
     const t = document.createElement('div'); t.className = 's-title'; t.textContent = s.title;
     const m = document.createElement('div'); m.className = 's-meta';
-    m.textContent = `${relTime(s.updatedAt)} · ${s.turns} message${s.turns === 1 ? '' : 's'}`;
-    item.append(t, m);
-    item.addEventListener('click', () => reopenSession(s.id));
+    m.textContent = `${s.pinned ? 'pinned · ' : ''}${relTime(s.updatedAt)} · ${s.turns} message${s.turns === 1 ? '' : 's'}`;
+    open.append(t, m);
+    open.addEventListener('click', () => reopenSession(s.id));
+
+    const menuBtn = document.createElement('button');
+    menuBtn.type = 'button';
+    menuBtn.className = 'session-menu-btn';
+    menuBtn.title = 'Session options';
+    menuBtn.setAttribute('aria-haspopup', 'menu');
+    menuBtn.setAttribute('aria-expanded', 'false');
+    menuBtn.textContent = '⋮';
+
+    const menu = document.createElement('div');
+    menu.className = 'session-menu';
+    menu.hidden = true;
+    menu.setAttribute('role', 'menu');
+
+    const pin = document.createElement('button');
+    pin.type = 'button';
+    pin.setAttribute('role', 'menuitem');
+    pin.textContent = s.pinned ? 'Unpin session' : 'Pin session';
+    pin.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      closeSessionMenus();
+      try { await aria.sessions.pin(s.id, !s.pinned); } catch (err) { showError('Could not update the session pin.'); }
+      await renderSessionList();
+    });
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'danger';
+    del.setAttribute('role', 'menuitem');
+    del.textContent = s.hasHarnessSession ? 'Delete locally + agent' : 'Delete session';
+    del.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      closeSessionMenus();
+      const msg = s.hasHarnessSession
+        ? 'Delete this conversation from ARIA and the agent harness?'
+        : 'Delete this conversation from ARIA?';
+      if (!confirm(msg)) return;
+      bargeIn();
+      let result = null;
+      try { result = await aria.sessions.delete(s.id); }
+      catch (err) { showError('Could not delete the session.'); return; }
+      if (result && result.wasCurrent) resetConversationViewAfterSessionDelete();
+      if (result && result.harnessError) {
+        showError(`Deleted locally, but the agent harness session was not deleted: ${result.harnessError}`);
+      }
+      await renderSessionList();
+    });
+
+    menu.append(pin, del);
+    menuBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const willOpen = menu.hidden;
+      closeSessionMenus(menu);
+      menu.hidden = !willOpen;
+      menu.classList.toggle('open', willOpen);
+      menuBtn.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    });
+
+    item.append(open, menuBtn, menu);
     sessionListEl.appendChild(item);
   }
 }
@@ -1847,6 +1959,10 @@ async function reopenSession(id) {
   orbState('idle');
   await renderSessionList(); // repaint the active highlight
 }
+
+document.addEventListener('click', (e) => {
+  if (!e.target.closest || !e.target.closest('.session-item')) closeSessionMenus();
+});
 
 renderSessionList(); // populate on startup
 

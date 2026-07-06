@@ -1,4 +1,7 @@
 import { randomUUID } from 'crypto';
+import http from 'http';
+import https from 'https';
+import { URL } from 'url';
 import { config } from './config';
 import { getSecret } from './secure-storage';
 import { streamChat, LlmCallbacks, ChatMessage, ChatHandle } from './llm-stream';
@@ -38,15 +41,19 @@ const LLM_SYSTEM_PROMPT =
   'weather, device actions); ARIA automatically routes tool/live-data/action ' +
   'requests to it, so you never call tools yourself and never imply ARIA as a ' +
   'whole is incapable of them.\n\n' +
-  'Critical honesty rules — YOU have no live data of your own: ' +
+  'Critical honesty rules — this quick chat path does not receive tool results ' +
+  'directly, but ARIA as an application DOES have a tool-capable agent mode. ' +
   '(1) If asked about anything current (the time, date, weather, news, prices, ' +
-  'scores, traffic, what\'s on screen), NEVER guess or invent a value; if such a ' +
-  'request reaches you directly, briefly say you can\'t pull that up live. ' +
+  'scores, traffic, local events, what\'s on screen), NEVER guess or invent a ' +
+  'value. Do not say ARIA is incapable of live data or tools; say only that this ' +
+  'quick reply has not received live results yet. ' +
   '(2) NEVER claim YOU performed an action (opened, sent, set, created, looked ' +
-  'up anything) — you cannot; say you\'re unable to do that from here. ' +
-  '(3) NEVER invent specific facts, numbers, dates, quotes, or URLs you are ' +
-  'not confident of; say you don\'t know. A short honest answer beats a ' +
-  'plausible made-up one every time.\n\n' +
+  'up anything) unless the transcript contains an actual result. If an action ' +
+  'request reaches you directly, state that ARIA can handle it through agent ' +
+  'mode and ask for one brief confirmation if needed. ' +
+  '(3) NEVER invent specific facts, numbers, dates, quotes, or URLs you are not ' +
+  'confident of; say you don\'t know. A short honest answer beats a plausible ' +
+  'made-up one every time.\n\n' +
   'Voice-output rules (read aloud text): speak in natural sentences; ' +
   'NEVER name symbols by their linguistic name ("a circumflex", "called a caret", ' +
   '"the tilde", "the asterisk") — describe the user\'s intent instead, or use the ' +
@@ -133,7 +140,7 @@ export function resumeSession(id: string): sessions.SessionRecord | null {
   history = rec.turns.map((t) => ({ role: t.role, content: t.content }));
   if (history.length > MAX_TURNS) history = history.slice(-MAX_TURNS);
   lastTarget = null;
-  harnessSessionId = null;
+  harnessSessionId = rec.harnessSessionId || null;
   sessions.setCurrentSession(id);
   return rec;
 }
@@ -148,6 +155,103 @@ export function cancelCoordination(): void {
     try { activeHandle.cancel(); } catch { /* already finished */ }
     activeHandle = null;
   }
+}
+
+export interface DeleteSessionResult {
+  deleted: boolean;
+  id: string;
+  wasCurrent: boolean;
+  harnessSessionId?: string;
+  harnessDeleted?: boolean;
+  harnessError?: string;
+}
+
+function harnessSessionApiUrl(rawEndpoint: string, sessionId: string): URL | null {
+  if (!rawEndpoint) return null;
+  let url: URL;
+  try { url = new URL(rawEndpoint); } catch { return null; }
+  let base = url.pathname.replace(/\/+$/, '');
+  if (/\/v\d+\/chat\/?completions$/i.test(base)) {
+    base = base.replace(/\/v\d+\/chat\/?completions$/i, '');
+  } else if (/\/v\d+$/i.test(base)) {
+    base = base.replace(/\/v\d+$/i, '');
+  } else if (/\/chat\/?completions$/i.test(base)) {
+    base = base.replace(/\/chat\/?completions$/i, '');
+  } else if (/\/api\/sessions(?:\/.*)?$/i.test(base)) {
+    base = base.replace(/\/api\/sessions(?:\/.*)?$/i, '');
+  }
+  url.pathname = `${base}/api/sessions/${encodeURIComponent(sessionId)}`.replace(/\/+/g, '/');
+  url.search = '';
+  return url;
+}
+
+function deleteHarnessSession(harnessId: string): Promise<{ deleted: boolean; error?: string }> {
+  const url = harnessSessionApiUrl(config.get('harness.endpoint') as string, harnessId);
+  if (!url) return Promise.resolve({ deleted: false, error: 'No valid agent harness endpoint configured' });
+  return new Promise((resolve) => {
+    const isHttps = url.protocol === 'https:';
+    const transport = isHttps ? https : http;
+    const apiKey = getSecret('harness-api-key');
+    let req: http.ClientRequest;
+    let settled = false;
+    const finish = (deleted: boolean, error?: string) => {
+      if (settled) return;
+      settled = true;
+      resolve({ deleted, error });
+    };
+    try {
+      req = transport.request(
+        {
+          hostname: url.hostname,
+          port: url.port || (isHttps ? 443 : 80),
+          path: url.pathname,
+          method: 'DELETE',
+          headers: {
+            Accept: 'application/json',
+            ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+          },
+          timeout: 8000,
+        },
+        (res) => {
+          let body = '';
+          res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+          res.on('end', () => {
+            if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) finish(true);
+            else if (res.statusCode === 404) finish(false);
+            else finish(false, `Harness returned ${res.statusCode || 'unknown'}${body ? `: ${body.slice(0, 160)}` : ''}`);
+          });
+        },
+      );
+    } catch (e) {
+      finish(false, (e as Error).message);
+      return;
+    }
+    req.on('error', (e) => finish(false, e.message));
+    req.on('timeout', () => { try { req.destroy(); } catch { /* ignore */ } finish(false, 'Timed out deleting harness session'); });
+    req.end();
+  });
+}
+
+export async function deletePersistedSession(id: string): Promise<DeleteSessionResult> {
+  const rec = sessions.getSession(id);
+  const wasCurrent = sessions.getCurrentSessionId() === id;
+  if (!rec) return { deleted: false, id, wasCurrent: false };
+  const harnessId = rec.harnessSessionId;
+  sessions.deleteSession(id);
+  if (wasCurrent) {
+    history = [];
+    lastTarget = null;
+    harnessSessionId = null;
+  }
+
+  const result: DeleteSessionResult = { deleted: true, id, wasCurrent };
+  if (harnessId) {
+    result.harnessSessionId = harnessId;
+    const harness = await deleteHarnessSession(harnessId);
+    result.harnessDeleted = harness.deleted;
+    if (harness.error) result.harnessError = harness.error;
+  }
+  return result;
 }
 
 interface Endpoint { endpoint: string; model: string; apiKeyName: string; }
@@ -323,7 +427,12 @@ export async function coordinate(
     // the agent room to run tools. A web search / browse / code run can sit silent
     // well past the 30s default inactivity timeout — that silent kill is the "asked
     // the agent and it never answered" bug. The direct LLM keeps the tight default.
-    const harnessHeaders = target === 'harness' ? { 'X-Hermes-Session-Id': harnessSession() } : undefined;
+    let harnessHeaders: Record<string, string> | undefined;
+    if (target === 'harness') {
+      const sid = harnessSession();
+      sessions.setCurrentHarnessSession(sid);
+      harnessHeaders = { 'X-Hermes-Session-Id': sid };
+    }
     const timeoutMs = target === 'harness' ? 120000 : 30000;
 
     activeHandle = streamChat({ endpoint, model, apiKey, messages, headers: harnessHeaders, timeoutMs }, {

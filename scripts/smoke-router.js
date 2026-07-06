@@ -67,6 +67,7 @@ check('convert', route('convert 10 miles to kilometers', both), 'harness');
 check('send-text', route('send a text to Alex', both), 'harness');
 check('calendar', route("what's on my calendar today", both), 'harness');
 check('nearby', route('find a coffee shop near me', both), 'harness');
+check('local-fireworks-yesterday', route('was there a firework show that happened yesterday in my area', both), 'harness');
 
 // --- Still conversational -> llm (must NOT over-route to the harness). ---
 check('joke', route('tell me a joke', both), 'llm');
