@@ -1,12 +1,19 @@
 {
   "name": "aria",
-  "version": "2.13.13",
+  "version": "2.13.14",
   "description": "GPU-accelerated voice assistant with local STT/TTS and remote LLM",
   "main": "dist/main/index.js",
-  "repository": { "type": "git", "url": "https://github.com/envosloth/aria-voice.git" },
-  "bugs": { "url": "https://github.com/envosloth/aria-voice/issues" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/envosloth/aria-voice.git"
+  },
+  "bugs": {
+    "url": "https://github.com/envosloth/aria-voice/issues"
+  },
   "homepage": "https://github.com/envosloth/aria-voice#readme",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc && npm run build:preload && node scripts/copy-renderer.js",
     "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js",

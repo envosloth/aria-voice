@@ -68,6 +68,9 @@ check('send-text', route('send a text to Alex', both), 'harness');
 check('calendar', route("what's on my calendar today", both), 'harness');
 check('nearby', route('find a coffee shop near me', both), 'harness');
 check('local-fireworks-yesterday', route('was there a firework show that happened yesterday in my area', both), 'harness');
+check('sports-last-night', route('did the Dodgers win last night', both), 'harness');
+check('most-recent-version', route('what is the most recent version of Node.js', both), 'harness');
+check('open-now', route('is the grocery store open now', both), 'harness');
 
 // --- Still conversational -> llm (must NOT over-route to the harness). ---
 check('joke', route('tell me a joke', both), 'llm');

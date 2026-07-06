@@ -33,13 +33,20 @@ function sse(res, events) {
 function listen(s) { return new Promise((r) => s.listen(0, '127.0.0.1', () => r(s.address().port))); }
 
 // Direct-LLM mock: records whether ANY request carried a `tools` array (the
-// invariant says it must never), and always answers in plain text.
+// invariant says it must never). If a live/tool request is forced onto it, it
+// returns the structured handoff sentinel the real prompt instructs it to use.
 function llmServer(rec) {
   return http.createServer(async (req, res) => {
     const body = JSON.parse(await readBody(req));
     const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
-    rec.llmRequests.push({ hasTools });
-    sse(res, [{ choices: [{ delta: { content: 'I can answer that directly.' } }] }]);
+    const messages = body.messages || [];
+    const system = messages.find((m) => m.role === 'system')?.content || '';
+    const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
+    rec.llmRequests.push({ hasTools, system, lastUser });
+    const text = String(lastUser).toLowerCase().includes('weather')
+      ? 'ARIA_AGENT_HANDOFF: Look up the current weather in Austin and answer naturally.'
+      : 'I can answer that directly.';
+    sse(res, [{ choices: [{ delta: { content: text } }] }]);
   });
 }
 
@@ -105,6 +112,10 @@ async function main() {
   checks.push(['A: voice-output hint mentions circumflex rule', harnessTaskText.includes('circumflex')]);
 
   // ---- Run B: same prompt forced to the direct LLM (mode=llm) ----
+  // Even when a hard routing mode or a heuristic miss lets a tool request reach
+  // quick-chat, the LLM must know ARIA has an agent mode and return a structured
+  // handoff instead of hallucinating a live answer. The app intercepts that
+  // sentinel before it reaches the UI/TTS and runs the harness once.
   const recB = { llmRequests: [], harnessTasks: [] };
   const llmB = llmServer(recB);
   const harnessB = harnessServer(recB);
@@ -120,8 +131,12 @@ async function main() {
   console.log('  [B] final answer:', JSON.stringify(finalB));
   console.log('  [B] llm requests:', JSON.stringify(recB.llmRequests), 'harness tasks:', JSON.stringify(recB.harnessTasks));
   checks.push(['B: INVARIANT — direct LLM received NO tools array (zero tools at model level)', recB.llmRequests.length >= 1 && recB.llmRequests.every((r) => r.hasTools === false)]);
-  checks.push(['B: direct LLM did NOT delegate (harness never invoked)', recB.harnessTasks.length === 0]);
-  checks.push(['B: still produced a plain answer (no crash)', /answer that directly/i.test(finalB)]);
+  const directPrompt = recB.llmRequests[0]?.system || '';
+  checks.push(['B: direct LLM prompt names ARIA agent/harness capabilities', /agent mode|agent harness/i.test(directPrompt) && /web search|file system|code|calendar|weather/i.test(directPrompt)]);
+  checks.push(['B: direct LLM prompt provides the structured handoff sentinel', /ARIA_AGENT_HANDOFF/.test(directPrompt)]);
+  checks.push(['B: direct LLM handoff was intercepted and harness invoked once', recB.harnessTasks.length === 1]);
+  checks.push(['B: handoff sentinel was not shown to the user', !/ARIA_AGENT_HANDOFF/i.test(finalB)]);
+  checks.push(['B: harness reply reaches the user after handoff', /24°C|sunny/i.test(finalB)]);
 
   let pass = true;
   console.log('\nChecks:');

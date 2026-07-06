@@ -71,7 +71,7 @@ const AGENTIC = new RegExp(
 // variants (right now / currently / latest) and an explicit "what is the
 // weather/temperature/forecast/time" so the common phrasings never fall through.
 const REALTIME =
-  /\b(right now|currently|the latest|up[- ]?to[- ]?date|near me|nearby|around here|in my area|my area|local events?|this (week|weekend|month|year)|what time|what'?s the time|what day|what'?s the date|what is the (weather|time|forecast|date|temperature|score|price)|events? (today|tonight|tomorrow|yesterday|last night|near me|in my area)|fireworks? (show|shows|event|events|happened|near|tonight|tomorrow|yesterday|last night)|happened (yesterday|last night))\b/i;
+  /\b(right now|currently|the latest|most recent|newest|up[- ]?to[- ]?date|current version|latest version|near me|nearby|around here|in my area|my area|local events?|open now|open today|store hours|business hours|this (week|weekend|month|year)|what time|what'?s the time|what day|what'?s the date|what is the (weather|time|forecast|date|temperature|score|price)|events? (today|tonight|tomorrow|yesterday|last night|near me|in my area)|fireworks? (show|shows|event|events|happened|near|tonight|tomorrow|yesterday|last night)|happened (yesterday|last night)|(did|has|have) .{1,60}\b(win|won|beat|lose|lost)\b (today|tonight|yesterday|last night))\b/i;
 
 // Imperative device/tool actions at the START of the message -> harness. Limited
 // to verbs that imply DOING something (not "tell/explain/describe/what/how",

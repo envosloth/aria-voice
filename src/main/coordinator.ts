@@ -14,6 +14,14 @@ export interface CoordinatorCallbacks extends LlmCallbacks {
 }
 
 const TARGET_NAMES: Record<Target, string> = { llm: 'LLM', harness: 'Agent' };
+const AGENT_HANDOFF_PREFIX = 'ARIA_AGENT_HANDOFF:';
+
+function extractAgentHandoff(text: string): string | null {
+  const trimmed = (text || '').trim();
+  if (!trimmed.toUpperCase().startsWith(AGENT_HANDOFF_PREFIX)) return null;
+  const task = trimmed.slice(AGENT_HANDOFF_PREFIX.length).trim();
+  return task || null;
+}
 
 // Text length of a chat message's content (image_url/vision parts skipped) —
 // used only for the ~chars/4 token estimate when a server doesn't report usage.
@@ -58,6 +66,11 @@ const LLM_SYSTEM_PROMPT =
   'whole is incapable of them.\n\n' +
   'Critical honesty rules — this quick chat path does not receive tool results ' +
   'directly, but ARIA as an application DOES have a tool-capable agent mode. ' +
+  'If a live-data, tool, or action request nevertheless reaches this quick chat ' +
+  'path while agent mode is available, hand it off instead of answering: reply ' +
+  'with exactly "ARIA_AGENT_HANDOFF: <one short task for the agent>" and no ' +
+  'other text. ARIA will intercept that marker before it is shown or spoken and ' +
+  'run the agent harness. ' +
   '(1) If asked about anything current (the time, date, weather, news, prices, ' +
   'scores, traffic, local events, what\'s on screen), NEVER guess or invent a ' +
   'value. Do not say ARIA is incapable of live data or tools; say only that this ' +
@@ -361,10 +374,13 @@ export async function coordinate(
   // on a fallback to a different target (a plain LLM usually can't take images —
   // that was the source of the `unknown variant image_url` 400), and we retry the
   // same target without the image if it rejects vision.
-  const run = async (target: Target, isFallback: boolean, withImage: boolean) => {
+  const run = async (target: Target, isFallback: boolean, withImage: boolean, handoffTask?: string) => {
     const { endpoint, model, apiKeyName } = await resolve(target);
     const apiKey = await getSecret(apiKeyName);
-    cb.onRoute?.({ target, name: TARGET_NAMES[target] + (isFallback ? ' (fallback)' : '') });
+    cb.onRoute?.({
+      target,
+      name: TARGET_NAMES[target] + (handoffTask ? ' (handoff)' : isFallback ? ' (fallback)' : ''),
+    });
 
     // Routing invariant: the direct conversational LLM is invoked with ZERO tools
     // at the model level — it never calls tools (including delegation). Any request
@@ -394,6 +410,23 @@ export async function coordinate(
       'code. Do NOT include emoji, Markdown emphasis, bullet markers, ' +
       'or fenced code blocks. Be concise.';
     const messages: ChatMessage[] = [{ role: 'system', content: systemContent }, ...history];
+    // A direct-LLM safety-net handoff should give the harness the distilled task
+    // the LLM produced, while still preserving the original user wording for
+    // context. This only changes the per-request payload — the persisted/shared
+    // history keeps the user's real message, not the synthetic handoff note.
+    if (handoffTask && messages.length > 0) {
+      const lastIdx = messages.length - 1;
+      const last = messages[lastIdx];
+      if (last && last.role === 'user') {
+        messages[lastIdx] = {
+          role: 'user',
+          content:
+            'ARIA quick chat determined this needs agent mode.\n' +
+            `Task: ${handoffTask}\n` +
+            `Original user request: ${userMessage}`,
+        };
+      }
+    }
     // Attach the voice hint to the last user turn (the one being answered
     // this call) so the nudge is fresh. We don't modify the shared history
     // — the hint is per-request only.
@@ -427,8 +460,43 @@ export async function coordinate(
     let sawFirstToken = false;
     const markFirstToken = () => { if (!sawFirstToken) { sawFirstToken = true; perfMark(turnId, 'first_token'); } };
     let turnUsage: TokenUsage | null = null;
+    const canAutoHandoff = target === 'llm' && hasHarness && !isFallback;
+    let handoffProbeActive = canAutoHandoff;
+    let handoffProbe = '';
+
+    const emitToken = (token: string) => {
+      markFirstToken();
+      // The LLM can return ARIA_AGENT_HANDOFF as a safety net if a tool/action
+      // request slips through. Hold only the tiny possible prefix; normal replies
+      // flush on the first non-matching character, so there is no perceptible
+      // latency added to the fast direct-chat path.
+      if (!handoffProbeActive) { cb.onToken(token); return; }
+      handoffProbe += token;
+      const probe = handoffProbe.trimStart().toUpperCase();
+      if (AGENT_HANDOFF_PREFIX.startsWith(probe) || probe.startsWith(AGENT_HANDOFF_PREFIX)) return;
+      handoffProbeActive = false;
+      cb.onToken(handoffProbe);
+      handoffProbe = '';
+    };
 
     const finishWith = (fullText: string) => {
+      const handoff = canAutoHandoff ? extractAgentHandoff(fullText) : null;
+      // Attribute the LLM probe cost even when it hands off; then run the harness
+      // and do NOT show/speak/record the sentinel as an assistant reply.
+      if (handoff) {
+        const spent = turnUsage
+          ? (turnUsage.total || turnUsage.prompt + turnUsage.completion)
+          : Math.round((messages.reduce((n, m) => n + textLength(m.content), 0) + (fullText || '').length) / 4);
+        sessions.addSessionTokens(target, spent);
+        perfMark(turnId, 'llm_done', { chars: (fullText || '').length, handoff: 1 });
+        void run('harness', false, false, handoff);
+        return;
+      }
+      if (handoffProbe) {
+        cb.onToken(handoffProbe);
+        handoffProbe = '';
+        handoffProbeActive = false;
+      }
       lastTarget = target;
       if (fullText && fullText.trim()) {
         history.push({ role: 'assistant', content: fullText });
@@ -459,7 +527,7 @@ export async function coordinate(
     const timeoutMs = target === 'harness' ? 120000 : 30000;
 
     activeHandle = streamChat({ endpoint, model, apiKey, messages, headers: harnessHeaders, timeoutMs }, {
-      onToken: (token) => { markFirstToken(); cb.onToken(token); },
+      onToken: emitToken,
       // The harness streams its own server-side tool calls as UI chips via onTool.
       onTool: cb.onTool,
       onUsage: (u) => { turnUsage = u; },
@@ -479,7 +547,7 @@ export async function coordinate(
             return;
           }
           // On a connection failure, try the OTHER configured target once (no image).
-          if (!isFallback && fallback && isConnectionError(err)) {
+          if (!isFallback && fallback && fallback !== target && isConnectionError(err)) {
             void run(fallback, true, false);
             return;
           }
