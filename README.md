@@ -131,3 +131,19 @@ Output lands in `dist-installers/`. Notes:
 
 The remote LLM's time-to-first-token dominates end-to-end latency and is reported
 separately from the local pipeline SLO.
+
+## Contributing
+
+Contributions are welcome. Start with **[CONTRIBUTING.md](CONTRIBUTING.md)** (setup,
+the dev loop, PR conventions) and please follow the
+[Code of Conduct](CODE_OF_CONDUCT.md). Security issues go through
+[SECURITY.md](SECURITY.md) (report privately, not as a public issue).
+
+- **Deep dive:** the [`collaboration/`](collaboration/) folder is an onboarding kit —
+  architecture map, the sidecar IPC contract, house conventions, and the hard-won
+  gotchas that aren't obvious from the code. Written for both human and AI
+  contributors; read [`collaboration/gotchas.md`](collaboration/gotchas.md) before
+  changing the audio or orb paths.
+- **Why the stack is what it is:** [`BUILD_SPEC.md`](BUILD_SPEC.md).
+- **Bugs / features:** use the issue templates. Linux is the reference platform;
+  Windows/macOS builds run through CI and welcome hands-on validation.

@@ -1,0 +1,73 @@
+name: Bug report
+description: Something in ARIA isn't working right
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please reproduce on the **latest release** first.
+        For anything touching API keys, the keyring, or the sandbox, see
+        [SECURITY.md](https://github.com/envosloth/aria-voice/blob/main/SECURITY.md) — some issues belong in a private report.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead?
+      placeholder: When I say "hey jarvis" and pause mid-sentence, it starts replying before I'm done…
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Enable conversation mode
+        2. Ask a question with a pause
+        3. …
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part?
+      options:
+        - Not sure
+        - Speech-to-text (STT / whisper.cpp)
+        - Text-to-speech (TTS / Piper / Kokoro)
+        - Wake word
+        - LLM / agent routing
+        - Orb / UI
+        - Sessions / history
+        - Packaging / install / update
+        - Remote harness / SSH tunnel
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ARIA version
+      placeholder: 2.13.12 (Settings → Updates, or the About footer)
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: OS + GPU
+      placeholder: Ubuntu 26.04, kernel 7.0, AMD RX 9060 XT (Vulkan)
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options: [".deb", ".AppImage", ".rpm", "Windows .exe", "macOS .dmg", "From source (npm start)"]
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Run from a terminal and paste relevant output. Redact any API keys. Sidecar
+        lines are prefixed like `[wakeword] …` / `[ARIA] …`.
+      render: shell

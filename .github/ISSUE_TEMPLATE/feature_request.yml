@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest an improvement or new capability
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ARIA favors the smallest change that works and avoids new runtime
+        dependencies (see [CONTRIBUTING.md](https://github.com/envosloth/aria-voice/blob/main/CONTRIBUTING.md)). A
+        proposal that reuses what's already here is much more likely to land.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that ARIA makes hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should it do? Keep the local-first, low-latency design in mind.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing features, config, or workarounds you've tried.
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints check
+      options:
+        - label: This doesn't require ROCm or faster-whisper (see BUILD_SPEC.md)
+        - label: This doesn't add a new runtime dependency (or I've explained why one is needed)
