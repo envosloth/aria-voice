@@ -1,6 +1,6 @@
 {
   "name": "aria",
-  "version": "2.13.12",
+  "version": "2.13.13",
   "description": "GPU-accelerated voice assistant with local STT/TTS and remote LLM",
   "main": "dist/main/index.js",
   "repository": { "type": "git", "url": "https://github.com/envosloth/aria-voice.git" },
@@ -51,7 +51,6 @@
     "smoke:routing-invariant": "npm run build && node scripts/smoke-routing-invariant.js"
   },
   "author": "ARIA Project <aria@localhost>",
-  "homepage": "https://github.com/aria-voice/aria",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^22.0.0",

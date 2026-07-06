@@ -456,7 +456,7 @@ async function startMicCapture() {
   }
 }
 
-// Energy-based endpointing for hands-free (wake-word) utterances: after ~550ms
+// Energy-based endpointing for hands-free (wake-word) utterances: after ~850ms
 // of silence (once speech has been seen) the utterance ends. Logic lives in the
 // shared, unit-tested VadEndpointer; here we just drive it and cap the duration.
 let vadActive = false;
@@ -1100,7 +1100,7 @@ aria.wakeword.onDetected((phrase, score) => {
   }
   playWakeChime(); // audible "I'm listening" confirmation
   // Wake word heard -> open a hands-free STT utterance with VAD endpointing:
-  // it ends automatically after ~550ms of silence (or the 8s safety cap).
+  // it ends automatically after ~850ms of silence (or the 8s safety cap).
   beginUtterance({ vad: true });
 });
 

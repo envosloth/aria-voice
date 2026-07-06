@@ -290,9 +290,11 @@ function setupIpcHandlers(): void {
       // so the change is real + observable. 'custom' applies nothing.
       void applyResourcePreset(value as PerfPreset);
     } else if (key === 'remote.enabled' || key.startsWith('remote.')) {
-      // Tunnel config changed. Sync the supervisor: it'll start if the user
-      // just enabled it, stop if they just disabled it, or restart with the
-      // new args if they changed host/port/identity while it was up.
+      // Tunnel config changed. Sync the supervisor: it starts if the user just
+      // enabled it and stops if they just disabled it. Host/port/identity edits
+      // made while it's up take effect on the next Connect (Disconnect → edit →
+      // Connect) — sync() deliberately doesn't restart a live tunnel per field
+      // write, which would thrash it mid-edit.
       tunnel.sync();
     }
   });

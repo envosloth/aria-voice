@@ -31,6 +31,11 @@ interface AppConfig {
   routing: {
     mode: 'auto' | 'llm' | 'harness';
   };
+  conversation: {
+    // After a spoken reply to a voice turn, re-open the mic for a few seconds so
+    // the user can keep talking without re-saying the wake word. Off by default.
+    enabled: boolean;
+  };
   // Remote access to the harness (or any endpoint) over SSH. When
   // `enabled` is true, ARIA spawns `ssh -N -L <localPort>:remoteHost:
   // remotePort user@sshHost` at startup (or on demand), keeps the process
@@ -130,6 +135,9 @@ const defaults: AppConfig = {
   },
   routing: {
     mode: 'auto',
+  },
+  conversation: {
+    enabled: false,
   },
   remote: {
     enabled: false,
