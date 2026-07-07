@@ -381,6 +381,7 @@
   function updateRelief() { setRelief(sttActive || pressureRelief); }
   function beginStt() {
     sttActive = true;
+    endSttCompute();           // entering listening: clear any stuck compute freeze
     clearTimeout(sttReliefTimer);
     sttReliefTimer = setTimeout(endStt, 12000); // failsafe: never stick low-res
     updateRelief();
@@ -390,6 +391,30 @@
     sttActive = false;
     updateRelief();
   }
+
+  // Hard GPU quiesce for the transcription COMPUTE window (stt-end -> stt-result).
+  // The 30fps relief above only REDUCES concurrent GPU submission; on the AMD
+  // amdgpu/RDNA4 driver, whisper's Vulkan COMPUTE queue contending with the orb's
+  // graphics submission AT ALL can trip a GPU ring-timeout/reset — the crash on
+  // 'auto'/'balanced' (power-saver never hits it: it runs STT on the CPU, so there
+  // is no Vulkan compute to contend with). During the brief compute window we
+  // submit ZERO orb frames, so the two GPU queues never overlap. Costs no STT
+  // latency (the orb just holds its last frame ~0.3-1s) and can't stick frozen:
+  // beginStt clears it on the next listen and a failsafe timer auto-clears it.
+  let computeFreeze = false;
+  let computeFreezeTimer = null;
+  function beginSttCompute() {
+    computeFreeze = true;
+    clearTimeout(computeFreezeTimer);
+    computeFreezeTimer = setTimeout(endSttCompute, 6000); // failsafe: never stick frozen
+  }
+  function endSttCompute() {
+    clearTimeout(computeFreezeTimer); computeFreezeTimer = null;
+    computeFreeze = false;
+    lastRenderAt = 0; // resume painting immediately, don't wait out the frame cap
+  }
+  // Exported so scripts/smoke-orb.js can assert the freeze state machine.
+  function isComputeFrozen() { return computeFreeze; }
 
   // Adaptive GPU-pressure detector. When the orb is rendering at full speed but
   // frames keep landing far later than asked (the GPU/compositor is saturated —
@@ -427,6 +452,11 @@
   let fpsVisible = false, fpsCount = 0, fpsLast = 0, fpsValue = 0;
   let renderWarned = false;
   function loop(now) {
+    // Hard freeze during the STT compute window: submit no frames at all so the
+    // orb's GPU graphics can't contend with whisper's Vulkan compute (the crash
+    // combo on auto/balanced). rAF keeps spinning (cheap, no GPU) so we resume the
+    // instant the freeze clears.
+    if (computeFreeze) { raf = requestAnimationFrame(loop); return; }
     // Throttle to ~5 FPS in the background, EXCEPT while speaking — the voice
     // flare is the signature visual and speaking is short-lived.
     const blurred = !windowFocused && state !== 'speaking';
@@ -516,7 +546,7 @@
     for (let i = 0; i < frames; i++) { now += 16.67; try { render(now); } catch (e) {} }
   }
 
-  root.AriaOrb = { init, setLevel, setState, setQuality, beginStt, endStt, effectiveDpr, backingFor, measure, benchmark, refreshAccent, toggleFps, pump, MAX_BACKING, pressureShouldEngage };
+  root.AriaOrb = { init, setLevel, setState, setQuality, beginStt, endStt, beginSttCompute, endSttCompute, isComputeFrozen, effectiveDpr, backingFor, measure, benchmark, refreshAccent, toggleFps, pump, MAX_BACKING, pressureShouldEngage };
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);
 })(typeof self !== 'undefined' ? self : this);

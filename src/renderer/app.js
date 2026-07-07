@@ -567,6 +567,11 @@ function endUtterance(opts) {
     orbState('processing'); // STT + LLM working
   }
   aria.stt.end();
+  // The transcribe (whisper Vulkan compute) starts now. Freeze the orb's GPU work
+  // until the result arrives so the compute queue never contends with the orb's
+  // graphics queue — the amdgpu/RDNA4 GPU-reset crash on auto/balanced. Fires for
+  // the discard path too (the server still transcribes to stay clean).
+  try { window.AriaOrb && window.AriaOrb.beginSttCompute && window.AriaOrb.beginSttCompute(); } catch (e) {}
   // Let the main process flip sttListening=false before the WebAudio tone starts,
   // so the confirmation chime is not captured into the utterance being
   // transcribed. (It can still be heard by the user immediately.)
@@ -598,6 +603,8 @@ aria.stt.onResult((text) => {
   // back to its per-state cap (full refresh on the high tier). Wrapped in a
   // try/catch in case the orb isn't ready yet (tests, headless boot).
   try { window.AriaOrb && window.AriaOrb.endStt && window.AriaOrb.endStt(); } catch (e) {}
+  // Transcribe compute finished — lift the hard GPU freeze so the orb repaints.
+  try { window.AriaOrb && window.AriaOrb.endSttCompute && window.AriaOrb.endSttCompute(); } catch (e) {}
   // A silent follow-up window was closed: drop this result (it's silence, and
   // whisper may have hallucinated a phantom phrase) and stay idle.
   if (discardSttResult) { discardSttResult = false; partialEl.textContent = ''; orbState('idle'); return; }

@@ -91,6 +91,24 @@ check('sttThrottle.beginEndBalanced', (() => {
   return true;
 })());
 
+// --- Hard GPU freeze for the STT COMPUTE window (the auto/balanced GPU-reset
+// crash fix). During whisper's Vulkan compute the orb submits ZERO frames so its
+// graphics queue can't contend with the compute queue. The 30fps throttle above
+// only REDUCED overlap; power-saver was stable only because it has no Vulkan STT.
+// Contract: the freeze flag tracks begin/end, and a NEW listen (beginStt) clears
+// a stuck freeze so the orb can never stay frozen into the next turn (barge-in
+// mid-compute). ---
+check('freeze.api', typeof Orb.beginSttCompute === 'function' && typeof Orb.endSttCompute === 'function' && typeof Orb.isComputeFrozen === 'function');
+check('freeze.idleFalse', Orb.isComputeFrozen() === false);
+Orb.beginSttCompute();
+check('freeze.engaged', Orb.isComputeFrozen() === true);
+Orb.endSttCompute();
+check('freeze.cleared', Orb.isComputeFrozen() === false);
+Orb.beginSttCompute();
+Orb.beginStt();
+check('freeze.clearedByListen', Orb.isComputeFrozen() === false);
+Orb.endStt();
+
 // --- Adaptive GPU-pressure detector: relief engages only on a SLOW frame once
 // the slow-frame run is long enough; a healthy frame never engages, and a slow
 // frame with a short run doesn't either (hysteresis stops the mode from flapping). ---
