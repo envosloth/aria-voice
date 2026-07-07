@@ -104,10 +104,10 @@
     let b = Math.round(channels[2] + (channels[5] - channels[2]) * wq);
     let alpha = Math.min(1, a);
     if (forceLight) {
-      r = Math.round(r * 0.55);
-      g = Math.round(g * 0.58);
-      b = Math.round(b * 0.68);
-      alpha = alpha > 0 ? Math.min(1, alpha * 1.75) : 0;
+      r = Math.round(r * 0.42);
+      g = Math.round(g * 0.46);
+      b = Math.round(b * 0.58);
+      alpha = alpha > 0 ? Math.min(1, alpha * 2.25 + 0.08) : 0;
     }
     return { r, g, b, a: alpha };
   }
@@ -175,24 +175,23 @@
   // The orb draw itself is small and bounded by the ops slot; only STT/GPU relief
   // drops lower. High now preserves native 4K, medium preserves 1440p+.
   const MAX_BACKING = { low: 1600, medium: 3072, high: 4096 };
-  // GPU-relief mode: while a Vulkan STT transcription is in flight (and while the
-  // adaptive pressure detector trips), the orb's own GPU cost is cut HARD so it
-  // doesn't contend with STT/TTS on the GPU — the documented crash combo. This
-  // caps the 2D-canvas backing store far below the quality cap (backing-store
-  // pixels are the dominant GPU cost) and, in the loop, honours a real FPS cap
-  // instead of the focus floor. Restored the instant relief clears, so idle
-  // latency/quality are untouched.
-  const RELIEF_BACKING = 1024; // device-px long edge while under relief
-  let gpuRelief = false;
-  function setRelief(on) {
-    if (on === gpuRelief) return;
-    gpuRelief = on;
+  // GPU-pressure relief mode: when measured frame lateness says the compositor is
+  // saturated, cut the orb's own GPU cost hard. This caps the 2D-canvas backing
+  // store far below the quality cap (backing-store pixels are the dominant GPU
+  // cost) and, in the loop, honours a real FPS cap instead of the focus floor.
+  // Normal mic listening keeps the crisp backing store; Vulkan compute is handled
+  // by the short hard-freeze below.
+  const RELIEF_BACKING = 1024; // device-px long edge while under pressure relief
+  let backingRelief = false;
+  function setBackingRelief(on) {
+    if (on === backingRelief) return;
+    backingRelief = on;
     if (canvas && ctx) { lastBw = -1; resize(); } // re-apply the (relief) backing cap
   }
   // Pure: the effective device-pixel-ratio so the longest backing-store edge
   // never exceeds the current quality's cap. Exported for tests.
   function effectiveDpr(cw, ch, rawDpr) {
-    const cap = (gpuRelief ? RELIEF_BACKING : MAX_BACKING[quality]) || 1920;
+    const cap = (backingRelief ? RELIEF_BACKING : MAX_BACKING[quality]) || 1920;
     const longEdge = Math.max(cw, ch) * rawDpr;
     return longEdge > cap ? rawDpr * (cap / longEdge) : rawDpr;
   }
@@ -394,21 +393,17 @@
   // Frame-rate cap per state (bounds CPU/GPU; the swirl is dt-scaled so slow
   // caps keep the same angular speed, just fewer frames).
   const STATE_MIN_MS = { idle: 33, listening: 33, processing: 33, speaking: 22 };
-  // Throttled cap while an STT transcription is in flight (orb + Vulkan STT
-  // together uncapped was the "crash on balanced+" symptom). There is only ever
-  // ONE transcription at a time, so this is a boolean, not a refcount: a refcount
-  // LEAKED when a barge-in abandoned a transcription whose result never arrived
-  // (endStt missed), pinning the orb at the low relief resolution until restart —
-  // the "orb goes low-res sometimes and stays there" report. The watchdog is the
-  // backstop: STT can't outrun the 8s utterance hard cap + compute, so relief
-  // self-clears well before 12s even if endStt is somehow missed.
+  // Frame throttle while the mic is open. Capturing PCM is not Vulkan compute, so
+  // do NOT drop the backing store during listening — that was the "low-quality
+  // while listening" bug. We only lower frame cadence here; backing-store relief
+  // is reserved for measured GPU pressure, where pixels are the cost to shed.
   let sttActive = false;
   let sttReliefTimer = null;
-  const RELIEF_MS = 33; // ~30 FPS cap for the orb while under GPU relief
-  // Relief has two sources: an explicit STT transcription (beginStt/endStt) and
-  // the adaptive pressure detector below. gpuRelief is the OR of the two.
+  const LISTENING_MS = 16; // ~60 FPS: smooth state while leaving headroom for audio
+  const RELIEF_MS = 33; // ~30 FPS cap for measured GPU pressure relief
+  // Backing relief is driven only by the adaptive pressure detector below.
   let pressureRelief = false;
-  function updateRelief() { setRelief(sttActive || pressureRelief); }
+  function updateRelief() { setBackingRelief(pressureRelief); }
   function beginStt() {
     sttActive = true;
     endSttCompute();           // entering listening: clear any stuck compute freeze
@@ -433,7 +428,15 @@
   // beginStt clears it on the next listen and a failsafe timer auto-clears it.
   let computeFreeze = false;
   let computeFreezeTimer = null;
+  let sttBackend = 'vulkan';
+  function setSttBackend(backend) {
+    sttBackend = backend === 'cpu' ? 'cpu' : 'vulkan';
+    if (sttBackend === 'cpu') endSttCompute();
+  }
   function beginSttCompute() {
+    // CPU transcription does not submit a competing Vulkan compute queue. Freezing
+    // the orb there only creates the visible stage-pause with no stability win.
+    if (sttBackend !== 'vulkan') return;
     computeFreeze = true;
     clearTimeout(computeFreezeTimer);
     computeFreezeTimer = setTimeout(endSttCompute, 6000); // failsafe: never stick frozen
@@ -445,6 +448,7 @@
   }
   // Exported so scripts/smoke-orb.js can assert the freeze state machine.
   function isComputeFrozen() { return computeFreeze; }
+  function isBackingRelieved() { return backingRelief; }
 
   // Adaptive GPU-pressure detector. When the orb is rendering at full speed but
   // frames keep landing far later than asked (the GPU/compositor is saturated —
@@ -463,7 +467,7 @@
       if (now >= reliefUntil) { pressureRelief = false; slowCount = 0; updateRelief(); } // probe
       return;
     }
-    if (gpuRelief) { slowCount = 0; return; } // STT relief active — don't measure
+    if (backingRelief) { slowCount = 0; return; } // relief active — don't measure
     const slow = dt > SLOW_MS;
     if (pressureShouldEngage(slow, slowCount)) {
       pressureRelief = true; slowCount = 0; reliefUntil = now + PROBE_MS; updateRelief();
@@ -493,12 +497,11 @@
     const q = QUALITY[quality];
     const stateMs = (q && q.stateMs[state]) || STATE_MIN_MS[state] || 33;
     const activeMs = (q && q.activeMs) || stateMs;
-    const capMs = sttActive ? Math.max(stateMs, activeMs) : stateMs;
-    // Under GPU relief, honour a real ~30 FPS cap (the focus floor below would
-    // otherwise force ~60 FPS during a Vulkan STT transcription — the throttle
-    // that beginStt is supposed to apply was being defeated by that floor).
+    const capMs = sttActive ? Math.max(stateMs, activeMs, LISTENING_MS) : stateMs;
+    // Under backing relief, honour a real ~30 FPS cap (the focus floor below
+    // would otherwise force ~60 FPS and defeat the pressure backoff).
     const minMs = blurred ? BLUR_MIN_MS
-      : gpuRelief ? Math.max(capMs, RELIEF_MS)
+      : backingRelief ? Math.max(capMs, RELIEF_MS)
       : Math.min(capMs, FOCUS_SMOOTH_MS);
     if (now - lastRenderAt >= minMs) {
       const dt = now - lastRenderAt; // actual interval since the last render
@@ -577,7 +580,7 @@
     for (let i = 0; i < frames; i++) { now += 16.67; try { render(now); } catch (e) {} }
   }
 
-  root.AriaOrb = { init, setLevel, setState, setQuality, beginStt, endStt, beginSttCompute, endSttCompute, isComputeFrozen, effectiveDpr, backingFor, measure, benchmark, refreshAccent, themeRampColor, toggleFps, pump, MAX_BACKING, pressureShouldEngage };
+  root.AriaOrb = { init, setLevel, setState, setQuality, setSttBackend, beginStt, endStt, beginSttCompute, endSttCompute, isComputeFrozen, isBackingRelieved, effectiveDpr, backingFor, measure, benchmark, refreshAccent, themeRampColor, toggleFps, pump, MAX_BACKING, pressureShouldEngage };
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);
 })(typeof self !== 'undefined' ? self : this);

@@ -1603,9 +1603,13 @@ function applyOrbQuality(info) {
   const q = info && info.profile && info.profile.orbQuality;
   if (q && window.AriaOrb && window.AriaOrb.setQuality) window.AriaOrb.setQuality(q);
 }
+function applyOrbSttBackend(backend) {
+  if (window.AriaOrb && window.AriaOrb.setSttBackend) window.AriaOrb.setSttBackend(backend || 'vulkan');
+}
 
 // Bound the orb from the very first frame, before Settings is ever opened.
 loadHardwareInfo().then((info) => applyOrbQuality(info));
+aria.config.get('stt.backend').then((backend) => applyOrbSttBackend(backend)).catch(() => {});
 
 // Resource preset descriptions (mirrors hardware.ts PERF_PRESETS).
 const PRESET_HINTS = {
@@ -1802,6 +1806,7 @@ async function loadSettings() {
   applyHarnessSelection(inferred, { prefill: false });
   cfg.sttModel.value = (await aria.config.get('stt.model')) || 'small';
   cfg.sttBackend.value = (await aria.config.get('stt.backend')) || 'vulkan';
+  applyOrbSttBackend(cfg.sttBackend.value);
   cfg.ttsVoice.value = (await aria.config.get('tts.voice')) || 'bm_george';
   if (cfg.ttsSpeed) {
     const sp = await aria.config.get('tts.speed');
@@ -2181,6 +2186,7 @@ settingsSave.addEventListener('click', async () => {
   await aria.config.set('harness.model', cfg.harnessModel.value.trim());
   await aria.config.set('stt.model', cfg.sttModel.value);
   await aria.config.set('stt.backend', cfg.sttBackend.value);
+  applyOrbSttBackend(cfg.sttBackend.value);
   // Derive the TTS engine from the chosen voice: Kokoro voices are af_/am_/bf_/bm_;
   // anything else (e.g. en_US-lessac-medium) is a Piper voice.
   const ttsVoice = cfg.ttsVoice.value.trim();

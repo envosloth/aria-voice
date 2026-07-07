@@ -21,12 +21,14 @@ The single nastiest crash class. The canvas orb rendering at native refresh **wh
 Vulkan STT transcription runs** saturated the GPU and took the renderer down on
 `balanced`+ profiles. Mitigations live in `orb.js` and must not be casually removed:
 
-- **GPU relief** during STT: `beginStt()`/`endStt()` cap the orb to ~30 FPS *and* drop
-  the canvas backing store to a hard cap (`RELIEF_BACKING = 1024` device-px long
-  edge) — backing-store pixels are the dominant GPU cost.
+- **GPU relief** during real pressure: `beginStt()`/`endStt()` cap the orb frame
+  cadence while the mic is open, but they **do not** drop backing-store resolution
+  (listening must stay crisp). The hard backing-store drop (`RELIEF_BACKING = 1024`
+  device-px long edge) is reserved for the adaptive pressure detector; Vulkan STT
+  compute uses the short zero-frame freeze instead.
 - Relief is a **boolean + 12 s watchdog**, not a refcount. A refcount leaked when a
-  barge-in abandoned a transcription whose `endStt` never fired, pinning the orb at
-  low resolution forever. If you touch this, keep it leak-proof.
+  barge-in abandoned a transcription whose `endStt` never fired, pinning the orb in
+  its listening throttle until restart. If you touch this, keep it leak-proof.
 - An **adaptive pressure detector** engages relief when frames land far late, then
   probes for recovery. The **renderer crash circuit breaker** (`index.ts`,
   `render-process-gone`) reloads into a stepped-down GPU profile for a cooldown.

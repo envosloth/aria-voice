@@ -67,7 +67,7 @@ const highlight = [70, 120, 235, 225, 240, 255];
 const darkRamp = Orb.themeRampColor(highlight, 1, 0.4, false);
 const lightRamp = Orb.themeRampColor(highlight, 1, 0.4, true);
 check('themeRamp.darkUnchanged', darkRamp.r === 225 && darkRamp.g === 240 && darkRamp.b === 255 && Math.abs(darkRamp.a - 0.4) < 1e-9, JSON.stringify(darkRamp));
-check('themeRamp.lightVisible', (lightRamp.r + lightRamp.g + lightRamp.b) / 3 < 190 && lightRamp.a > darkRamp.a, JSON.stringify(lightRamp));
+check('themeRamp.lightVisible', (lightRamp.r + lightRamp.g + lightRamp.b) / 3 < 150 && lightRamp.a >= 0.9, JSON.stringify(lightRamp));
 
 // --- Fullscreen edge jitter (item 5): backingFor must map the drawing space onto
 // the integer backing store with NO fractional overhang on the right/bottom edge
@@ -97,12 +97,19 @@ check('backingFor.deterministic', a1.bw === a2.bw && a1.bh === a2.bh && a1.sx ==
 check('sttThrottle.beginEndExists', typeof Orb.beginStt === 'function' && typeof Orb.endStt === 'function');
 check('sttThrottle.beginEndBalanced', (() => {
   // Relief is a boolean + watchdog (not a refcount): only one STT runs at a time,
-  // and a refcount could LEAK on a barge-in-abandoned transcription, pinning the
-  // orb at the low relief resolution. Repeated begin/end must run without throwing
-  // and clear the watchdog timer so nothing dangles. The visible effect (frame cap
-  // + backing-store drop) has no pure hook to inspect from here.
+  // and a refcount could LEAK on a barge-in-abandoned transcription. Repeated
+  // begin/end must run without throwing and clear the watchdog timer so nothing
+  // dangles.
   try { Orb.beginStt(); Orb.beginStt(); Orb.endStt(); Orb.endStt(); } catch (e) { return false; }
   return true;
+})());
+check('sttThrottle.listeningKeepsCrispBacking', (() => {
+  Orb.setQuality('high');
+  const before = dims(3840, 2160, 1).longEdge;
+  try { Orb.beginStt(); } catch (e) { return false; }
+  const during = dims(3840, 2160, 1).longEdge;
+  try { Orb.endStt(); } catch (e) { return false; }
+  return before === 3840 && during === before && (!Orb.isBackingRelieved || Orb.isBackingRelieved() === false);
 })());
 
 // --- Hard GPU freeze for the STT COMPUTE window (the auto/balanced GPU-reset
@@ -114,6 +121,15 @@ check('sttThrottle.beginEndBalanced', (() => {
 // mid-compute). ---
 check('freeze.api', typeof Orb.beginSttCompute === 'function' && typeof Orb.endSttCompute === 'function' && typeof Orb.isComputeFrozen === 'function');
 check('freeze.idleFalse', Orb.isComputeFrozen() === false);
+check('freeze.cpuBackendDoesNotPauseStages', (() => {
+  if (typeof Orb.setSttBackend !== 'function') return false;
+  Orb.setSttBackend('cpu');
+  Orb.beginSttCompute();
+  const frozen = Orb.isComputeFrozen();
+  Orb.endSttCompute();
+  Orb.setSttBackend('vulkan');
+  return frozen === false;
+})());
 Orb.beginSttCompute();
 check('freeze.engaged', Orb.isComputeFrozen() === true);
 Orb.endSttCompute();
