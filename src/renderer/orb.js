@@ -74,7 +74,15 @@
     if (canvas && ctx) { lastBw = -1; resize(); }
   }
 
+  let lightTheme = false;
+  function refreshThemeMode() {
+    try {
+      lightTheme = document.documentElement.getAttribute('data-theme') === 'light';
+    } catch (e) { lightTheme = false; }
+  }
+
   function refreshAccent() {
+    refreshThemeMode();
     // State palettes are fixed by the design; this only keeps `accent` current
     // for any other consumer.
     try {
@@ -82,6 +90,26 @@
         .getPropertyValue('--accent-rgb').trim();
       if (v) accent = v.split(',').map((n) => parseInt(n, 10));
     } catch (e) { /* keep default */ }
+  }
+
+  // Pure: compute one colour stop for the current theme. The dark themes use the
+  // design's luminous palette directly. Light theme needs a contrast pass: the
+  // same pale highlight colours were being composited over white glass, making
+  // the orb appear to disappear. Darken the RGBs, boost alpha, and keep the state
+  // hue so the four-state colour convention remains recognizable.
+  function themeRampColor(channels, q, a, forceLight) {
+    const wq = Math.min(1, q) * Math.min(1, q);
+    let r = Math.round(channels[0] + (channels[3] - channels[0]) * wq);
+    let g = Math.round(channels[1] + (channels[4] - channels[1]) * wq);
+    let b = Math.round(channels[2] + (channels[5] - channels[2]) * wq);
+    let alpha = Math.min(1, a);
+    if (forceLight) {
+      r = Math.round(r * 0.55);
+      g = Math.round(g * 0.58);
+      b = Math.round(b * 0.68);
+      alpha = alpha > 0 ? Math.min(1, alpha * 1.75) : 0;
+    }
+    return { r, g, b, a: alpha };
   }
 
   function setState(s) {
@@ -141,10 +169,12 @@
     return { dots, rings };
   })(SIZE0, 'aria');
 
-  // Backing-store long-edge cap (device px) per quality — bounds fullscreen /
-  // hi-DPI backing stores so frame time stays low + steady (the fullscreen-
-  // shake fix; see git history for the full derivation).
-  const MAX_BACKING = { low: 1280, medium: 1920, high: 2560 };
+  // Backing-store long-edge cap (device px) per quality. Earlier caps kept the
+  // full-window canvas cheap, but they also made a 4K/native-fullscreen window
+  // upscale the orb (the user-visible "fullscreen looks low resolution" bug).
+  // The orb draw itself is small and bounded by the ops slot; only STT/GPU relief
+  // drops lower. High now preserves native 4K, medium preserves 1440p+.
+  const MAX_BACKING = { low: 1600, medium: 3072, high: 4096 };
   // GPU-relief mode: while a Vulkan STT transcription is in flight (and while the
   // adaptive pressure detector trips), the orb's own GPU cost is cut HARD so it
   // doesn't contend with STT/TTS on the GPU — the documented crash combo. This
@@ -256,8 +286,8 @@
 
     // Design colour ramp: ember -> hot, quadratic in q.
     const ramp = (q, a) => {
-      const wq = Math.min(1, q) * Math.min(1, q);
-      return 'rgba(' + Math.round(pal[0] + (pal[3] - pal[0]) * wq) + ',' + Math.round(pal[1] + (pal[4] - pal[1]) * wq) + ',' + Math.round(pal[2] + (pal[5] - pal[2]) * wq) + ',' + Math.min(1, a).toFixed(3) + ')';
+      const c = themeRampColor(pal, q, a, lightTheme);
+      return 'rgba(' + c.r + ',' + c.g + ',' + c.b + ',' + Math.min(1, c.a).toFixed(3) + ')';
     };
 
     ctx.clearRect(0, 0, w, h);
@@ -269,7 +299,7 @@
     ctx.translate(cx, cy);
     ctx.scale(k, k);
     ctx.translate(-R0, -R0);
-    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalCompositeOperation = lightTheme ? 'source-over' : 'lighter';
 
     const R = R0;
     const ay = phase * 0.45;                    // global yaw (design: t*0.45*spd)
@@ -513,6 +543,7 @@
       windowFocused = !document.hidden && document.hasFocus();
       if (!document.hidden) resize();
     });
+    document.addEventListener('fullscreenchange', () => { lastBw = -1; resize(); });
     window.addEventListener('focus', () => { windowFocused = true; resize(); });
     window.addEventListener('blur', () => { windowFocused = false; });
     window.addEventListener('pageshow', resize);
@@ -546,7 +577,7 @@
     for (let i = 0; i < frames; i++) { now += 16.67; try { render(now); } catch (e) {} }
   }
 
-  root.AriaOrb = { init, setLevel, setState, setQuality, beginStt, endStt, beginSttCompute, endSttCompute, isComputeFrozen, effectiveDpr, backingFor, measure, benchmark, refreshAccent, toggleFps, pump, MAX_BACKING, pressureShouldEngage };
+  root.AriaOrb = { init, setLevel, setState, setQuality, beginStt, endStt, beginSttCompute, endSttCompute, isComputeFrozen, effectiveDpr, backingFor, measure, benchmark, refreshAccent, themeRampColor, toggleFps, pump, MAX_BACKING, pressureShouldEngage };
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);
 })(typeof self !== 'undefined' ? self : this);

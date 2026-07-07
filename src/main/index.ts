@@ -50,6 +50,13 @@ let isQuitting = false;
 // config. Only ever engaged AFTER a real crash, so it never costs idle latency.
 let renderCrashes: number[] = [];
 let crashSafeUntil = 0;
+let rendererUnresponsiveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearRendererUnresponsiveTimer(): void {
+  if (!rendererUnresponsiveTimer) return;
+  clearTimeout(rendererUnresponsiveTimer);
+  rendererUnresponsiveTimer = null;
+}
 
 const SMOKE = process.env.ARIA_SMOKE === '1';
 
@@ -135,11 +142,24 @@ function createWindow(): BrowserWindow {
 
   // A hung renderer (Chromium fires this after ~30s of an unresponsive UI) is
   // recovered by reloading rather than leaving a frozen window — another path to
-  // "it locked up while I was using it".
+  // "it locked up while I was using it". Do not reload immediately, though:
+  // response streaming/TTS can briefly trip Electron's unresponsive signal and an
+  // instant reload is the user-visible "flash and reset when the agent responds"
+  // bug. Give the renderer a grace window and cancel if Chromium reports it
+  // responsive again.
   win.on('unresponsive', () => {
-    console.error('[ARIA] renderer unresponsive — reloading');
-    if (!isQuitting && !win.isDestroyed()) { try { win.reload(); } catch { /* nothing else to do */ } }
+    console.error('[ARIA] renderer unresponsive — waiting before reload');
+    if (rendererUnresponsiveTimer || isQuitting || win.isDestroyed()) return;
+    rendererUnresponsiveTimer = setTimeout(() => {
+      rendererUnresponsiveTimer = null;
+      if (!isQuitting && !win.isDestroyed()) {
+        console.error('[ARIA] renderer still unresponsive — reloading');
+        try { win.reload(); } catch { /* nothing else to do */ }
+      }
+    }, 15000);
   });
+  win.on('responsive', clearRendererUnresponsiveTimer);
+  win.on('closed', clearRendererUnresponsiveTimer);
 
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   return win;

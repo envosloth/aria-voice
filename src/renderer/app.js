@@ -1230,6 +1230,7 @@ const cfg = {
   perfPreset: document.getElementById('cfg-perf-preset'),
   // Remote access (SSH tunnel) — see src/main/tunnel-supervisor.ts.
   remoteEnabled: document.getElementById('cfg-remote-enabled'),
+  remoteHermesDefaults: document.getElementById('remote-hermes-defaults'),
   remoteTarget: document.getElementById('cfg-remote-target'),
   remoteSshHost: document.getElementById('cfg-remote-sshhost'),
   remoteSshPort: document.getElementById('cfg-remote-sshport'),
@@ -1352,11 +1353,24 @@ const remoteBindings = [
   ['cfg.remoteSshPort',     'remote.sshPort',     'value', parseInt, 22],
   ['cfg.remoteIdentity',    'remote.identityFile', 'value'],
   ['cfg.remoteRemoteHost',  'remote.remoteHost',  'value'],
-  ['cfg.remoteRemotePort',  'remote.remotePort',  'value', parseInt, 8080],
+  ['cfg.remoteRemotePort',  'remote.remotePort',  'value', parseInt, 8642],
   ['cfg.remoteLocalPort',   'remote.localPort',   'value', parseInt, 0],
   ['cfg.remoteAutoReconnect','remote.autoReconnect','checked'],
   ['cfg.remoteRawCommand',  'remote.rawCommand',  'value'],
 ];
+function remoteBindingPromises(includeEnabled) {
+  return remoteBindings.map(([elKey, cfgKey, prop, parse, fallback]) => {
+    if (!includeEnabled && cfgKey === 'remote.enabled') return Promise.resolve();
+    const el = cfg[elKey.split('.')[1]];
+    if (!el) return Promise.resolve();
+    let v = el[prop];
+    if (parse) v = (Number.isFinite(+v) ? parse(v) : fallback);
+    return aria.config.set(cfgKey, v);
+  });
+}
+function persistRemoteForm(includeEnabled = true) {
+  return Promise.all(remoteBindingPromises(includeEnabled));
+}
 for (const [elKey, cfgKey, prop, parse, fallback] of remoteBindings) {
   const el = cfg[elKey.split('.')[1]];
   if (!el) continue;
@@ -1382,6 +1396,58 @@ function parseHostPort(ep) {
   } catch (e) { return null; }
 }
 
+function isLoopbackHost(host) {
+  return ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(String(host || '').toLowerCase());
+}
+
+async function endpointForRemoteTarget(target) {
+  const configKey = target === 'llm' ? 'llm.endpoint' : 'harness.endpoint';
+  const ep = await aria.config.get(configKey);
+  if (target !== 'harness') return ep;
+
+  // A successful tunnel rewrites harness.endpoint to ARIA's local forwarded
+  // URL, e.g. http://127.0.0.1:54123/v1/chat/completions. If we later derive
+  // Advanced remote host/port from that rewritten URL, the next tunnel points at
+  // a phantom port on the remote PC. For known harnesses, derive from the preset
+  // source endpoint instead whenever the saved endpoint looks like a tunnel URL.
+  const h = window.AriaHarnesses.byId(cfg.harness.value);
+  const presetHp = h && h.endpoint ? parseHostPort(h.endpoint) : null;
+  const currentHp = parseHostPort(ep);
+  if (h && h.id !== 'custom' && presetHp && currentHp
+      && isLoopbackHost(currentHp.host) && currentHp.port !== presetHp.port) {
+    return h.endpoint;
+  }
+  return ep;
+}
+
+async function applyRemoteHermesDefaults() {
+  if (cfg.harness) {
+    cfg.harness.value = 'hermes';
+    applyHarnessSelection('hermes', { prefill: true });
+  }
+  if (cfg.harnessEndpoint) cfg.harnessEndpoint.value = 'http://localhost:8642/v1/chat/completions';
+  if (cfg.harnessModel) cfg.harnessModel.value = 'hermes-agent';
+  if (cfg.routingMode) cfg.routingMode.value = 'harness';
+
+  if (cfg.remoteTarget) cfg.remoteTarget.value = 'harness';
+  if (cfg.remoteRemoteHost) cfg.remoteRemoteHost.value = '127.0.0.1';
+  if (cfg.remoteRemotePort) cfg.remoteRemotePort.value = '8642';
+  if (cfg.remoteLocalPort) cfg.remoteLocalPort.value = '0';
+  if (cfg.remoteAutoReconnect) cfg.remoteAutoReconnect.checked = true;
+  if (cfg.remoteRawCommand) cfg.remoteRawCommand.value = '';
+  if (cfg.remoteIdentity && !cfg.remoteIdentity.value.trim()) cfg.remoteIdentity.value = '~/.ssh/aria_hermes_key';
+
+  await aria.config.set('routing.mode', 'harness');
+  await aria.config.set('harness.id', 'hermes');
+  await aria.config.set('harness.endpoint', cfg.harnessEndpoint.value.trim());
+  await aria.config.set('harness.model', 'hermes-agent');
+  await persistRemoteForm(false); // do not start the tunnel until Connect is clicked
+  await syncRemoteDerived(true);
+
+  const info = document.getElementById('remote-derived');
+  if (info) info.textContent = 'Hermes defaults applied. Paste the SSH target, keep Raw command blank, then click Connect & test.';
+}
+
 // Fill the Advanced remote host/port from the selected endpoint and explain, in
 // plain words, what the tunnel will do. `adopt` (target just changed) overwrites
 // the fields; otherwise we only adopt when they're still at the shipped defaults
@@ -1394,7 +1460,7 @@ async function syncRemoteDerived(adopt) {
     if (info) info.textContent = 'ARIA just opens the local port; paste “Copy URL” into whatever should use it.';
     return;
   }
-  const ep = await aria.config.get(target === 'llm' ? 'llm.endpoint' : 'harness.endpoint');
+  const ep = await endpointForRemoteTarget(target);
   const hp = parseHostPort(ep);
   const what = target === 'llm' ? 'LLM' : 'harness';
   if (!hp) {
@@ -1403,7 +1469,7 @@ async function syncRemoteDerived(adopt) {
   }
   const curHost = cfg.remoteRemoteHost.value;
   const curPort = parseInt(cfg.remoteRemotePort.value, 10);
-  const atDefault = (!curHost || curHost === '127.0.0.1') && (!curPort || curPort === 8080);
+  const atDefault = (!curHost || curHost === '127.0.0.1') && (!curPort || curPort === 8642 || curPort === 8080);
   if (adopt || atDefault) {
     cfg.remoteRemoteHost.value = hp.host;
     cfg.remoteRemotePort.value = hp.port;
@@ -1415,6 +1481,7 @@ async function syncRemoteDerived(adopt) {
   if (info) info.textContent = `ARIA forwards ${usedHost}:${usedPort} on the remote box to a free local port and points the ${what} at it.`;
 }
 if (cfg.remoteTarget) cfg.remoteTarget.addEventListener('change', () => syncRemoteDerived(true));
+if (cfg.remoteHermesDefaults) cfg.remoteHermesDefaults.addEventListener('click', () => applyRemoteHermesDefaults());
 
 // Render the live tunnel status into the dot + label + endpoint text.
 function paintTunnel(s) {
@@ -1432,6 +1499,14 @@ function paintTunnel(s) {
   cfg.tunnelLabel.textContent = `Tunnel: ${labelMap[state] || state}${s.message ? ' — ' + s.message : ''}`;
   cfg.tunnelEndpoint.textContent = s.endpoint || '';
   cfg.tunnelEndpoint.title = s.endpoint || '';
+  if (state === 'connected' && s.endpoint && s.target === 'harness' && cfg.harnessEndpoint) {
+    cfg.harnessEndpoint.value = s.endpoint;
+    if (cfg.harness && cfg.harness.value === 'hermes' && cfg.harnessModel && !cfg.harnessModel.value) {
+      cfg.harnessModel.value = 'hermes-agent';
+    }
+  } else if (state === 'connected' && s.endpoint && s.target === 'llm' && cfg.llmEndpoint) {
+    cfg.llmEndpoint.value = s.endpoint;
+  }
 }
 // Subscribe to status pushes and paint on each. The snapshot is fetched
 // once on Settings open (see loadSettingsValues below) to back-fill the
@@ -1441,17 +1516,12 @@ if (aria.tunnel && aria.tunnel.onStatus) {
 }
 if (cfg.tunnelConnect) {
   cfg.tunnelConnect.addEventListener('click', () => {
+    if (cfg.remoteEnabled) cfg.remoteEnabled.checked = true;
     // Persist the form first (the user might have edited a field and
     // not tabbed out), then trigger start. aria.config.set is async
     // but tunnel.start reads config sync, so we wait for the form
     // write to settle via a microtask before starting.
-    Promise.all(remoteBindings.map(([elKey, cfgKey, prop, parse, fallback]) => {
-      const el = cfg[elKey.split('.')[1]];
-      if (!el) return Promise.resolve();
-      let v = el[prop];
-      if (parse) v = (Number.isFinite(+v) ? parse(v) : fallback);
-      return aria.config.set(cfgKey, v);
-    })).then(() => aria.tunnel.start());
+    persistRemoteForm(true).then(() => aria.tunnel.start());
   });
 }
 if (cfg.tunnelDisconnect) {
@@ -1763,7 +1833,7 @@ async function loadSettings() {
     cfg.remoteSshPort.value         = (await aria.config.get('remote.sshPort')) || 22;
     cfg.remoteIdentity.value        = (await aria.config.get('remote.identityFile')) || '';
     cfg.remoteRemoteHost.value      = (await aria.config.get('remote.remoteHost')) || '127.0.0.1';
-    cfg.remoteRemotePort.value      = (await aria.config.get('remote.remotePort')) || 8080;
+    cfg.remoteRemotePort.value      = (await aria.config.get('remote.remotePort')) || 8642;
     cfg.remoteLocalPort.value       = (await aria.config.get('remote.localPort')) || 0;
     cfg.remoteAutoReconnect.checked = !!(await aria.config.get('remote.autoReconnect'));
     cfg.remoteRawCommand.value      = (await aria.config.get('remote.rawCommand')) || '';

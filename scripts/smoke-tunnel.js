@@ -57,5 +57,26 @@ const path = require('path');
 const cfgText = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'config.ts'), 'utf8');
 check('config.localPortDefault0', /localPort:\s*0/.test(cfgText));
 
+// Remote Hermes should be a first-class, low-friction path: picking Hermes should
+// use the API-server model name ARIA's setup guide asks users to configure, the
+// Remote tab should have a one-click preset for the SSH fields, and the tunnel
+// supervisor must verify the forwarded HTTP service actually answers before
+// saying "connected" (a bare TCP connect to ssh's local listener can succeed even
+// when the remote 127.0.0.1:8642 service is down).
+const harnessText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'harnesses.js'), 'utf8');
+check('hermes.defaultModel', /id:\s*'hermes'[\s\S]*defaultModel:\s*'hermes-agent'/.test(harnessText));
+
+const htmlText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'index.html'), 'utf8');
+check('remote.hermesQuickButton', /id="remote-hermes-defaults"/.test(htmlText));
+check('remote.rawCommandBlankHint', /Leave blank unless you need custom SSH flags/.test(htmlText));
+
+const appText = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'app.js'), 'utf8');
+check('remote.hermesDefaultsFunction', /function\s+applyRemoteHermesDefaults\s*\(/.test(appText));
+check('remote.hermesPort8642', /remoteRemotePort\.value\s*=\s*'8642'/.test(appText));
+check('remote.connectEnablesToggle', /remoteEnabled\.checked\s*=\s*true/.test(appText));
+
+const tunnelText = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'tunnel-supervisor.ts'), 'utf8');
+check('tunnel.httpProbeBeforeConnected', /probeHttpLikePort/.test(tunnelText) && /GET \/health HTTP\/1\.1/.test(tunnelText));
+
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

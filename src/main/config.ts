@@ -146,7 +146,7 @@ const defaults: AppConfig = {
     sshPort: 22,
     identityFile: '',
     remoteHost: '127.0.0.1',
-    remotePort: 8080,
+    remotePort: 8642,
     localPort: 0,
     rawCommand: '',
     autoReconnect: true,

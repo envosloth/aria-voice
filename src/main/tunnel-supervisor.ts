@@ -139,7 +139,7 @@ export class TunnelSupervisor extends EventEmitter {
     const r = config.get('remote') as {
       sshHost: string; sshPort: number; identityFile: string;
       remoteHost: string; remotePort: number; localPort: number;
-      rawCommand: string; autoReconnect: boolean;
+      rawCommand: string; autoReconnect: boolean; target: 'harness' | 'llm' | 'custom';
     };
     if (this.state === 'starting' || this.state === 'connected') return;
     if (!r.sshHost) {
@@ -166,7 +166,7 @@ export class TunnelSupervisor extends EventEmitter {
   private spawn(r: {
     sshHost: string; sshPort: number; identityFile: string;
     remoteHost: string; remotePort: number; localPort: number;
-    rawCommand: string;
+    rawCommand: string; target: 'harness' | 'llm' | 'custom';
   }): void {
     // rawCommand: the user owns the whole argv; we can't inject a port, so we fall
     // back to discovering it from ssh's stderr (the user should add `-v` for that
@@ -195,7 +195,7 @@ export class TunnelSupervisor extends EventEmitter {
   }
 
   private launch(
-    r: { remoteHost: string; remotePort: number },
+    r: { remoteHost: string; remotePort: number; target: 'harness' | 'llm' | 'custom' },
     argv: string[],
     knownPort: number | null,
   ): void {
@@ -273,12 +273,24 @@ export class TunnelSupervisor extends EventEmitter {
   // retry for ~10s. If ssh exits first (bad auth/host/port), the exit handler
   // takes over; if the forward never comes up we simply stop polling and let the
   // ServerAlive/exit path drive the reconnect.
-  private pollConnected(port: number, r: { remoteHost: string; remotePort: number }): void {
+  private pollConnected(port: number, r: { remoteHost: string; remotePort: number; target: 'harness' | 'llm' | 'custom' }): void {
     if (this.connectPollTimer) { clearTimeout(this.connectPollTimer); this.connectPollTimer = null; }
     let tries = 0;
+    const giveUp = (): void => {
+      if (!this.child) return;
+      this.lastStderr = `remote service did not answer on ${r.remoteHost}:${r.remotePort}`;
+      try { this.child.kill('SIGTERM'); } catch { /* already dead */ }
+    };
+    const retryOrGiveUp = (): void => {
+      if (++tries < 40 && this.child) {
+        this.connectPollTimer = setTimeout(tick, 250);
+      } else {
+        giveUp();
+      }
+    };
     const tick = (): void => {
       if (!this.child || this.state === 'connected' || this.state === 'stopped') return;
-      this.probeLocalPort(port).then((ok) => {
+      this.probeForwardedPort(port, r.target).then((ok) => {
         if (this.state === 'connected' || this.state === 'stopped' || !this.child) return;
         if (ok) {
           // Reset the backoff so a later drop retries from 1s, not the capped 30s.
@@ -286,10 +298,8 @@ export class TunnelSupervisor extends EventEmitter {
           this.setState('connected', `tunnel up: 127.0.0.1:${port} → ${r.remoteHost}:${r.remotePort}`);
           return;
         }
-        if (++tries < 40 && this.child) this.connectPollTimer = setTimeout(tick, 250);
-      }).catch(() => {
-        if (++tries < 40 && this.child) this.connectPollTimer = setTimeout(tick, 250);
-      });
+        retryOrGiveUp();
+      }).catch(() => retryOrGiveUp());
     };
     this.connectPollTimer = setTimeout(tick, 200); // let ssh bind the listener first
   }
@@ -303,6 +313,39 @@ export class TunnelSupervisor extends EventEmitter {
       const timer = setTimeout(() => { sock.destroy(); resolve(false); }, 1500);
       sock.once('connect', () => { clearTimeout(timer); sock.end(); resolve(true); });
       sock.once('error', () => { clearTimeout(timer); resolve(false); });
+    });
+  }
+
+  private async probeForwardedPort(port: number, target: 'harness' | 'llm' | 'custom'): Promise<boolean> {
+    if (target === 'custom') return this.probeLocalPort(port);
+    return this.probeHttpLikePort(port);
+  }
+
+  // A bare TCP connect to ssh's local listener can succeed even when the remote
+  // 127.0.0.1:PORT is refusing connections; ssh accepts locally, then prints
+  // "channel open failed" and closes the socket. For harness/LLM tunnels, send a
+  // tiny HTTP request and require *some* response bytes (200, 401, 404 all prove
+  // the remote HTTP service is actually reachable).
+  private async probeHttpLikePort(port: number): Promise<boolean> {
+    return new Promise((resolve) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      let sock: net.Socket | null = null;
+      const done = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        try { sock?.destroy(); } catch { /* already closed */ }
+        resolve(ok);
+      };
+      sock = net.createConnection({ host: '127.0.0.1', port, family: 4 });
+      timer = setTimeout(() => done(false), 1500);
+      sock.once('connect', () => {
+        sock.write('GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n');
+      });
+      sock.once('data', () => done(true));
+      sock.once('error', () => done(false));
+      sock.once('close', () => done(false));
     });
   }
 

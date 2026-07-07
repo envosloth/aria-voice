@@ -23,7 +23,7 @@
     {
       id: 'hermes', name: 'Hermes Agent', kind: 'agent',
       endpoint: 'http://localhost:8642/v1/chat/completions',
-      defaultModel: 'minimax-m3', keyHint: 'gateway key', detect: true,
+      defaultModel: 'hermes-agent', keyHint: 'gateway key', detect: true,
       note: 'Hermes serves its OpenAI-compatible gateway on port 8642 (not 8000). '
         + 'ARIA can auto-detect the gateway key from ~/.hermes/.env — no need to find it yourself.',
     },

@@ -10,6 +10,7 @@ global.window = { devicePixelRatio: 1, addEventListener: () => {} };
 global.self = global.window;
 global.document = {
   readyState: 'complete', hidden: false,
+  documentElement: { getAttribute: () => 'midnight' },
   getElementById: () => null, addEventListener: () => {}, hasFocus: () => true,
 };
 require('../src/renderer/orb.js');
@@ -49,11 +50,24 @@ check('low.harder.than.high', MAX.low < MAX.high);
 Orb.setQuality('high');
 check('tiny.never.upscaled', dims(400, 300, 1).longEdge === 400, JSON.stringify(dims(400, 300, 1)));
 
-// --- Resolution (item 4): a 1440p / 1080p@2x fullscreen canvas now renders at a
-// crisp native-ish resolution rather than the old blurry 1920 cap. ---
-check('high.cap.raised', MAX.high >= 2560, JSON.stringify(MAX));
+// --- Resolution: fullscreen/native windows should not make the orb look blurry.
+// High preserves native 4K; medium preserves 1440p+ so balanced/auto profiles do
+// not fall all the way back to a 1080p-looking backing store. ---
+check('high.cap.raised', MAX.high >= 4096, JSON.stringify(MAX));
+check('medium.cap.crispFullscreen', MAX.medium >= 3072, JSON.stringify(MAX));
 check('1440p.high.native', dims(2560, 1440, 1).longEdge === 2560, JSON.stringify(dims(2560, 1440, 1)));
 check('1080p@2x.high.crisper', dims(1920, 1080, 2).longEdge >= 2560, JSON.stringify(dims(1920, 1080, 2)));
+check('4K.high.native', dims(3840, 2160, 1).longEdge === 3840, JSON.stringify(dims(3840, 2160, 1)));
+
+// --- Light theme contrast: pale orb highlights over white glass used to become
+// effectively invisible. The theme ramp should darken highlights and boost alpha
+// only in light mode, while leaving dark-mode colours untouched. ---
+check('themeRamp.exists', typeof Orb.themeRampColor === 'function');
+const highlight = [70, 120, 235, 225, 240, 255];
+const darkRamp = Orb.themeRampColor(highlight, 1, 0.4, false);
+const lightRamp = Orb.themeRampColor(highlight, 1, 0.4, true);
+check('themeRamp.darkUnchanged', darkRamp.r === 225 && darkRamp.g === 240 && darkRamp.b === 255 && Math.abs(darkRamp.a - 0.4) < 1e-9, JSON.stringify(darkRamp));
+check('themeRamp.lightVisible', (lightRamp.r + lightRamp.g + lightRamp.b) / 3 < 190 && lightRamp.a > darkRamp.a, JSON.stringify(lightRamp));
 
 // --- Fullscreen edge jitter (item 5): backingFor must map the drawing space onto
 // the integer backing store with NO fractional overhang on the right/bottom edge

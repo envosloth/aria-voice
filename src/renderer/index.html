@@ -93,8 +93,9 @@
     /* ── Ambient background: orb canvas + glow blobs + grid ── */
     #orb-canvas {
       position: fixed; inset: 0; width: 100%; height: 100%;
-      z-index: 0; pointer-events: none;
+      z-index: 0; pointer-events: none; image-rendering: auto;
     }
+    html[data-theme="light"] #orb-canvas { opacity: 1; }
     .bg-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
     .bg-grid {
       position: absolute; inset: 0;
@@ -412,6 +413,9 @@
     .remote-row { display: flex; gap: 8px; align-items: stretch; }
     .remote-row label { display: flex; flex-direction: column; }
     .remote-row input { margin-top: 0; }
+    .remote-quick { margin: 10px 0 12px; padding: 10px; border: 1px solid color-mix(in srgb, var(--accent-active) 30%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--accent-active) 9%, transparent); }
+    .remote-quick-title { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 4px; font-size: 12px; font-weight: 600; color: var(--text); }
+    .remote-quick .hint { line-height: 1.45; }
     .tunnel-status { display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin: 8px 0; background: color-mix(in srgb, var(--bg) 96%, var(--text) 4%); border-radius: 8px; border: 1px solid var(--border); font-size: 12px; }
     .tunnel-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--text-muted); transition: background .3s ease, box-shadow .3s ease; flex: none; }
     .tunnel-dot.connected { background: var(--success); box-shadow: 0 0 0 2px color-mix(in srgb, var(--success) 30%, transparent); }
@@ -673,7 +677,14 @@
       <div class="tab-panel" data-panel="remote">
       <section>
         <h3>Remote harness <span class="hint">(over SSH)</span></h3>
-        <p class="hint" style="margin:2px 0 10px;">Your agent harness runs on another machine (a dev box, a server)? ARIA tunnels to it over SSH so the voice pipeline stays local. Enter the SSH target, pick what's running there, and Connect — ARIA figures out the rest from your endpoint.</p>
+        <p class="hint" style="margin:2px 0 10px;">Your agent harness runs on another machine (a dev box, a server)? ARIA tunnels to it over SSH so the voice pipeline stays local. For Hermes Agent, use the quick setup, paste the SSH target, then Connect.</p>
+        <div class="remote-quick">
+          <div class="remote-quick-title">
+            <span>Hermes Agent quick setup</span>
+            <button id="remote-hermes-defaults" class="ghost-btn" type="button">Use Hermes defaults</button>
+          </div>
+          <p class="hint" style="margin:0;">Sets the harness model to <code>hermes-agent</code>, forwards remote <code>127.0.0.1:8642</code>, clears the raw SSH command, and turns routing to Agent mode. You still need passwordless SSH from this PC to the remote PC and the Hermes API key in Agent harness.</p>
+        </div>
         <label class="checkbox-label">
           <input type="checkbox" id="cfg-remote-enabled">
           Reach the harness over SSH
@@ -718,7 +729,7 @@
               <input type="text" id="cfg-remote-remotehost" placeholder="127.0.0.1" value="127.0.0.1">
             </label>
             <label style="flex:1;">Remote port
-              <input type="number" id="cfg-remote-remoteport" min="1" max="65535" value="8080">
+              <input type="number" id="cfg-remote-remoteport" min="1" max="65535" value="8642">
             </label>
           </div>
           <div class="remote-row">
@@ -731,9 +742,9 @@
             </label>
           </div>
           <label>Raw command <span class="hint">(override)</span>
-            <input type="text" id="cfg-remote-rawcommand" placeholder="ssh -N -L 8080:127.0.0.1:8080 user@host -i ~/.ssh/key">
+            <input type="text" id="cfg-remote-rawcommand" placeholder="Leave blank unless you need custom SSH flags">
           </label>
-          <p class="hint" style="margin:2px 0 6px;">When set, this runs verbatim instead of the structured form. Use for password auth via <code>sshpass</code> or non-default ssh flags. Arbitrary shell strings are a foot-gun.</p>
+          <p class="hint" style="margin:2px 0 6px;">Leave this blank for normal Hermes Agent setups. When set, this runs verbatim instead of the structured form. Use only for advanced SSH flags; arbitrary shell strings are a foot-gun.</p>
         </details>
       </section>
       </div><!-- /remote -->
