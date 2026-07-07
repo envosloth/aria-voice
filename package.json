@@ -1,6 +1,6 @@
 {
   "name": "aria",
-  "version": "2.13.15",
+  "version": "2.13.16",
   "description": "GPU-accelerated voice assistant with local STT/TTS and remote LLM",
   "main": "dist/main/index.js",
   "repository": {
@@ -31,7 +31,7 @@
     "smoke:memory": "npm run build && node scripts/smoke-memory.js",
     "smoke:models": "npm run build && node scripts/smoke-models.js",
     "smoke:audio": "node scripts/smoke-audio.js",
-    "smoke:tunnel": "node scripts/smoke-tunnel.js",
+    "smoke:tunnel": "npm run build && node scripts/smoke-tunnel.js",
     "smoke:e2e": "npm run build && bash scripts/gen-test-audio.sh && node scripts/smoke-e2e.js",
     "smoke:boot": "npm run build && ARIA_SMOKE=1 electron --no-sandbox dist/main/index.js",
     "smoke:hardware": "npm run build && node scripts/smoke-hardware.js",
@@ -40,7 +40,7 @@
     "smoke:orb": "node scripts/smoke-orb.js",
     "smoke:status-dots": "node scripts/smoke-status-dots.js",
     "smoke:update-progress": "node scripts/smoke-update-progress.js",
-    "smoke:all": "npm run smoke && npm run smoke:tts && npm run smoke:stt && npm run smoke:resilience && npm run smoke:pdeathsig && npm run smoke:memory && npm run smoke:llm && npm run smoke:llm-models && npm run smoke:router && npm run smoke:session-features && npm run smoke:hardware && npm run smoke:updater && npm run smoke:orb && npm run smoke:status-dots && npm run smoke:update-progress && npm run smoke:models && npm run smoke:audio && npm run smoke:e2e",
+    "smoke:all": "npm run smoke && npm run smoke:tts && npm run smoke:stt && npm run smoke:resilience && npm run smoke:pdeathsig && npm run smoke:memory && npm run smoke:llm && npm run smoke:llm-models && npm run smoke:router && npm run smoke:tunnel && npm run smoke:session-features && npm run smoke:hardware && npm run smoke:updater && npm run smoke:orb && npm run smoke:status-dots && npm run smoke:update-progress && npm run smoke:models && npm run smoke:audio && npm run smoke:e2e",
     "package:sidecars": "bash scripts/package-sidecars.sh",
     "package:whisper": "bash scripts/stage-whisper.sh",
     "dist": "npm run build && npm run package:sidecars && npm run package:whisper && electron-builder --config electron-builder.yml",

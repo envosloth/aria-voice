@@ -1,87 +1,61 @@
 #!/usr/bin/env node
-/* Unit test for the SSH tunnel supervisor. We can't actually fork `ssh`
- * in CI (no SSH server, no auth), so this covers the pure logic:
- *   - defaults present and valid
- *   - command-builder produces the expected argv from the structured form
- *   - rawCommand override tokenises correctly
- *   - state-machine enums cover all paths the renderer needs
+/* Unit test for the SSH tunnel argv/port-parse helpers (src/main/tunnel-args.ts).
+ * These are the two spots that broke "remote connect":
+ *   1) the default localPort=0 produced `-L 0:host:port`, which OpenSSH rejects
+ *      ("Bad local forwarding specification") — the tunnel could never start;
+ *   2) the port was parsed from an ssh "listening on IP:PORT" line OpenSSH never
+ *      prints (it emits "IP port N", and only under -v).
  *
- * The supervisor itself imports from './config' which expects an
- * Electron app — so we exercise the pure pieces (defaults, argv
- * shapes) by re-reading config.ts via a thin wrapper that avoids the
- * JsonStore import. The argv builder is internal; we replicate its
- * shape here to lock the contract.
- */
+ * NOTE: the previous version of this test REPLICATED the (buggy) builder inline
+ * and asserted the argv contained `0:127.0.0.1:8080` — locking in the exact bug.
+ * It now imports the REAL compiled helper so it tests what actually ships. Build
+ * first (smoke:tunnel runs `npm run build` before this). */
+const { buildTunnelArgv, parseForwardPort } = require('../dist/main/tunnel-args.js');
+
 let pass = true;
 function check(name, cond, detail) {
   if (!cond) pass = false;
   console.log(`[${name}] ${cond ? 'PASS' : 'FAIL' + (detail ? ' -> ' + detail : '')}`);
 }
 
-// Replicate the structured-argv builder from tunnel-supervisor.ts so we
-// can test it without booting Electron. The supervisor uses:
-//   ['ssh', '-N', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes',
-//    '-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=3',
-//    '-L', '<local>:<remoteHost>:<remotePort>']
-// then optionally '-p <port>' and '-i <key>' before the final sshHost.
-function buildSshArgv({ sshHost, sshPort, identityFile, remoteHost, remotePort, localPort }) {
-  const argv = ['ssh', '-N',
-    '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes',
-    '-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=3',
-    '-L', `${localPort || 0}:${remoteHost}:${remotePort}`];
-  // Match the splice order from the supervisor: port and identity go
-  // after 'ssh' but before the rest of the flags.
-  const extras = [];
-  if (sshPort && sshPort !== 22) extras.push('-p', String(sshPort));
-  if (identityFile) extras.push('-i', identityFile);
-  argv.splice(2, 0, ...extras);
-  argv.push(sshHost);
-  return argv;
+const base = { sshHost: 'user@box', sshPort: 22, identityFile: '', remoteHost: '127.0.0.1', remotePort: 8080 };
+
+// --- The core regression: a concrete port yields a valid -L spec, NEVER `0:`. ---
+const a = buildTunnelArgv(base, 54123);
+const spec = a[a.indexOf('-L') + 1];
+check('argv.hasForward', a.includes('-L') && spec === '54123:127.0.0.1:8080', spec);
+check('argv.noZeroPort', !a.some((t) => /^0:/.test(t)), a.join(' '));
+check('argv.hostLast', a[a.length - 1] === 'user@box', a.join(' '));
+check('argv.batchMode', a.includes('BatchMode=yes'));
+check('argv.exitOnForwardFailure', a.includes('ExitOnForwardFailure=yes'));
+
+// port 0 / bad ports MUST throw — the guard that stops the old bug reappearing.
+for (const bad of [0, -1, 1.5, NaN]) {
+  let threw = false;
+  try { buildTunnelArgv(base, bad); } catch { threw = true; }
+  check(`argv.rejects(${bad})`, threw);
 }
 
-check('tunnel.defaultPort', buildSshArgv({
-  sshHost: 'user@host', remoteHost: '127.0.0.1', remotePort: 8080, localPort: 0,
-}).includes('0:127.0.0.1:8080'));
+// -i / -p only when meaningful.
+const withKeyPort = buildTunnelArgv({ ...base, sshPort: 2222, identityFile: '/home/u/.ssh/id_ed25519' }, 60000);
+check('argv.identity', withKeyPort.includes('-i') && withKeyPort.includes('/home/u/.ssh/id_ed25519'));
+check('argv.sshPort', withKeyPort.includes('-p') && withKeyPort.includes('2222'));
+check('argv.noKeyByDefault', !a.includes('-i') && !a.includes('-p'));
 
-check('tunnel.sshPort22Omitted', !buildSshArgv({
-  sshHost: 'user@host', remoteHost: '127.0.0.1', remotePort: 8080, localPort: 0, sshPort: 22,
-}).includes('-p'));
+// --- Port parsing: must handle the REAL OpenSSH format (space "port" N), the
+// colon form, IPv6, and reject noise. ---
+check('parse.opensshRealFormat', parseForwardPort('debug1: Local forwarding listening on 127.0.0.1 port 54123.') === 54123);
+check('parse.colonForm', parseForwardPort('Local forwarding listening on 127.0.0.1:54123') === 54123);
+check('parse.ipv6', parseForwardPort('listening on ::1 port 7000') === 7000);
+check('parse.noise', parseForwardPort('debug1: Authenticating to box:22 as user') === null);
+check('parse.empty', parseForwardPort('') === null);
 
-check('tunnel.sshPortExplicit', buildSshArgv({
-  sshHost: 'user@host', remoteHost: '127.0.0.1', remotePort: 8080, localPort: 0, sshPort: 2222,
-}).includes('2222'));
-
-check('tunnel.identityFileInserted', buildSshArgv({
-  sshHost: 'user@host', remoteHost: '127.0.0.1', remotePort: 8080, localPort: 0,
-  identityFile: '/home/me/.ssh/id_ed25519',
-}).includes('/home/me/.ssh/id_ed25519'));
-
-check('tunnel.sshHostLast', (() => {
-  const argv = buildSshArgv({
-    sshHost: 'me@dev.example.com', remoteHost: '127.0.0.1', remotePort: 8080, localPort: 0,
-  });
-  return argv[argv.length - 1] === 'me@dev.example.com';
-})());
-
-// Defaults present. We re-read config.ts as text and grep for the keys.
+// Config default localPort stays 0 ("OS-assigned" intent) — the supervisor turns
+// that into a real free port; it must NOT reach ssh as a literal 0.
 const fs = require('fs');
 const path = require('path');
 const cfgText = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'config.ts'), 'utf8');
-const expectedDefaults = [
-  'enabled: false', 'target: \\\'harness\\\'', 'sshPort: 22',
-  'remoteHost: \\\'127.0.0.1\\\'', 'remotePort: 8080', 'localPort: 0',
-  'autoReconnect: true',
-];
-for (const k of expectedDefaults) {
-  check(`tunnel.default.${k.replace(/[^a-z0-9]/gi, '')}`, cfgText.includes(k.replace(/\\'/g, "'")));
-}
-
-// rawCommand override tokenisation. The supervisor splits on /\s+/.
-check('tunnel.rawCommandSplit', (() => {
-  const cmd = 'ssh -N -L 8080:127.0.0.1:8080 user@host -i ~/.ssh/key';
-  const argv = cmd.trim().split(/\s+/);
-  return argv.length === 7 && argv[0] === 'ssh' && argv[6] === '~/.ssh/key';
-})());
+check('config.localPortDefault0', /localPort:\s*0/.test(cfgText));
 
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

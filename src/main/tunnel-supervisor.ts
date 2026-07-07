@@ -34,6 +34,24 @@ import { ChildProcess, spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import net from 'net';
 import { config } from './config';
+import { buildTunnelArgv, parseForwardPort } from './tunnel-args';
+
+// Ask the OS for a free local TCP port (bind 0, read the assigned port, release).
+// We hand this concrete port to `ssh -L` instead of letting ssh pick, because
+// OpenSSH rejects a `-L 0:…` spec outright. Tiny TOCTOU window (the port could be
+// taken before ssh binds it) is self-healing: ExitOnForwardFailure makes ssh exit
+// and we retry with a fresh port.
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const addr = srv.address();
+      const port = addr && typeof addr === 'object' ? addr.port : 0;
+      srv.close(() => (port ? resolve(port) : reject(new Error('no free port'))));
+    });
+  });
+}
 
 export type TunnelState =
   | 'idle'         // disabled in config
@@ -66,7 +84,12 @@ export class TunnelSupervisor extends EventEmitter {
   private actualPort: number | null = null;
   private attempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private connectPollTimer: ReturnType<typeof setTimeout> | null = null;
   private startedAt = 0;
+  // Last non-empty line ssh wrote to stderr, surfaced in exit/error messages so a
+  // failure is diagnosable ("Permission denied (publickey)" = your key; "Could
+  // not resolve hostname" = your host typo) — app-bug vs your-side.
+  private lastStderr = '';
 
   // Read the most-recent tunnel status (for the renderer's UI).
   snapshot(): TunnelStatus {
@@ -130,6 +153,7 @@ export class TunnelSupervisor extends EventEmitter {
   // Manually stop the tunnel (also called on `enabled = false`).
   stop(): void {
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    if (this.connectPollTimer) { clearTimeout(this.connectPollTimer); this.connectPollTimer = null; }
     if (this.child && !this.child.killed) {
       try { this.child.kill('SIGTERM'); } catch { /* already dead */ }
     }
@@ -144,25 +168,39 @@ export class TunnelSupervisor extends EventEmitter {
     remoteHost: string; remotePort: number; localPort: number;
     rawCommand: string;
   }): void {
-    // Build the ssh argv. The user can supply `rawCommand` (a single
-    // string split on whitespace) for power users, OR the structured
-    // form which is built deterministically here.
-    let argv: string[];
+    // rawCommand: the user owns the whole argv; we can't inject a port, so we fall
+    // back to discovering it from ssh's stderr (the user should add `-v` for that
+    // to work). Split on whitespace — the user is responsible for quoting.
     if (r.rawCommand && r.rawCommand.trim()) {
-      // Tokenise with a simple shell-like split (no quotes / escapes —
-      // the user is responsible for quoting in the field). For most
-      // use cases `rawCommand` is `ssh -N -L 54123:127.0.0.1:8080
-      // user@host`; we just split on whitespace.
-      argv = r.rawCommand.trim().split(/\s+/);
-    } else {
-      argv = ['ssh', '-N', '-o', 'BatchMode=yes', '-o', 'ExitOnForwardFailure=yes',
-        '-o', 'ServerAliveInterval=30', '-o', 'ServerAliveCountMax=3',
-        '-L', `${r.localPort || 0}:${r.remoteHost}:${r.remotePort}`];
-      if (r.sshPort && r.sshPort !== 22) argv.splice(2, 0, '-p', String(r.sshPort));
-      if (r.identityFile) argv.splice(2, 0, '-i', r.identityFile);
-      argv.push(r.sshHost);
+      this.launch(r, r.rawCommand.trim().split(/\s+/), null);
+      return;
     }
+    // Structured form. Never hand ssh a local port of 0 — OpenSSH rejects
+    // `-L 0:host:port` at argument parsing ("Bad local forwarding specification"),
+    // which is the default-config bug that stopped the tunnel from ever starting.
+    // When the user asked for an OS-assigned port (0), allocate a concrete free
+    // port ourselves and hand ssh that.
+    if (r.localPort && r.localPort > 0) {
+      this.launch(r, buildTunnelArgv(r, r.localPort), r.localPort);
+      return;
+    }
+    freePort().then((port) => {
+      // Config may have been toggled off while we were picking a port.
+      if (!(config.get('remote') as { enabled: boolean }).enabled) return;
+      if (this.state === 'stopped' || this.state === 'connected') return;
+      this.launch(r, buildTunnelArgv(r, port), port);
+    }).catch((e) => {
+      this.scheduleReconnect(`could not allocate a local port: ${(e as Error).message}`);
+    });
+  }
+
+  private launch(
+    r: { remoteHost: string; remotePort: number },
+    argv: string[],
+    knownPort: number | null,
+  ): void {
     this.setState('starting', `ssh ${argv.slice(0, 4).join(' ')}…`);
+    this.lastStderr = '';
 
     let proc: ChildProcess;
     try {
@@ -173,71 +211,52 @@ export class TunnelSupervisor extends EventEmitter {
         windowsHide: true,
       });
     } catch (e) {
-      this.setState('error', `failed to spawn ssh: ${(e as Error).message}`);
+      this.scheduleReconnect(`failed to spawn ssh: ${(e as Error).message}`);
       return;
     }
 
     this.child = proc;
     this.attempts++;
 
-    // Parse the chosen local port from ssh's stderr. OpenSSH prints a
-    // line like: "Local forwarding listening on 127.0.0.1:54123." when
-    // the tunnel is ready. We use this to fill in `actualPort` when the
-    // user asked for 0 (OS-assigned).
-    const portFromStderr = (line: string): number | null => {
-      const m = line.match(/listening on (?:127\.0\.0\.1|0\.0\.0\.0|localhost|::1):(\d+)/i);
-      return m ? parseInt(m[1], 10) : null;
-    };
+    // We know the local port up front (structured form) — poll it directly to
+    // decide when the tunnel is actually usable, instead of parsing an ssh
+    // "listening" line that ssh only prints under `-v` (and in a format the old
+    // regex didn't match). This is what actually flips the state to 'connected'.
+    if (knownPort) {
+      this.actualPort = knownPort;
+      this.pollConnected(knownPort, r);
+    }
 
     proc.stderr?.on('data', (b: Buffer) => {
       const text = b.toString();
-      const m = portFromStderr(text);
-      if (m) {
-        this.actualPort = m;
-        // Sanity-check the port is open locally before declaring
-        // success (avoids a 1-2s window of "connected" with a dead
-        // port). The check is cheap and bounded by a timeout.
-        this.probeLocalPort(m).then((ok) => {
-          if (ok) {
-            // Successful connect — reset the backoff so a later drop retries
-            // from 1s, not from the capped 30s left over by earlier attempts.
-            this.attempts = 0;
-            this.setState('connected', `tunnel up: 127.0.0.1:${m} → ${r.remoteHost}:${r.remotePort}`);
-          } else {
-            // Port printed but isn't accepting — usually a hostname
-            // resolution race. Don't declare connected; let the exit
-            // handler decide.
-          }
-        }).catch(() => { /* ignore probe failures */ });
+      this.lastStderr = text.trim().split('\n').filter(Boolean).pop() || this.lastStderr;
+      // rawCommand path only: we don't know the port, so still try to parse it.
+      if (!knownPort) {
+        const m = parseForwardPort(text);
+        if (m) { this.actualPort = m; this.pollConnected(m, r); }
       }
-      this.lastMessage = text.trim().split('\n').pop() || this.lastMessage;
+      this.lastMessage = this.lastStderr;
       this.emit('status', this.snapshot());
     });
 
     proc.stdout?.on('data', () => { /* ssh -N is silent; ignore */ });
 
     proc.on('exit', (code, signal) => {
+      if (this.connectPollTimer) { clearTimeout(this.connectPollTimer); this.connectPollTimer = null; }
       const wasClean = code === 0 || signal === 'SIGTERM' || signal === 'SIGKILL';
       const wasManual = this.state === 'stopped';
       this.child = null;
       this.actualPort = null;
-      if (wasManual) {
-        // User-initiated stop — no auto-reconnect, no error.
-        return;
-      }
-      if (wasClean) {
-        // Clean exit (rare without our kill) — could be a ServerAlive
-        // timeout or an explicit `ssh -L … -- ExitOnForwardFailure`
-        // that found the port taken. Treat as reconnectable.
-        this.scheduleReconnect(`ssh exited cleanly (code=${code}, signal=${signal})`);
-        return;
-      }
-      this.scheduleReconnect(`ssh exited code=${code} signal=${signal}`);
+      if (wasManual) return; // user-initiated stop — no auto-reconnect, no error.
+      // Surface the real ssh error so the failure is diagnosable (their auth /
+      // their host / their remote port vs an app bug).
+      const detail = this.lastStderr ? ` — ${this.lastStderr}` : '';
+      this.scheduleReconnect(`ssh exited code=${code} signal=${signal}${detail}`);
     });
 
     proc.on('error', (err) => {
-      // Spawn-level failure (ssh binary not on PATH, permission denied,
-      // etc.). Distinguish "ssh not found" from a runtime error.
+      if (this.connectPollTimer) { clearTimeout(this.connectPollTimer); this.connectPollTimer = null; }
+      // Spawn-level failure (ssh binary not on PATH, permission denied, etc.).
       const isMissing = /ENOENT/.test(err.message);
       this.child = null;
       this.actualPort = null;
@@ -247,6 +266,32 @@ export class TunnelSupervisor extends EventEmitter {
         this.setState('error', `ssh error: ${err.message}`);
       }
     });
+  }
+
+  // Poll the local port until it accepts a connection (the forward is live), then
+  // declare 'connected'. ssh binds the local listener a beat after spawn, so we
+  // retry for ~10s. If ssh exits first (bad auth/host/port), the exit handler
+  // takes over; if the forward never comes up we simply stop polling and let the
+  // ServerAlive/exit path drive the reconnect.
+  private pollConnected(port: number, r: { remoteHost: string; remotePort: number }): void {
+    if (this.connectPollTimer) { clearTimeout(this.connectPollTimer); this.connectPollTimer = null; }
+    let tries = 0;
+    const tick = (): void => {
+      if (!this.child || this.state === 'connected' || this.state === 'stopped') return;
+      this.probeLocalPort(port).then((ok) => {
+        if (this.state === 'connected' || this.state === 'stopped' || !this.child) return;
+        if (ok) {
+          // Reset the backoff so a later drop retries from 1s, not the capped 30s.
+          this.attempts = 0;
+          this.setState('connected', `tunnel up: 127.0.0.1:${port} → ${r.remoteHost}:${r.remotePort}`);
+          return;
+        }
+        if (++tries < 40 && this.child) this.connectPollTimer = setTimeout(tick, 250);
+      }).catch(() => {
+        if (++tries < 40 && this.child) this.connectPollTimer = setTimeout(tick, 250);
+      });
+    };
+    this.connectPollTimer = setTimeout(tick, 200); // let ssh bind the listener first
   }
 
   // Try to TCP-connect to the local port with a short timeout. Returns
