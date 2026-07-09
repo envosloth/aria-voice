@@ -62,8 +62,6 @@ check('remind', route('remind me to call mom at noon', both), 'harness');
 check('bitcoin-now', route('how much is bitcoin right now', both), 'harness');
 check('directions', route('directions to the airport', both), 'harness');
 check('latest', route("what's the latest on the election", both), 'harness');
-check('translate', route('translate good morning into Spanish', both), 'harness');
-check('convert', route('convert 10 miles to kilometers', both), 'harness');
 check('send-text', route('send a text to Alex', both), 'harness');
 check('calendar', route("what's on my calendar today", both), 'harness');
 check('nearby', route('find a coffee shop near me', both), 'harness');
@@ -79,6 +77,22 @@ check('how-today', route('how are you today', both), 'llm');
 check('opinion', route('what do you think about jazz music', both), 'llm');
 check('explain', route('explain how photosynthesis works', both), 'llm');
 check('in-order-to', route('in order to learn, what should I read about history', both), 'llm');
+// No-tool asks a chat LLM answers natively — these were false-harness before the
+// keyword trim (translate/convert/how many/fix/test), costing latency for no
+// tool benefit. The LLM's ARIA_AGENT_HANDOFF safety net covers any that turn
+// out to need live data after all.
+check('translate', route('translate good morning into Spanish', both), 'llm');
+check('convert', route('convert 10 miles to kilometers', both), 'llm');
+check('how-many-units', route('how many ounces are in a pound', both), 'llm');
+check('fix-sleep', route('how do I fix my sleep schedule', both), 'llm');
+check('test-knowledge', route('test my knowledge with a quiz', both), 'llm');
+check('story', route('tell me a story', both), 'llm');
+// …while genuinely tool/action-shaped asks still route to the harness.
+check('open-door', route('open the door', both), 'harness');
+check('run-tests', route('run the tests', both), 'harness');
+check('fix-bug-file', route('can you fix the bug in app.js', both), 'harness');
+check('live-currency', route('how much is 100 dollars in euros', both), 'harness');
+check('calc-tip', route('calculate the tip on 80 dollars', both), 'harness');
 
 // --- Paraphrased tool-intent phrasings the user reported "falling through to the
 // LLM" before this fix. Each one previously hit a chat model that hallucinated

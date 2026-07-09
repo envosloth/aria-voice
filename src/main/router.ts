@@ -22,12 +22,16 @@ const EXPLICIT_LLM = /\b(just\s+(chat|talk|answer)|no\s+(agent|harness|code)|don
 const AGENTIC = new RegExp(
   '\\b(' + [
     // coding / files / system
-    'code', 'coding', 'refactor', 'refactoring', 'debug', 'debugging', 'bug', 'fix',
+    // NOTE: bare 'fix'/'test'/'tests' were removed — they false-matched pure
+    // chat ("how do I fix my sleep schedule", "test my knowledge"); real coding
+    // asks virtually always carry another keyword ('bug', 'code', 'file',
+    // 'run', …), and the LLM's ARIA_AGENT_HANDOFF safety net catches the rest.
+    'code', 'coding', 'refactor', 'refactoring', 'debug', 'debugging', 'bug',
     'implement', 'implementation', 'function', 'class', 'method', 'variable',
     'file', 'files', 'directory', 'folder', 'repo', 'repository', 'commit', 'branch',
     'pull request', 'merge', 'diff', 'git',
     'run', 'execute', 'build', 'compile', 'deploy', 'install', 'uninstall', 'script', 'command',
-    'terminal', 'shell', 'test', 'tests', 'lint', 'package', 'dependency',
+    'terminal', 'shell', 'lint', 'package', 'dependency',
     'api', 'endpoint', 'database', 'query', 'sql', 'server', 'docker',
     'edit', 'rename', 'delete', 'create a', 'write a', 'add a',
     // weather / environment (live)
@@ -58,8 +62,12 @@ const AGENTIC = new RegExp(
     'email', 'inbox', 'whatsapp', 'slack', 'calendar', 'meeting', 'appointment',
     'schedule a', 'remind me', 'reminder', 'set a timer', 'set an alarm',
     'alarm', 'timer', 'shopping list', 'add to my',
-    // conversions / utilities / commerce
-    'convert', 'how many', 'translate', 'translation', 'calculate',
+    // utilities / commerce. 'translate'/'convert'/'how many' were removed: a
+    // chat LLM answers those natively (no tool, no live data) and much faster;
+    // the live-rate cases keep their own keywords ('exchange rate', 'currency',
+    // 'how much is'). 'calculate' stays — a calculator tool beats LLM
+    // arithmetic on correctness.
+    'calculate',
     'book a', 'place an order', 'reserve a',
   ].join('|') + ')\\b',
   'i',

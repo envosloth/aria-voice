@@ -84,17 +84,38 @@ class SttSidecar(BaseSidecar):
                 self._audio_buffer.clear()
 
     def _transcribe(self, pcm_data: bytes) -> str:
-        wav_bytes = self._pcm_to_wav(pcm_data)
         if self._server_proc and self._server_proc.poll() is None:
             try:
-                return self._transcribe_server(wav_bytes)
+                return self._transcribe_server(pcm_data)
             except Exception as e:
                 self._emit_status("warning", f"server inference failed ({e}); using CLI fallback")
-        return self._transcribe_cli(wav_bytes)
+        return self._transcribe_cli(self._pcm_to_wav(pcm_data))
 
-    def _transcribe_server(self, wav_bytes: bytes) -> str:
+    # audio_ctx fast path: whisper's encoder always processes a full 30s window
+    # (ctx 1500) no matter how short the utterance, so a 2s voice command wastes
+    # ~2/3 of the STT time encoding silence. Passing audio_ctx = seconds*50 plus
+    # a safety margin cuts warm-server inference ~3x (293ms -> ~95ms for a 2s
+    # clip, measured on the RX 9060 XT / Vulkan) with identical transcriptions.
+    # Two guards make it safe: (1) the PCM is padded with trailing silence —
+    # speech running to the very edge of the reduced window is what triggers
+    # whisper's repetition-loop failure mode ("what time is it what time is
+    # it…"), and a silence tail reliably prevents it (verified empirically);
+    # (2) a generous margin + floor. Set ARIA_STT_AUDIO_CTX=0 to disable.
+    _CTX_PAD_MS = 600     # trailing silence appended before transcribing
+    _CTX_MARGIN = 128     # ctx headroom beyond the audio's own length
+    _CTX_FLOOR = 256      # never request a window smaller than this
+
+    def _transcribe_server(self, pcm_data: bytes) -> str:
+        extra = {"temperature": "0", "response_format": "json"}
+        if os.environ.get("ARIA_STT_AUDIO_CTX", "").strip().lower() not in ("0", "off"):
+            pcm_data = pcm_data + b"\x00" * (16000 * 2 * self._CTX_PAD_MS // 1000)
+            secs = len(pcm_data) / 32000.0
+            ctx = int(secs * 50) + self._CTX_MARGIN
+            if ctx < 1500:  # longer audio keeps whisper's full default window
+                extra["audio_ctx"] = str(max(ctx, self._CTX_FLOOR))
+        wav_bytes = self._pcm_to_wav(pcm_data)
         boundary = "----ariaSTT" + str(int(time.time() * 1000))
-        body = self._multipart(boundary, wav_bytes, extra={"temperature": "0", "response_format": "json"})
+        body = self._multipart(boundary, wav_bytes, extra=extra)
         req = urllib.request.Request(
             f"http://127.0.0.1:{self._server_port}/inference",
             data=body,
