@@ -46,9 +46,9 @@ check('wakeword-windows-pyinstaller-complete',
   files.pack.includes('--collect-submodules onnxruntime') &&
   files.pack.includes('onnxruntime.capi.onnxruntime_pybind11_state'),
   'wake-word bundle must carry openWakeWord resources and ONNX Runtime native/submodule pieces on Windows');
-// The Resource-usage dropdown is static HTML (PERF_PRESETS in hardware.ts is a
-// dead export), so the power-saver-is-default decision has to be reflected here
-// or the Settings UI silently still recommends Auto.
+// The Resource-usage dropdown is static HTML (no data-driven preset list), so the
+// power-saver-is-default decision has to be reflected here or the Settings UI
+// silently still recommends Auto.
 check('perf-preset-power-saver-recommended',
   /<option value="power-saver">Power saver \(recommended\)<\/option>\s*<option value="auto">Auto<\/option>/.test(files.html),
   'Settings preset dropdown must list Power saver (recommended) before Auto');

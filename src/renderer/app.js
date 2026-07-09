@@ -1611,7 +1611,8 @@ function applyOrbSttBackend(backend) {
 loadHardwareInfo().then((info) => applyOrbQuality(info));
 aria.config.get('stt.backend').then((backend) => applyOrbSttBackend(backend)).catch(() => {});
 
-// Resource preset descriptions (mirrors hardware.ts PERF_PRESETS).
+// Resource preset descriptions. Source of truth for the dropdown is the static
+// <select id="cfg-perf-preset"> in index.html; keep the order/labels in sync there.
 const PRESET_HINTS = {
   'auto': 'Detects your hardware and picks the fastest settings it can run smoothly.',
   'power-saver': 'Smallest models, CPU-only, minimal GPU — the most stable default on any machine.',
