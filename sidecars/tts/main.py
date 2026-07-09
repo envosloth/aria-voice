@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""TTS sidecar: Kokoro-82M (default) or Piper for local text-to-speech.
+"""TTS sidecar: Piper (power-saver default) or Kokoro-82M for local text-to-speech.
 
 Both run on CPU via ONNX. Receives text over UDS, streams PCM audio back.
 Sentence-chunked: starts playback after the first sentence is synthesized.
 
-Kokoro-82M produces markedly more natural, less robotic speech than Piper and
-ships a set of expressive voices (including a refined British male used as the
-"Jarvis" assistant default). Phonemization is handled by the bundled espeak-ng
-via espeakng-loader, so there is no system espeak dependency.
+Piper is the fresh-install default because it has much lower first-audio latency
+on Windows/weak CPUs. Kokoro-82M remains the higher-quality voice selected by
+balanced/auto/max profiles when the main app applies those presets.
 
 Both engines keep a persistent loaded model (warm process) — model load is the
 dominant cost; synthesis is several times realtime once warm.
@@ -46,8 +45,8 @@ def _lang_for_voice(voice: str) -> str:
 class TtsSidecar(BaseSidecar):
     def __init__(self):
         super().__init__("tts")
-        self.engine = os.environ.get("ARIA_TTS_ENGINE", "kokoro")
-        self.voice_name = os.environ.get("ARIA_TTS_VOICE", "bm_george")
+        self.engine = os.environ.get("ARIA_TTS_ENGINE", "piper")
+        self.voice_name = os.environ.get("ARIA_TTS_VOICE", "en_GB-alan-medium")
         self.speed = float(os.environ.get("ARIA_TTS_SPEED", "1.0"))
         self.voice_model_path: str = ""
         self._voice = None       # persistent PiperVoice (piper engine)

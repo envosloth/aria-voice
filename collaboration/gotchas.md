@@ -102,6 +102,16 @@ Vulkan STT transcription runs** saturated the GPU and took the renderer down on
 - **Windows has no `AF_UNIX`**: the PCM channel becomes `tcp://127.0.0.1:port`; kills
   use `taskkill`; sidecars are `.exe`. Keep Linux byte-for-byte unchanged when touching
   cross-platform code.
+- **Windows wake word needs a complete frozen ONNX/openWakeWord bundle.** The TCP
+  transport is not enough: PyInstaller must collect all `openwakeword` resources,
+  `onnxruntime` binaries/submodules, and the native pybind state module. A bundle
+  that starts but never detects usually missed one of those pieces.
+- **Fresh installs intentionally default to Power saver.** That means CPU STT,
+  Piper TTS, low orb quality, and a 30% GPU cap. Treat it as the stability baseline;
+  optimize smoothness there before making `auto`/`balanced` more aggressive.
+- **Fedora/RHEL/openSUSE updates are RPM-notify, not dpkg self-install.** The updater
+  should detect RPM-family distros, link the matching `.rpm` release asset, and avoid
+  launching `pkexec dpkg` outside Debian-family systems.
 - Closing the window **hides** it (ARIA lives in the tray, wake word stays active); it
   only quits from the tray. Sidecars tree-kill on real quit + PDEATHSIG backstop.
 

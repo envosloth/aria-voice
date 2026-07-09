@@ -5,6 +5,7 @@
  * is loaded into a minimal window stub. */
 const path = require('path');
 const { detectHardware, perfProfile, clampCap, resolveProfile, isPerfPreset } = require('../dist/main/hardware');
+const fs = require('fs');
 
 let pass = true;
 function check(name, cond, detail) {
@@ -72,6 +73,16 @@ check('isPerfPreset', isPerfPreset('auto') && isPerfPreset('power-saver') && !is
 // Power saver ships a clear British male Piper voice (en_GB-alan-medium) so the
 // lightweight CPU engine still sounds natural.
 check('power-saver.voice-male', ps.ttsVoice === 'en_GB-alan-medium', ps.ttsVoice);
+
+// Fresh installs must boot into the explicit power-saver profile — not auto — so
+// Windows and weaker Linux machines start on the ultra-stable CPU/Piper/low-orb
+// bundle before the user changes anything.
+const configSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'main', 'config.ts'), 'utf8');
+check('default.preset.power-saver', /perfPreset:\s*'power-saver'/.test(configSrc), 'ui.perfPreset default should be power-saver');
+check('default.gpuCap.30', /gpuCap:\s*30/.test(configSrc), 'ui.gpuCap default should match power-saver');
+const ttsSrc = fs.readFileSync(path.join(__dirname, '..', 'sidecars', 'tts', 'main.py'), 'utf8');
+check('tts.sidecar.default-piper', /ARIA_TTS_ENGINE", "piper"/.test(ttsSrc), 'standalone TTS sidecar should match power-saver');
+check('tts.sidecar.default-alan', /ARIA_TTS_VOICE", "en_GB-alan-medium"/.test(ttsSrc), 'standalone TTS sidecar should match power-saver voice');
 
 // The per-voice Piper download path is derived generically from the voice id
 // (<group>/<lang>/<speaker>/<quality>/), not hardcoded to one voice.

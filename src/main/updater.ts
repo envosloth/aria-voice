@@ -1,11 +1,12 @@
 // In-app updates.
 //
-// ARIA is delivered two ways, which update differently:
+// ARIA is delivered through several package formats, which update differently:
 //   • AppImage  -> self-updating. electron-updater downloads the new release in
 //     the background and, on the user's click, swaps the AppImage and relaunches.
-//   • .deb/dev  -> apt/dpkg owns the install, so we can't self-install. We fall
-//     back to a GitHub Releases version check and surface "an update is available"
-//     with a link to the release page / installer.
+//   • .deb      -> apt/dpkg owns the install; ARIA can download + verify the .deb
+//     and invoke pkexec/dpkg on the user's click.
+//   • .rpm/dev  -> distro/package manager owns the install (dnf/zypper differ), so
+//     we do a GitHub Releases version check and link the matching .rpm/release.
 //
 // Either way the renderer drives it through one bridge (aria.updates) and reacts
 // to UPDATE_STATUS events. electron-updater is required lazily so the dependency
@@ -25,7 +26,7 @@ const REPO_OWNER = 'envosloth';
 const REPO_NAME = 'aria-voice';
 const RELEASES_LATEST_PAGE = `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest`;
 
-export type UpdateChannel = 'appimage' | 'deb' | 'win' | 'mac' | 'dev';
+export type UpdateChannel = 'appimage' | 'deb' | 'rpm' | 'win' | 'mac' | 'dev';
 
 export interface UpdateStatus {
   state: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'installing' | 'installed' | 'not-available' | 'error';
@@ -58,6 +59,23 @@ export function deliveryChannel(): UpdateChannel {
   if (process.platform === 'win32') return 'win';
   if (process.platform === 'darwin') return 'mac';
   if (process.env.APPIMAGE) return 'appimage';
+  return linuxPackageChannel();
+}
+
+/**
+ * Best-effort Linux package owner detection. electron-builder installs .deb and
+ * .rpm apps into very similar /opt layouts, so the safest discriminator is the
+ * host distro family. Unknown Linux keeps the historical deb path rather than
+ * disabling Ubuntu/Debian one-click updates.
+ */
+export function linuxPackageChannel(osReleaseText?: string): Extract<UpdateChannel, 'deb' | 'rpm'> {
+  let text = osReleaseText;
+  if (text === undefined) {
+    try { text = fs.readFileSync('/etc/os-release', 'utf8'); }
+    catch { text = ''; }
+  }
+  const ids = String(text).toLowerCase();
+  if (/\b(fedora|rhel|centos|rocky|almalinux|ol|sles|suse|opensuse)\b/.test(ids)) return 'rpm';
   return 'deb';
 }
 
@@ -110,6 +128,12 @@ export function isNewer(remote: string, current: string): boolean {
 // Minimal GitHub Releases "latest" fetch — no token (public repo), with the
 // User-Agent the API requires. Returns the parsed tag/notes/url or throws.
 interface ReleaseAsset { name: string; url: string }
+export function releaseAssetForChannel(assets: ReleaseAsset[], channel: UpdateChannel): ReleaseAsset | undefined {
+  if (channel === 'deb') return assets.find((a) => /_amd64\.deb$/i.test(a.name));
+  if (channel === 'rpm') return assets.find((a) => /\.(x86_64|amd64)\.rpm$/i.test(a.name) || /\.rpm$/i.test(a.name));
+  return undefined;
+}
+
 function fetchLatestRelease(): Promise<{ version: string; notes: string; url: string; assets: ReleaseAsset[] }> {
   return new Promise((resolve, reject) => {
     const req = https.request(
@@ -243,25 +267,28 @@ export async function checkForUpdates(): Promise<void> {
     catch (e) { emit({ state: 'error', message: (e as Error).message }); }
     return;
   }
-  // .deb / dev path: compare the latest release tag to our version.
+  // .deb / .rpm / dev path: compare the latest release tag to our version.
   try {
     const rel = await fetchLatestRelease();
     if (!isNewer(rel.version, currentVersion())) {
       emit({ state: 'not-available' });
       return;
     }
-    // On a .deb install we CAN now self-install: find the .deb asset, remember it
-    // (+ its checksum), and advertise the update as one-click installable. On dev
-    // there's nothing to install, so it stays a notify-with-link.
-    const isDeb = deliveryChannel() === 'deb';
-    const debAsset = isDeb ? rel.assets.find((a) => /_amd64\.deb$/.test(a.name)) : undefined;
+    // On a .deb install we can self-install: find the .deb asset, remember it
+    // (+ its checksum), and advertise one-click install. On rpm/dev we do NOT run
+    // distro-specific package managers from ARIA; link the correct release asset
+    // instead so Fedora never sees a broken dpkg/pkexec path.
+    const channel = deliveryChannel();
+    const isDeb = channel === 'deb';
+    const debAsset = isDeb ? releaseAssetForChannel(rel.assets, 'deb') : undefined;
     if (isDeb && debAsset) {
       const sha512 = await fetchDebSha512(debAsset.name);
       pendingDeb = { version: rel.version, url: debAsset.url, sha512: sha512 || undefined };
       emit({ state: 'available', version: rel.version, notes: rel.notes, url: rel.url, canAutoInstall: true });
     } else {
       pendingDeb = null;
-      emit({ state: 'available', version: rel.version, notes: rel.notes, url: rel.url, canAutoInstall: false });
+      const asset = releaseAssetForChannel(rel.assets, channel);
+      emit({ state: 'available', version: rel.version, notes: rel.notes, url: asset?.url || rel.url, canAutoInstall: false });
     }
   } catch (e) {
     emit({ state: 'error', message: (e as Error).message });

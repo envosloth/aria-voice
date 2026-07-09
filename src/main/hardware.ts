@@ -364,8 +364,8 @@ export function resolveProfile(preset: PerfPreset, hw: HardwareInfo): ResourcePr
 
 // Preset metadata for the Settings dropdown (order = display order).
 export const PERF_PRESETS: { id: PerfPreset; label: string; desc: string }[] = [
-  { id: 'auto', label: 'Auto (recommended)', desc: 'Detects your hardware and picks the fastest settings it can run smoothly.' },
-  { id: 'power-saver', label: 'Power saver', desc: 'Smallest models, CPU-only, minimal GPU — runs light on any machine.' },
+  { id: 'power-saver', label: 'Power saver (recommended)', desc: 'Smallest models, CPU-only, minimal GPU — the most stable default on any machine.' },
+  { id: 'auto', label: 'Auto', desc: 'Detects your hardware and picks the fastest settings it can run smoothly.' },
   { id: 'balanced', label: 'Balanced', desc: 'Fast STT + natural Kokoro voice at moderate resource use.' },
   { id: 'max-performance', label: 'Max performance', desc: 'Largest models your hardware allows, full GPU, best accuracy/quality.' },
   { id: 'custom', label: 'Custom', desc: 'Your own manual choices (set automatically when you change a setting).' },

@@ -28,11 +28,16 @@ rm -rf "$OUT/$NAME" "$SIDECAR_DIR/build" "$SIDECAR_DIR"/*.spec
 # Collect openwakeword's bundled resource models if this is the wakeword sidecar
 EXTRA_ARGS=()
 if [ "$NAME" = "wakeword" ]; then
-  EXTRA_ARGS+=(--collect-data openwakeword)
+  # Collect the full package, not just data: openWakeWord imports helper modules
+  # dynamically and ships bundled model resources. Missing either is a common
+  # frozen-Windows failure where the sidecar starts but never reaches detection.
+  EXTRA_ARGS+=(--collect-all openwakeword)
   # openWakeWord runs its bundled ONNX models through onnxruntime. PyInstaller's
   # default analysis can miss the native provider DLLs on Windows, leaving the
   # wake-word sidecar to start but fail before detection. Collect them explicitly.
   EXTRA_ARGS+=(--collect-binaries onnxruntime)
+  EXTRA_ARGS+=(--collect-submodules onnxruntime)
+  EXTRA_ARGS+=(--hidden-import onnxruntime.capi.onnxruntime_pybind11_state)
 fi
 if [ "$NAME" = "tts" ]; then
   # onnxruntime native libs + Kokoro/espeak-ng/phonemizer data so the frozen

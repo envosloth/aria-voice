@@ -136,7 +136,7 @@ async function main() {
   // streams audio sentence-by-sentence as the reply generates (incremental TTS),
   // overlapping synthesis with generation — this stage just bounds the worst-case
   // first-audio floor for the chosen engine.
-  const ttsEngine = (process.env.ARIA_TTS_ENGINE || 'kokoro').toLowerCase();
+  const ttsEngine = (process.env.ARIA_TTS_ENGINE || 'piper').toLowerCase();
   const LOCAL_BUDGET_MS = ttsEngine === 'piper' ? 900 : 1300;
   console.log('\n=== Latency (spec §7 budget) ===');
   const localFirstAudio = sttMs + ttsFirstMs; // local stages we control

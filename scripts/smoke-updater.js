@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-/* Unit test for the updater's version comparison (src/main/updater.ts isNewer).
- * This is the gate that decides whether a GitHub release is offered as an update,
- * so getting the numeric (not lexical) semver compare right matters. The rest of
- * updater.ts (electron-updater wiring, IPC) is exercised by the boot test. */
-const { isNewer } = require('../dist/main/updater');
+/* Unit test for the updater's pure decision logic. These gates decide whether a
+ * GitHub release is offered and whether Linux should use .deb or .rpm handling,
+ * so they must stay deterministic outside Electron. The rest of updater.ts
+ * (electron-updater wiring, IPC) is exercised by the boot test. */
+const { isNewer, linuxPackageChannel, releaseAssetForChannel } = require('../dist/main/updater');
 
 let pass = true;
 function check(name, got, want) {
@@ -30,6 +30,23 @@ check('both leading v equal', isNewer('v2.1.0', 'v2.1.0'), false);
 check('prerelease == base', isNewer('2.1.0-beta.1', '2.1.0'), false);
 // Garbage degrades to 0.0.0 (never falsely offers an update)
 check('garbage remote', isNewer('not-a-version', '2.1.0'), false);
+
+// Linux package channel selection. Fedora/RHEL/openSUSE installs are rpm-owned;
+// offering a .deb + dpkg/pkexec path there is the reported Fedora updater bug.
+check('linux fedora -> rpm', linuxPackageChannel('ID=fedora\nID_LIKE="rhel fedora"\n'), 'rpm');
+check('linux rhel-like -> rpm', linuxPackageChannel('ID=rocky\nID_LIKE="rhel centos fedora"\n'), 'rpm');
+check('linux opensuse -> rpm', linuxPackageChannel('ID=opensuse-tumbleweed\n'), 'rpm');
+check('linux ubuntu -> deb', linuxPackageChannel('ID=ubuntu\nID_LIKE=debian\n'), 'deb');
+check('linux unknown -> deb', linuxPackageChannel(''), 'deb');
+
+const assets = [
+  { name: 'ARIA-2.14.0-x86_64.AppImage', url: 'https://example.invalid/appimage' },
+  { name: 'aria_2.14.0_amd64.deb', url: 'https://example.invalid/deb' },
+  { name: 'aria-2.14.0.x86_64.rpm', url: 'https://example.invalid/rpm' },
+];
+check('release asset deb', releaseAssetForChannel(assets, 'deb')?.url, 'https://example.invalid/deb');
+check('release asset rpm', releaseAssetForChannel(assets, 'rpm')?.url, 'https://example.invalid/rpm');
+check('release asset dev none', releaseAssetForChannel(assets, 'dev'), undefined);
 
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

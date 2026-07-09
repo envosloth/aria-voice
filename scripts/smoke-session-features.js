@@ -41,6 +41,17 @@ check('session-menu-css', files.html.includes('.session-menu-btn') && files.html
 check('done-listening-chime', files.app.includes('playDoneListeningChime') && files.app.includes('setTimeout(playDoneListeningChime'));
 check('wakeword-windows-tcp-ipc', files.supervisor.includes("process.platform === 'win32'") && files.supervisor.includes('tcp://127.0.0.1') && files.baseSidecar.includes('socket_path.startswith("tcp://")') && files.baseSidecar.includes('socket.AF_INET'));
 check('wakeword-windows-onnxruntime', files.wakeReq.includes('onnxruntime') && files.pack.includes('--collect-binaries onnxruntime'));
+check('wakeword-windows-pyinstaller-complete',
+  files.pack.includes('--collect-all openwakeword') &&
+  files.pack.includes('--collect-submodules onnxruntime') &&
+  files.pack.includes('onnxruntime.capi.onnxruntime_pybind11_state'),
+  'wake-word bundle must carry openWakeWord resources and ONNX Runtime native/submodule pieces on Windows');
+// The Resource-usage dropdown is static HTML (PERF_PRESETS in hardware.ts is a
+// dead export), so the power-saver-is-default decision has to be reflected here
+// or the Settings UI silently still recommends Auto.
+check('perf-preset-power-saver-recommended',
+  /<option value="power-saver">Power saver \(recommended\)<\/option>\s*<option value="auto">Auto<\/option>/.test(files.html),
+  'Settings preset dropdown must list Power saver (recommended) before Auto');
 
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

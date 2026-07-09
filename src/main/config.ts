@@ -160,8 +160,11 @@ const defaults: AppConfig = {
     globalShortcut: 'Ctrl+Shift+A',
     theme: 'midnight',
     onboarded: false,
-    gpuCap: 50,
-    perfPreset: 'auto',
+    // Power saver is the fresh-install default because it is the ultra-stable
+    // bundle: CPU STT, lightweight Piper TTS, low orb GPU work, and enough spare
+    // CPU/GPU headroom that Windows laptops and weaker Linux desktops don't hitch.
+    gpuCap: 30,
+    perfPreset: 'power-saver',
   },
   debug: {
     perf: false,

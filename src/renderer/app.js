@@ -1614,7 +1614,7 @@ aria.config.get('stt.backend').then((backend) => applyOrbSttBackend(backend)).ca
 // Resource preset descriptions (mirrors hardware.ts PERF_PRESETS).
 const PRESET_HINTS = {
   'auto': 'Detects your hardware and picks the fastest settings it can run smoothly.',
-  'power-saver': 'Smallest models, CPU-only, minimal GPU — runs light on any machine.',
+  'power-saver': 'Smallest models, CPU-only, minimal GPU — the most stable default on any machine.',
   'balanced': 'Fast speech-to-text + the natural Kokoro voice at moderate resource use.',
   'max-performance': 'Largest models your hardware allows, full GPU, best accuracy & voice.',
   'custom': 'Your own manual choices (set automatically when you change a setting below).',
@@ -1664,6 +1664,7 @@ let updateChannel = 'dev';
     upd.channelHint.textContent =
       info.channel === 'appimage' ? 'Auto-updates are enabled — a new release downloads in the background and installs on your click.'
       : info.channel === 'deb' ? 'One-click updates are enabled — ARIA downloads the new release and installs it after you approve a password prompt, then restarts.'
+      : info.channel === 'rpm' ? 'Fedora/RHEL update checks are enabled — ARIA will open the matching RPM release so your package manager can install it safely.'
       : 'Development build — update checks compare against the latest GitHub release.';
   } catch (e) { /* bridge unavailable */ }
 })();
@@ -1826,7 +1827,7 @@ async function loadSettings() {
   // the control never shows blank and always reflects a model that actually loads.
   if (cfg.wwPhrase.selectedIndex < 0) cfg.wwPhrase.value = 'hey_jarvis';
   cfg.theme.value = (await aria.config.get('ui.theme')) || 'midnight';
-  if (cfg.perfPreset) { cfg.perfPreset.value = (await aria.config.get('ui.perfPreset')) || 'auto'; updatePresetHint(); }
+  if (cfg.perfPreset) { cfg.perfPreset.value = (await aria.config.get('ui.perfPreset')) || 'power-saver'; updatePresetHint(); }
 
   // Remote access: back-fill the form from the current config + paint the
   // current tunnel status so the user sees "connected" / "error" before
@@ -2203,7 +2204,7 @@ settingsSave.addEventListener('click', async () => {
   // The GPU cap is preset-driven (no separate control). Manually editing the STT
   // model / backend / TTS voice above flips the active preset to 'custom' in main;
   // re-read it so the Resource-usage dropdown reflects that.
-  if (cfg.perfPreset) { cfg.perfPreset.value = (await aria.config.get('ui.perfPreset')) || 'auto'; updatePresetHint(); }
+  if (cfg.perfPreset) { cfg.perfPreset.value = (await aria.config.get('ui.perfPreset')) || 'power-saver'; updatePresetHint(); }
   // A changed STT model/backend may not be downloaded yet + needs a sidecar
   // reload; that's handled in main. Re-derive the orb quality from the (possibly
   // preset-changed) GPU cap so the orb matches what was saved.
