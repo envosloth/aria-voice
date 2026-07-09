@@ -6,8 +6,9 @@
 
 export type Target = 'llm' | 'harness';
 
-// Explicit "use the agent/harness" (or the opposite) phrasing.
-const EXPLICIT_HARNESS = /\b(use|using|ask|via|with|through)\s+(the\s+)?(agent|harness|coder?|codex|claude\s*code)\b|^\s*(agent|harness)[,:]/i;
+// Explicit "use the agent/harness" (or the opposite) phrasing. Exported so the
+// local-intent layer (local-intents.ts) never hijacks an explicit agent ask.
+export const EXPLICIT_HARNESS = /\b(use|using|ask|via|with|through)\s+(the\s+)?(agent|harness|coder?|codex|claude\s*code)\b|^\s*(agent|harness)[,:]/i;
 const EXPLICIT_LLM = /\b(just\s+(chat|talk|answer)|no\s+(agent|harness|code)|don'?t\s+use\s+the\s+(agent|harness))\b/i;
 
 // Agentic-intent keywords (coding / files / system) AND tool/real-time intent

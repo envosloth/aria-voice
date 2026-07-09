@@ -8,6 +8,7 @@ import { streamChat } from './llm-stream';
 import { listModels, normalizeChatBaseUrl } from './llm-models';
 import { detectHarness } from './harness-detect';
 import { coordinate, cancelCoordination, resetConversation, resumeSession, deletePersistedSession } from './coordinator';
+import { initTimers } from './timers';
 import * as sessions from './sessions';
 import { buildManifest, missingModels, downloadModel } from './model-manager';
 import { perfEnabled, setPerfEnabled, perfMark, perfMarkExternal } from './perf';
@@ -478,6 +479,15 @@ app.whenReady().then(async () => {
   // Sync once on startup (if `remote.enabled` was persisted from a
   // previous run, bring the tunnel back up automatically).
   tunnel.sync();
+
+  // Re-arm persisted timers/alarms/reminders (see timers.ts). Firing pushes an
+  // announcement to the renderer, which shows it in the transcript and speaks
+  // it — this works with the window hidden in the tray.
+  initTimers((text) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send(IPC.TIMER_FIRED, text);
+    }
+  });
 
   supervisor = new Supervisor(
     (name: SidecarName, status: string, detail?: string) => {

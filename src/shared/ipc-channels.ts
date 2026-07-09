@@ -39,6 +39,8 @@ export const IPC = {
   LLM_DETECT_HARNESS: 'llm:detect-harness',
   LLM_ROUTE: 'llm:route',      // main -> renderer: which target answered (llm|harness)
 
+  TIMER_FIRED: 'timer:fired', // main -> renderer: a timer/alarm/reminder fired — show + speak it
+
   CONFIG_GET: 'config:get',
   CONFIG_SET: 'config:set',
 

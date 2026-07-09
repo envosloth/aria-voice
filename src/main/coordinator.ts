@@ -6,6 +6,8 @@ import { config } from './config';
 import { getSecret } from './secure-storage';
 import { streamChat, LlmCallbacks, ChatMessage, ChatHandle, TokenUsage } from './llm-stream';
 import { route, visionDetailFor, Target } from './router';
+import { matchLocalIntent, answerFor, nextOccurrence, humanizeMs, formatClock, LocalIntent } from './local-intents';
+import * as timers from './timers';
 import { perfMark } from './perf';
 import * as sessions from './sessions';
 
@@ -282,6 +284,53 @@ export async function deletePersistedSession(id: string): Promise<DeleteSessionR
   return result;
 }
 
+// Execute a matched local intent and render the spoken confirmation/answer.
+// Returns null only for a kind it can't handle (shouldn't happen).
+function runLocalIntent(intent: LocalIntent): string | null {
+  const now = new Date();
+  switch (intent.kind) {
+    case 'time':
+    case 'date':
+      return answerFor(intent, now);
+    case 'timer_set': {
+      timers.createTimer('timer', intent.label, Date.now() + intent.ms);
+      return `Timer set for ${intent.label}.`;
+    }
+    case 'alarm_set': {
+      const fireAt = nextOccurrence(intent.hour, intent.minute, intent.explicitMeridiem, now);
+      const label = formatClock(new Date(fireAt));
+      const tomorrow = new Date(fireAt).getDate() !== now.getDate();
+      timers.createTimer('alarm', label, fireAt);
+      return `Alarm set for ${label}${tomorrow ? ' tomorrow' : ''}.`;
+    }
+    case 'reminder_set': {
+      const fireAt = intent.ms != null
+        ? Date.now() + intent.ms
+        : nextOccurrence(intent.hour!, intent.minute!, !!intent.explicitMeridiem, now);
+      timers.createTimer('reminder', intent.text, fireAt);
+      const when = intent.ms != null ? `in ${humanizeMs(intent.ms)}` : `at ${formatClock(new Date(fireAt))}`;
+      return `Okay, I'll remind you ${when}: ${intent.text}.`;
+    }
+    case 'timer_list': {
+      const items = timers.listTimers();
+      if (!items.length) return "You don't have any timers, alarms, or reminders set.";
+      const parts = items.map((r) => {
+        if (r.kind === 'timer') return `a timer with ${humanizeMs(r.fireAt - Date.now())} left`;
+        if (r.kind === 'alarm') return `an alarm at ${r.label}`;
+        return `a reminder at ${formatClock(new Date(r.fireAt))}: ${r.label}`;
+      });
+      return `You have ${parts.join('; ')}.`;
+    }
+    case 'timer_cancel': {
+      const n = timers.cancelTimers(intent.what);
+      const what = intent.what === 'all' ? 'timers, alarms, and reminders' : `${intent.what}s`;
+      return n ? `Cancelled ${n === 1 ? 'your' : `${n}`} ${n === 1 ? intent.what : what}.` : `You don't have any ${what} set.`;
+    }
+    default:
+      return null;
+  }
+}
+
 interface Endpoint { endpoint: string; model: string; apiKeyName: string; }
 
 async function resolve(target: Target): Promise<Endpoint> {
@@ -342,6 +391,30 @@ export async function coordinate(
   const mode = (config.get('routing.mode') as 'auto' | 'llm' | 'harness') || 'auto';
   const hasLlm = !!llmEndpoint;
   const hasHarness = !!harnessEndpoint;
+
+  // Local instant intents: bare time/date questions and timer/alarm/reminder
+  // commands are answered right here — no LLM/harness round-trip — so they
+  // speak in ~150ms. Skipped under a hard 'harness' mode override; explicit
+  // "ask the agent…" phrasing never matches (see local-intents.ts). Works even
+  // with no provider configured at all.
+  if (mode !== 'harness') {
+    const intent = matchLocalIntent(userMessage);
+    const reply = intent ? runLocalIntent(intent) : null;
+    if (reply) {
+      history.push({ role: 'user', content: userMessage });
+      sessions.recordTurn('user', userMessage);
+      cb.onRoute?.({ target: 'llm', name: 'Local' });
+      perfMark(turnId, 'llm_request', { target: 'local' });
+      perfMark(turnId, 'first_token');
+      cb.onToken(reply);
+      history.push({ role: 'assistant', content: reply });
+      if (history.length > MAX_TURNS) history = history.slice(-MAX_TURNS);
+      sessions.recordTurn('assistant', reply);
+      perfMark(turnId, 'llm_done', { chars: reply.length, local: 1 });
+      cb.onDone(reply);
+      return;
+    }
+  }
 
   if (!hasLlm && !hasHarness) {
     cb.onError('No LLM or agent harness configured yet. Open Settings (gear icon) to add one.');

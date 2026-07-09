@@ -1095,6 +1095,18 @@ aria.llm.onError((error) => {
   speakOnly("Sorry, I ran into a problem answering that one.");
 });
 
+// A timer/alarm/reminder fired (scheduled in main, see timers.ts): show it in
+// the transcript and speak it. speakOnly() halts any in-progress reply audio —
+// an alarm is time-critical, so it wins over whatever ARIA was saying. But if
+// the USER is speaking, defer: announcing over a live mic would be transcribed
+// into their in-flight utterance and garble the turn. Retries each second;
+// hands-free listening is bounded by the 8s VAD cap, so the wait is short.
+aria.timers.onFired(function onTimerFired(text) {
+  if (listening) { setTimeout(() => onTimerFired(text), 1000); return; }
+  addMessage('assistant', text);
+  speakOnly(text);
+});
+
 // While ARIA is speaking, only a confidently-heard wake word should barge in.
 // The sidecar already gates emission at ~0.4, but marginal fires (0.4–0.6) while
 // ARIA is talking are almost always its own leaked audio or room noise — those

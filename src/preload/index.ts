@@ -87,6 +87,13 @@ const api = {
       ipcRenderer.on(IPC.LLM_ROUTE, (_e, info) => cb(info)),
   },
 
+  // Timers/alarms/reminders (see src/main/timers.ts): main schedules and
+  // persists them; when one fires the renderer shows + speaks the announcement.
+  timers: {
+    onFired: (cb: (text: string) => void) =>
+      ipcRenderer.on(IPC.TIMER_FIRED, (_e, text: string) => cb(text)),
+  },
+
   // Latency instrumentation bridge (see src/main/perf.ts). `enabled()` is queried
   // once at startup; `mark()` is fire-and-forget (ipcRenderer.send never blocks
   // the renderer) so instrumenting the hot path can't add latency to it.
