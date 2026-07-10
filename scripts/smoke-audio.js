@@ -95,8 +95,8 @@ for (let i = 0; i < 3; i++) endedEarly = vadR.pushRms(0) || endedEarly;
 check('vad-resumed-speech-clears-pause', !endedEarly);
 check('vad-resumed-speech-still-ends-after-full-hang', vadR.pushRms(0) === false && vadR.pushRms(0) === true);
 
-// 9d. VadEndpointer follow-up gate: 240ms sustained energy required, and the
-//     seeded noise floor makes steady ambience read as silence. A noisy room
+// 9d. VadEndpointer follow-up gate: 240ms sustained energy required, and a
+//     low-level adaptive floor makes steady ambience read as silence. A noisy room
 //     (RMS 0.05, well over the 0.012 base threshold) never counts as speech…
 const vadF = new A.VadEndpointer({ frameMs: 20, hangMs: 100, minSpeechMs: 240, seedFloor: true });
 for (let i = 0; i < 100; i++) vadF.pushRms(0.05);
@@ -105,16 +105,33 @@ check('vad-followup-ignores-noise', !vadF.hasSpeech());
 for (let i = 0; i < 13; i++) vadF.pushRms(0.3); // 260ms of real speech
 check('vad-followup-hears-speech-over-noise', vadF.hasSpeech());
 
-// 9e. collapseRepeats: whisper repetition loops collapse to one phrase; normal
+// 9e. The first follow-up frame is not guaranteed to be ambient: a user can
+//     begin speaking as soon as the prior response ends. That first speech frame
+//     must not inflate the floor and discard the entire turn.
+const vadImmediate = new A.VadEndpointer({ frameMs: 20, hangMs: 100, minSpeechMs: 240, seedFloor: true });
+for (let i = 0; i < 12; i++) vadImmediate.pushRms(0.3);
+check('vad-followup-hears-immediate-speech', vadImmediate.hasSpeech());
+
+// 9f. A silent first frame must not make constant background noise qualify
+//     before the adaptive floor has had time to rise.
+const vadDelayedNoise = new A.VadEndpointer({ frameMs: 20, hangMs: 100, minSpeechMs: 240, seedFloor: true });
+vadDelayedNoise.pushRms(0);
+for (let i = 0; i < 100; i++) vadDelayedNoise.pushRms(0.05);
+check('vad-followup-ignores-noise-after-silence', !vadDelayedNoise.hasSpeech());
+
+// 9g. collapseRepeats: whisper repetition loops collapse to one phrase; normal
 //     sentences (incl. internal repeats) pass through untouched.
 const C = A.collapseRepeats;
 check('rep-triple', C("what's the weather what's the weather what's the weather") === "what's the weather", `got "${C("what's the weather what's the weather what's the weather")}"`);
-check('rep-partial-tail', C('set a timer set a timer set a') === 'set a timer', `got "${C('set a timer set a timer set a')}"`);
 check('rep-punct-case', C("What's the weather? what's the weather. What's the weather") === "What's the weather?", `got "${C("What's the weather? what's the weather. What's the weather")}"`);
 check('rep-normal-sentence', C('is it going to rain today or tomorrow') === 'is it going to rain today or tomorrow');
 check('rep-internal-repeat-kept', C('that is very very good news today') === 'that is very very good news today');
 check('rep-short-kept', C('no no no') === 'no no no');
-check('rep-single-token-loop', C('you you you you you you') === 'you', `got "${C('you you you you you you')}"`);
+check('rep-partial-tail-kept', C('set a timer set a timer set a') === 'set a timer set a timer set a');
+check('rep-emphatic-no-kept', C('no no no no') === 'no no no no');
+check('rep-emphatic-yes-kept', C('yes yes yes yes') === 'yes yes yes yes');
+check('rep-two-part-kept', C('one two one two') === 'one two one two');
+check('rep-single-token-loop-kept', C('you you you you you you') === 'you you you you you you');
 check('rep-empty', C('') === '' && C(null) === '');
 
 // 10. sanitizeForSpeech: strips markup/links/emoji but keeps the words so the

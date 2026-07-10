@@ -1,6 +1,6 @@
 {
   "name": "aria",
-  "version": "3.0.2",
+  "version": "3.0.3",
   "description": "GPU-accelerated voice assistant with local STT/TTS and remote LLM",
   "main": "dist/main/index.js",
   "repository": {

@@ -62,13 +62,13 @@
   // (1) `minSpeechMs` — energy must stay above the gate for this long
   //     CONSECUTIVELY before it counts as speech, so a door slam, key click, or
   //     cough transient can't open a turn on its own.
-  // (2) `seedFloor` + adaptive noise floor — the first frame seeds an ambient
+  // (2) `seedFloor` + adaptive noise floor — low-level frames seed an ambient
   //     noise estimate (an EMA updated by every below-gate frame), and the
-  //     effective gate is max(threshold, noiseFloor * 3). A room with a fan,
-  //     music, or street noise reads as silence unless the user speaks OVER it.
-  //     Seeding is opt-in (follow-up windows only): their first frames are
-  //     reliably pre-speech ambience, whereas a wake-word turn may begin with
-  //     the user already mid-sentence.
+  //     effective gate is max(threshold, noiseFloor * 3). Never seed from a
+  //     loud first frame: a user can begin speaking immediately when a
+  //     follow-up window opens, and treating that speech as the floor would
+  //     make the gate too high for the entire turn. A room with a fan, music,
+  //     or street noise reads as silence unless the user speaks OVER it.
   // ponytail: energy-only. Steady noise as LOUD as speech (TV dialogue at desk
   // volume) still reads as speech — renderer-side Silero VAD if that matters.
   function VadEndpointer(opts) {
@@ -78,16 +78,26 @@
     const frameMs = opts.frameMs != null ? opts.frameMs : 20;
     const minSpeechMs = opts.minSpeechMs != null ? opts.minSpeechMs : 40;
     const seedFloor = !!opts.seedFloor;
+    // Only low-level frames may establish a follow-up's baseline. This keeps
+    // immediate speech from poisoning the floor while adapting to typical room
+    // ambience (the follow-up caller can tune it for unusual microphones).
+    const floorCaptureMax = opts.floorCaptureMax != null ? opts.floorCaptureMax : 0.08;
     let sawSpeech = false;
     let speechMs = 0;   // consecutive above-gate ms (resets on any quiet frame)
     let silenceMs = 0;
     let ended = false;
-    let noiseFloor = -1; // ambient RMS estimate; -1 = not yet seeded
+    let noiseFloor = seedFloor ? 0 : -1; // ambient RMS estimate
 
     // Returns true exactly once, on the frame that ends the utterance.
     this.pushRms = function (frameRms) {
       if (ended) return false;
-      if (noiseFloor < 0) noiseFloor = seedFloor ? frameRms : 0;
+      if (noiseFloor < 0) noiseFloor = 0;
+      // A quiet first frame must still be allowed to raise the gate before it
+      // accumulates minSpeechMs. Conversely, loud first-frame speech must not
+      // raise the gate at all; it should qualify against the base threshold.
+      if (seedFloor && frameRms <= floorCaptureMax) {
+        noiseFloor = noiseFloor * 0.95 + frameRms * 0.05;
+      }
       const gate = Math.max(threshold, noiseFloor * 3);
       if (frameRms >= gate) {
         speechMs += frameMs;
@@ -99,7 +109,7 @@
         if (sawSpeech) silenceMs = 0;
       } else {
         speechMs = 0;
-        noiseFloor = noiseFloor * 0.95 + frameRms * 0.05;
+        if (!seedFloor) noiseFloor = noiseFloor * 0.95 + frameRms * 0.05;
         if (sawSpeech) {
           silenceMs += frameMs;
           if (silenceMs >= hangMs) {
@@ -111,7 +121,7 @@
       return false;
     };
     this.pushFrame = function (float32) { return this.pushRms(rms(float32)); };
-    this.reset = function () { sawSpeech = false; speechMs = 0; silenceMs = 0; ended = false; noiseFloor = -1; };
+    this.reset = function () { sawSpeech = false; speechMs = 0; silenceMs = 0; ended = false; noiseFloor = seedFloor ? 0 : -1; };
     this.hasSpeech = function () { return sawSpeech; };
   }
 
@@ -255,16 +265,19 @@
   // weather what's the weather what's the weather" -> "what's the weather").
   // whisper's decoder can loop on noisy or edge-clipped audio; the sidecar's
   // silence pad + temperature_inc=0 prevent most loops, this catches the rest
-  // before the loop becomes a garbled triple-length user turn. Finds the
-  // smallest token period that the WHOLE transcript is a repetition of (a
-  // partial trailing repeat counts), so a phrase that legitimately repeats
-  // INSIDE a longer sentence is never touched.
+  // before the loop becomes a garbled triple-length user turn. Require at
+  // least three FULL repetitions of a multi-token phrase: short emphatic
+  // utterances such as "no no no no" and valid two-part patterns must never
+  // be silently rewritten before they reach the user.
   function collapseRepeats(text) {
     const tokens = (text || '').trim().split(/\s+/).filter(Boolean);
     const norm = tokens.map((t) => t.toLowerCase().replace(/[^\p{L}\p{N}']/gu, ''));
     const n = norm.length;
-    if (n < 4) return tokens.join(' '); // "no no no" stays — too short to be a loop
-    for (let p = 1; p * 2 <= n; p++) {
+    if (n < 6) return tokens.join(' ');
+    for (let p = 2; p * 3 <= n; p++) {
+      // Do not treat a one-word emphasis (represented by any larger period)
+      // as a decoder loop: "no no no no" must reach the user unchanged.
+      if (new Set(norm.slice(0, p)).size < 2) continue;
       let periodic = true;
       for (let i = p; i < n; i++) {
         if (norm[i] !== norm[i - p]) { periodic = false; break; }
