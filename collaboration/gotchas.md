@@ -72,14 +72,24 @@ Vulkan STT transcription runs** saturated the GPU and took the renderer down on
 
 ## LLM / coordinator
 
-- Direct LLM is invoked with **zero tools** at the model level; anything needing
-  live data/tools/actions is routed to the **agent harness** by `router.ts`
-  pre-invocation. Don't give the direct LLM tools.
+- Routing contract ("one brain", user decision 2026-07-09 — supersedes the old
+  zero-tools invariant): `router.ts` is only a latency **fast-path** for
+  unmistakable tool asks; otherwise the **direct LLM is the front brain** and is
+  offered exactly ONE tool, `delegate_to_agent`, to hand a turn to the harness.
+  The `ARIA_AGENT_HANDOFF` prose sentinel is the fallback for models without
+  function calling; a server that 400s on `tools` is retried once without them.
+  Don't offer the direct LLM any other tools, and don't remove the delegate tool
+  "to restore the invariant" — `smoke:routing-invariant` encodes the new contract.
+- Harness replies get an `[agent tools used: …]` note appended in the **live
+  history only** (not the persisted/spoken transcript) so the fast chat mode can
+  see what the agent did. Anything scanning history text (e.g. the
+  `lastWasQuestion` stickiness check) must strip that suffix first.
 - **Never retry or fall back after reply text has already streamed** — a second stream
   concatenates onto the shown/spoken reply. `coordinator.ts` guards this with
   `sawFirstToken`.
 - Both targets share **one conversation history**, so context survives an LLM↔harness
-  handoff. History stores assistant *text* only (not replayed tool calls).
+  handoff. History stores assistant *text* plus the tools-used note (never the
+  harness's raw tool_calls/results).
 - **`stream_options: { include_usage: true }`** is now sent on every request (for the
   token meter). Standard OpenAI, broadly supported; a strict server could 400 — that's
   the cause if the token meter dies with an error.
@@ -97,6 +107,14 @@ Vulkan STT transcription runs** saturated the GPU and took the renderer down on
 
 ## Platform & lifecycle
 
+- **Keep one Linux desktop ID for the current app.** The current Electron package
+  owns `aria.desktop`; the legacy `aria-voice` package owns
+  `aria-voice.desktop`. Co-installing both exposes two apps named ARIA, so release
+  upgrades should remove/conflict with the legacy package or mask its desktop ID.
+  Also never create an `applications` symlink inside
+  `~/.local/share/applications/` that points back to that directory: GLib follows
+  the loop at successive depths and GNOME search can show dozens of copies of
+  every user launcher.
 - **Wayland global shortcuts are best-effort** (portal, behind a flag). Tray + in-window
   shortcuts are the real fallback — always wire them.
 - **Windows has no `AF_UNIX`**: the PCM channel becomes `tcp://127.0.0.1:port`; kills

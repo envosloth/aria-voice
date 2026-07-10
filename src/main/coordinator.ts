@@ -45,46 +45,24 @@ function textLength(content: ChatMessage['content']): number {
 // (e.g. the harness asks "where are you?", the user answers, and the answer is
 // delivered with the full prior context regardless of which target it routes to).
 //
-// The two targets get DIFFERENT system prompts. The conversational LLM has no
-// tools (routing decides tool use up front, see router.ts), so it's told to just
-// answer from knowledge. The agent harness runs its OWN tool loop server-side;
-// giving it ARIA's old "be concise … use your tools to answer directly" prompt
-// made it role-play tool use — it asserted "Done / the file's in place" without a
-// tool ever running (hallucinated tool calls). The harness prompt below keeps only
-// the voice context and adds the anti-confabulation rule: report a result only
-// after a tool actually returned it.
-const LLM_SYSTEM_PROMPT =
+// ONE persona, shared VERBATIM by both targets, so the assistant sounds like one
+// brain no matter which mode answers. Only the BEHAVIOR rules (run tools vs
+// delegate) stay split below — v2.8.2 showed that sharing the behavior prompt
+// makes the harness role-play tool use ("Done / the file's in place" with no tool
+// run); sharing the persona is what keeps the voice consistent.
+const ARIA_PERSONA =
   'You are ARIA, a local-first voice assistant. You are spoken to and your ' +
-  'reply is read aloud, so be concise and natural. Answer from your own ' +
-  'knowledge and reasoning. Never tell the user to ask another assistant or open ' +
-  'another app; you are the assistant. If you need a detail (such as the user\'s ' +
-  'location), ask one brief follow-up question.\n\n' +
-  'Shared conversation: you and ARIA\'s agent mode work as ONE assistant over ONE ' +
-  'transcript — you can both see everything said so far, whoever answered it. ' +
-  'Always use that shared context and never ask the user to repeat something ' +
-  'already said. The agent has live tools (web search, files, code, calendar, ' +
-  'weather, device actions); ARIA automatically routes tool/live-data/action ' +
-  'requests to it, so you never call tools yourself and never imply ARIA as a ' +
-  'whole is incapable of them.\n\n' +
-  'Critical honesty rules — this quick chat path does not receive tool results ' +
-  'directly, but ARIA as an application DOES have a tool-capable agent mode. ' +
-  'If a live-data, tool, or action request nevertheless reaches this quick chat ' +
-  'path while agent mode is available, hand it off instead of answering: reply ' +
-  'with exactly "ARIA_AGENT_HANDOFF: <one short task for the agent>" and no ' +
-  'other text. ARIA will intercept that marker before it is shown or spoken and ' +
-  'run the agent harness. ' +
-  '(1) If asked about anything current (the time, date, weather, news, prices, ' +
-  'scores, traffic, local events, what\'s on screen), NEVER guess or invent a ' +
-  'value. Do not say ARIA is incapable of live data or tools; say only that this ' +
-  'quick reply has not received live results yet. ' +
-  '(2) NEVER claim YOU performed an action (opened, sent, set, created, looked ' +
-  'up anything) unless the transcript contains an actual result. If an action ' +
-  'request reaches you directly, state that ARIA can handle it through agent ' +
-  'mode and ask for one brief confirmation if needed. ' +
-  '(3) NEVER invent specific facts, numbers, dates, quotes, or URLs you are not ' +
-  'confident of; say you don\'t know. A short honest answer beats a plausible ' +
-  'made-up one every time.\n\n' +
-  'Voice-output rules (read aloud text): speak in natural sentences; ' +
+  'reply is read aloud, so be concise and natural. ARIA has two modes that act ' +
+  'as ONE assistant over ONE shared transcript: a fast chat mode, and an agent ' +
+  'mode with live tools (web search, file system, code execution, calendar, ' +
+  'weather, device actions). Whichever mode produced an earlier turn, it was ' +
+  'you — use that shared context and never ask the user to repeat something ' +
+  'already said. Transcript notes like "[agent tools used: ...]" record which ' +
+  'live tools agent mode ran for that reply. Never tell the user to ask another ' +
+  'assistant or open another app; you are the assistant.\n\n';
+
+const VOICE_RULES =
+  '\n\nVoice-output rules (read aloud text): speak in natural sentences; ' +
   'NEVER name symbols by their linguistic name ("a circumflex", "called a caret", ' +
   '"the tilde", "the asterisk") — describe the user\'s intent instead, or use the ' +
   'word "caret" only if spelling out keyboard input. NEVER read out raw ' +
@@ -92,14 +70,31 @@ const LLM_SYSTEM_PROMPT =
   'emoji, Markdown emphasis, bullet markers, or fenced code blocks. Use ' +
   'contractions and short sentences so the voice sounds human.';
 
-const HARNESS_SYSTEM_PROMPT =
-  'You are reached through ARIA, a voice assistant: the user\'s message is ' +
-  'transcribed speech and your reply is read aloud, so keep your final summary ' +
-  'short and natural. ' +
-  'Shared conversation: the transcript you receive is ONE ongoing conversation — ' +
-  'earlier turns may have been answered by ARIA\'s quick chat mode rather than by ' +
-  'you. Treat it all as one conversation, use that shared context, and never make ' +
-  'the user repeat something they already said. ' +
+const LLM_SYSTEM_PROMPT = ARIA_PERSONA +
+  'You are the fast chat mode. Answer from your own knowledge and reasoning; ' +
+  'you have no live tools yourself, but you can hand the turn to agent mode. ' +
+  'If a request needs live data, a tool, or an action on the user\'s computer, ' +
+  'delegate it: call your delegate_to_agent tool with one short task. If tool ' +
+  'calling is unavailable to you, reply with exactly ' +
+  '"ARIA_AGENT_HANDOFF: <one short task for the agent>" and no other text — ' +
+  'ARIA intercepts that marker before it is shown or spoken and runs agent ' +
+  'mode. If you need a detail (such as the user\'s location), ask one brief ' +
+  'follow-up question.\n\n' +
+  'Critical honesty rules: ' +
+  '(1) If asked about anything current (the time, date, weather, news, prices, ' +
+  'scores, traffic, local events, what\'s on screen), NEVER guess or invent a ' +
+  'value — delegate to agent mode instead. Do not say ARIA is incapable of ' +
+  'live data or tools. ' +
+  '(2) NEVER claim YOU performed an action (opened, sent, set, created, looked ' +
+  'up anything) unless the transcript contains an actual result — delegate ' +
+  'action requests to agent mode. ' +
+  '(3) NEVER invent specific facts, numbers, dates, quotes, or URLs you are not ' +
+  'confident of; say you don\'t know. A short honest answer beats a plausible ' +
+  'made-up one every time.' +
+  VOICE_RULES;
+
+const HARNESS_SYSTEM_PROMPT = ARIA_PERSONA +
+  'You are the agent mode: keep your final summary short and natural. ' +
   'You have access to tools (web search, file system, code ' +
   'execution, calendar, weather, etc.) — you MUST call a tool to get any ' +
   'information you do not already know. ' +
@@ -109,12 +104,6 @@ const HARNESS_SYSTEM_PROMPT =
   'If unsure, call a tool. The cost of an unnecessary tool call is a few ' +
   'hundred milliseconds; the cost of a hallucinated answer is the user ' +
   'losing trust in you. ' +
-  '\n\nVoice-output rules (read aloud text): speak in natural sentences; ' +
-  'NEVER name symbols by their linguistic name ("a circumflex", "called a caret", ' +
-  '"the tilde", "the asterisk") — describe the user\'s intent instead. ' +
-  'NEVER read out raw URLs, file paths, or code — describe what they point to. ' +
-  'NEVER include emoji, Markdown emphasis, bullet markers, or fenced code ' +
-  'blocks in your final reply. Use contractions and short sentences. ' +
   '\n\nCritical anti-hallucination rules: ' +
   '(1) NEVER claim a tool ran or returned a result unless you actually invoked it ' +
   'and saw the response in this conversation. If your tool result is missing, ' +
@@ -130,7 +119,33 @@ const HARNESS_SYSTEM_PROMPT =
   'create, run, install, send, search, look up), you MUST call a tool — ' +
   'do not describe what you would do, do it. ' +
   '\n\nIf the user asks a pure-conversation question (greetings, opinions, ' +
-  'explanations of things you know), answer directly without tools.';
+  'explanations of things you know), answer directly without tools.' +
+  VOICE_RULES;
+
+// The single tool offered to the DIRECT conversational LLM when an agent harness
+// is configured: hand the turn to agent mode. Structured function calling is far
+// more reliable than the ARIA_AGENT_HANDOFF prose sentinel, which stays in the
+// prompt as the fallback for models without tool support. The harness never
+// receives this tool — it runs its own tools server-side.
+const DELEGATE_TOOL = {
+  type: 'function',
+  function: {
+    name: 'delegate_to_agent',
+    description:
+      'Hand this turn to ARIA\'s agent mode, which has live tools (web search, ' +
+      'the time, weather/news, file system, code execution, calendar, the ' +
+      'user\'s screen and system). Call this whenever the user needs real-time ' +
+      'information or an action you cannot do from your own knowledge, instead ' +
+      'of guessing or saying you can\'t.',
+    parameters: {
+      type: 'object',
+      properties: {
+        task: { type: 'string', description: 'One short, self-contained task for the agent.' },
+      },
+      required: ['task'],
+    },
+  },
+};
 
 const MAX_TURNS = 24; // cap history (messages, excluding system) to bound payload
 let history: ChatMessage[] = [];
@@ -353,6 +368,15 @@ function isConnectionError(msg: string): boolean {
   return /connection failed|ECONNREFUSED|timed out|ENOTFOUND|EHOSTUNREACH|socket hang up/i.test(msg);
 }
 
+// The endpoint rejected the `tools` field / has no tool-calling support. Detected
+// so a direct LLM that can't do function calling retries once WITHOUT tools — the
+// prompt's ARIA_AGENT_HANDOFF sentinel remains its delegation path. Broad on
+// purpose: a false positive just means one harmless retry without tools.
+function isToolsUnsupportedError(msg: string): boolean {
+  return /tool/i.test(msg) &&
+    /(not support|unsupported|unknown|invalid|unrecognized|no endpoints|does not|cannot|not allow|400|404|422|501)/i.test(msg);
+}
+
 // The endpoint rejected the image content (model/server has no vision support).
 // Detected so we can retry the same target with text only.
 function isVisionUnsupportedError(msg: string): boolean {
@@ -429,9 +453,13 @@ export async function coordinate(
   sessions.recordTurn('user', userMessage); // persist for the "past sessions" list
 
   // Did the previous reply end with a question? (it's the message just before the
-  // user turn we pushed above) — used to keep an answer on the same target.
+  // user turn we pushed above) — used to keep an answer on the same target. The
+  // "[agent tools used: …]" note a harness reply may carry is stripped first so
+  // it doesn't hide a trailing question mark.
   const prevReply = history.length >= 2 ? history[history.length - 2] : null;
-  const prevText = prevReply && typeof prevReply.content === 'string' ? prevReply.content : '';
+  const prevText = prevReply && typeof prevReply.content === 'string'
+    ? prevReply.content.replace(/\n\n\[agent tools used: [^\]]*\]$/, '')
+    : '';
   const lastWasQuestion = !!(prevReply && prevReply.role === 'assistant' && /\?\s*$/.test(prevText));
 
   // A screen-share frame is visual context for the agent: prefer the harness
@@ -447,25 +475,43 @@ export async function coordinate(
   // on a fallback to a different target (a plain LLM usually can't take images —
   // that was the source of the `unknown variant image_url` 400), and we retry the
   // same target without the image if it rejects vision.
-  const run = async (target: Target, isFallback: boolean, withImage: boolean, handoffTask?: string) => {
+  // Which tools the harness ran this turn — recorded into shared history as a
+  // bracketed note so the fast chat mode can see WHAT the agent did on earlier
+  // turns, not just what it said (one brain, one memory).
+  const agentActions: string[] = [];
+
+  const run = async (target: Target, isFallback: boolean, withImage: boolean, handoffTask?: string, withTools = true) => {
     const { endpoint, model, apiKeyName } = await resolve(target);
-    const apiKey = await getSecret(apiKeyName);
+    // getSecret throws when the stored key can't be decrypted (keyring locked or
+    // switched). Without this guard the turn dies as an unhandled rejection —
+    // no reply, no error, nothing spoken — on EVERY run() path (initial, retry,
+    // handoff). Surface it instead.
+    let apiKey: string | null = null;
+    try {
+      apiKey = await getSecret(apiKeyName);
+    } catch (e) {
+      cb.onError(
+        `Can't decrypt the stored ${target === 'harness' ? 'agent harness' : 'LLM'} API key ` +
+        `(system keyring locked or changed): ${(e as Error).message}. ` +
+        'Unlock your keyring or re-enter the key in Settings.',
+      );
+      return;
+    }
     cb.onRoute?.({
       target,
       name: TARGET_NAMES[target] + (handoffTask ? ' (handoff)' : isFallback ? ' (fallback)' : ''),
     });
 
-    // Routing invariant: the direct conversational LLM is invoked with ZERO tools
-    // at the model level — it never calls tools (including delegation). Any request
-    // that needs live tools/system access is sent to the agent harness by the
-    // pre-invocation router (see router.ts), which runs the tools server-side and
-    // weaves the result into its own reply. The harness path therefore handles all
-    // tool use; this path is conversation/reasoning/knowledge only.
-    // ponytail: history stores only assistant TEXT, so the harness's real
-    // tool_calls/results aren't replayed on later turns. Faithful replay would
-    // need ARIA to capture server-side tool results (it only sees streamed tool
-    // events today) — a real refactor. Add it if multi-turn agent tasks still
-    // drift after the prompt split.
+    // Routing contract ("one brain"): the router (router.ts) is only a latency
+    // fast-path — unmistakable tool/live-data asks skip straight to the harness.
+    // Everything else goes to the direct LLM, which is the front brain: it gets
+    // exactly ONE tool, delegate_to_agent, and decides itself when a turn needs
+    // agent mode. The ARIA_AGENT_HANDOFF prose sentinel stays as the fallback
+    // for models without function calling. Guarded by smoke:routing-invariant.
+    // ponytail: history stores assistant text + an "[agent tools used: …]" note,
+    // not the harness's real tool_calls/results. Faithful replay would need
+    // ARIA to capture server-side tool results — add it if multi-turn agent
+    // tasks still drift with the note in place.
     const systemContent = target === 'harness' ? HARNESS_SYSTEM_PROMPT : LLM_SYSTEM_PROMPT;
     // The "voice output" hint is appended to the LAST user message because
     // LLMs reliably follow user-message instructions but inconsistently
@@ -534,8 +580,20 @@ export async function coordinate(
     const markFirstToken = () => { if (!sawFirstToken) { sawFirstToken = true; perfMark(turnId, 'first_token'); } };
     let turnUsage: TokenUsage | null = null;
     const canAutoHandoff = target === 'llm' && hasHarness && !isFallback;
+    const offerTools = canAutoHandoff && withTools;
     let handoffProbeActive = canAutoHandoff;
     let handoffProbe = '';
+
+    // Funnel BOTH delegation mechanisms (structured tool call, prose sentinel)
+    // into one handoff: attribute the probe cost, then run the harness.
+    const handOff = (task: string, chars: number) => {
+      const spent = turnUsage
+        ? (turnUsage.total || turnUsage.prompt + turnUsage.completion)
+        : Math.round((messages.reduce((n, m) => n + textLength(m.content), 0) + chars) / 4);
+      sessions.addSessionTokens(target, spent);
+      perfMark(turnId, 'llm_done', { chars, handoff: 1 });
+      void run('harness', false, false, task);
+    };
 
     const emitToken = (token: string) => {
       markFirstToken();
@@ -553,16 +611,10 @@ export async function coordinate(
     };
 
     const finishWith = (fullText: string) => {
+      // Sentinel fallback: do NOT show/speak/record the sentinel as a reply.
       const handoff = canAutoHandoff ? extractAgentHandoff(fullText) : null;
-      // Attribute the LLM probe cost even when it hands off; then run the harness
-      // and do NOT show/speak/record the sentinel as an assistant reply.
       if (handoff) {
-        const spent = turnUsage
-          ? (turnUsage.total || turnUsage.prompt + turnUsage.completion)
-          : Math.round((messages.reduce((n, m) => n + textLength(m.content), 0) + (fullText || '').length) / 4);
-        sessions.addSessionTokens(target, spent);
-        perfMark(turnId, 'llm_done', { chars: (fullText || '').length, handoff: 1 });
-        void run('harness', false, false, handoff);
+        handOff(handoff, (fullText || '').length);
         return;
       }
       if (handoffProbe) {
@@ -572,7 +624,12 @@ export async function coordinate(
       }
       lastTarget = target;
       if (fullText && fullText.trim()) {
-        history.push({ role: 'assistant', content: fullText });
+        // The live history (what both modes are prompted with) also records which
+        // tools the agent ran; the persisted/spoken transcript stays clean text.
+        const note = target === 'harness' && agentActions.length
+          ? `\n\n[agent tools used: ${agentActions.join(', ')}]`
+          : '';
+        history.push({ role: 'assistant', content: fullText + note });
         sessions.recordTurn('assistant', fullText);
       }
       if (history.length > MAX_TURNS) history = history.slice(-MAX_TURNS);
@@ -599,24 +656,46 @@ export async function coordinate(
     }
     const timeoutMs = target === 'harness' ? 120000 : 30000;
 
-    activeHandle = streamChat({ endpoint, model, apiKey, messages, headers: harnessHeaders, timeoutMs }, {
+    activeHandle = streamChat({ endpoint, model, apiKey, messages, tools: offerTools ? [DELEGATE_TOOL] : undefined, headers: harnessHeaders, timeoutMs }, {
       onToken: emitToken,
-      // The harness streams its own server-side tool calls as UI chips via onTool.
-      onTool: cb.onTool,
+      // The harness streams its own server-side tool calls as UI chips via onTool;
+      // their names are also captured for the history note (see finishWith).
+      onTool: (info) => {
+        if (target === 'harness' && info.name && !agentActions.includes(info.name)) agentActions.push(info.name);
+        cb.onTool?.(info);
+      },
       onUsage: (u) => { turnUsage = u; },
+      // Structured delegation: fires INSTEAD of onDone when the direct LLM calls
+      // delegate_to_agent. Falls back to the user's own wording if the arguments
+      // don't parse.
+      onToolCalls: offerTools ? (calls) => {
+        const del = calls.find((c) => c.name === 'delegate_to_agent') || calls[0];
+        let task = userMessage;
+        try {
+          const a = JSON.parse(del.arguments || '{}');
+          if (a && typeof a.task === 'string' && a.task.trim()) task = a.task;
+        } catch { /* keep userMessage */ }
+        handOff(task, 0);
+      } : undefined,
       onDone: (fullText) => finishWith(fullText),
       onError: (err) => {
         // Invariant: never retry or fall back once reply TEXT has streamed to the
         // renderer. A second stream would concatenate onto the partial reply
         // already shown (and re-spoken by TTS) — e.g. a harness that drops the
-        // socket mid-answer. Past this point, surface the error instead. (Both
+        // socket mid-answer. Past this point, surface the error instead. (The
         // retry cases below normally fire before any token, so this only guards
         // the mid-stream-drop edge.)
         if (!sawFirstToken) {
+          // Model/server can't do function calling — retry this target once
+          // WITHOUT tools; the prompt's sentinel keeps delegation working.
+          if (offerTools && isToolsUnsupportedError(err)) {
+            void run(target, isFallback, withImage, undefined, false);
+            return;
+          }
           // This target can't accept the screen image — retry it WITHOUT the image
           // so the user still gets a text answer instead of a hard 400.
           if (withImage && isVisionUnsupportedError(err)) {
-            void run(target, isFallback, false);
+            void run(target, isFallback, false, undefined, withTools);
             return;
           }
           // On a connection failure, try the OTHER configured target once (no image).
