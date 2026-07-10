@@ -1,6 +1,6 @@
 {
   "name": "aria",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "GPU-accelerated voice assistant with local STT/TTS and remote LLM",
   "main": "dist/main/index.js",
   "repository": {
@@ -18,7 +18,7 @@
     "build": "tsc && npm run build:preload && node scripts/copy-renderer.js",
     "build:preload": "esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js",
     "start": "npm run build && electron dist/main/index.js",
-    "dev": "npm run build && electron --inspect dist/main/index.js",
+    "dev": "npm run build && electron --no-sandbox --inspect dist/main/index.js",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
     "smoke": "npm run build && node scripts/smoke-supervisor.js wakeword tts stt",

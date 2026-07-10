@@ -68,12 +68,54 @@ let firedNoSpeech = false;
 for (let i = 0; i < 50; i++) if (vad2.pushRms(0)) firedNoSpeech = true;
 check('vad-no-speech-no-end', !firedNoSpeech);
 
-// 9. VadEndpointer: fires only once
+// 9. VadEndpointer: fires only once (two loud frames = 40ms, the default
+//    minSpeechMs, so this is also the minimal qualifying utterance)
 const vad3 = new A.VadEndpointer({ threshold: 0.1, hangMs: 40, frameMs: 20 });
-vad3.pushRms(0.5);
+vad3.pushRms(0.5); vad3.pushRms(0.5);
 let fires = 0;
 for (let i = 0; i < 10; i++) if (vad3.pushRms(0)) fires++;
 check('vad-fires-once', fires === 1, `fired ${fires} times`);
+
+// 9b. VadEndpointer: a single-frame transient (door slam / key click) is NOT
+//     speech — minSpeechMs requires sustained energy.
+const vadT = new A.VadEndpointer({ threshold: 0.1, hangMs: 100, frameMs: 20 });
+vadT.pushRms(0.5); // one 20ms spike
+for (let i = 0; i < 20; i++) vadT.pushRms(0);
+check('vad-transient-not-speech', !vadT.hasSpeech());
+
+// 9c. Once speech has qualified, a resumed word clears the endpoint timer
+// immediately. It must not wait through the full follow-up qualification gate
+// again, or a natural mid-sentence pause would end the turn early.
+const vadR = new A.VadEndpointer({ threshold: 0.1, hangMs: 100, frameMs: 20, minSpeechMs: 60 });
+for (let i = 0; i < 3; i++) vadR.pushRms(0.5); // qualify speech
+for (let i = 0; i < 2; i++) vadR.pushRms(0); // 40ms pause
+vadR.pushRms(0.5); // resumed speech must clear that pause immediately
+let endedEarly = false;
+for (let i = 0; i < 3; i++) endedEarly = vadR.pushRms(0) || endedEarly;
+check('vad-resumed-speech-clears-pause', !endedEarly);
+check('vad-resumed-speech-still-ends-after-full-hang', vadR.pushRms(0) === false && vadR.pushRms(0) === true);
+
+// 9d. VadEndpointer follow-up gate: 240ms sustained energy required, and the
+//     seeded noise floor makes steady ambience read as silence. A noisy room
+//     (RMS 0.05, well over the 0.012 base threshold) never counts as speech…
+const vadF = new A.VadEndpointer({ frameMs: 20, hangMs: 100, minSpeechMs: 240, seedFloor: true });
+for (let i = 0; i < 100; i++) vadF.pushRms(0.05);
+check('vad-followup-ignores-noise', !vadF.hasSpeech());
+// …but the user speaking OVER that noise (RMS 0.3 > 3x floor) still does.
+for (let i = 0; i < 13; i++) vadF.pushRms(0.3); // 260ms of real speech
+check('vad-followup-hears-speech-over-noise', vadF.hasSpeech());
+
+// 9e. collapseRepeats: whisper repetition loops collapse to one phrase; normal
+//     sentences (incl. internal repeats) pass through untouched.
+const C = A.collapseRepeats;
+check('rep-triple', C("what's the weather what's the weather what's the weather") === "what's the weather", `got "${C("what's the weather what's the weather what's the weather")}"`);
+check('rep-partial-tail', C('set a timer set a timer set a') === 'set a timer', `got "${C('set a timer set a timer set a')}"`);
+check('rep-punct-case', C("What's the weather? what's the weather. What's the weather") === "What's the weather?", `got "${C("What's the weather? what's the weather. What's the weather")}"`);
+check('rep-normal-sentence', C('is it going to rain today or tomorrow') === 'is it going to rain today or tomorrow');
+check('rep-internal-repeat-kept', C('that is very very good news today') === 'that is very very good news today');
+check('rep-short-kept', C('no no no') === 'no no no');
+check('rep-single-token-loop', C('you you you you you you') === 'you', `got "${C('you you you you you you')}"`);
+check('rep-empty', C('') === '' && C(null) === '');
 
 // 10. sanitizeForSpeech: strips markup/links/emoji but keeps the words so the
 //     voice never reads "asterisk" or spells out a URL.

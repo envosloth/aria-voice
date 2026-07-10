@@ -60,6 +60,11 @@ Vulkan STT transcription runs** saturated the GPU and took the renderer down on
   [ipc-contract.md](ipc-contract.md).
 - **Never ship `--no-sandbox`.** It's dev/test only. Packaged builds must have a
   correctly-configured Chromium SUID sandbox (root:root, 4755).
+- **`npm run dev` must include `--no-sandbox` on this checkout.** Electron runs
+  directly from `node_modules`, where `chrome-sandbox` is not installed as
+  root:root mode 4755; without that dev-only flag it aborts before a renderer
+  window opens. Keep the flag out of packaged builds — electron-builder sets up
+  the production sandbox separately.
 - **`position: fixed` is trapped by `backdrop-filter`/`transform`/`filter`
   ancestors.** A dropdown inside the glass `.panel` (which has `overflow:hidden` AND
   `backdrop-filter`) gets clipped — its containing block becomes the panel, not the

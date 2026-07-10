@@ -533,7 +533,17 @@ function beginUtterance(opts) {
   // below bounds a stuck utterance.
   // ponytail: fixed hang. If a slow speaker still gets clipped, this is the knob —
   // consider a longer hang only after the first speech pause vs after a full stop.
-  vad = vadActive ? new window.AriaAudio.VadEndpointer({ frameMs: 20, hangMs: 850 }) : null;
+  // Follow-up (conversation-mode) windows get a harder speech gate: the mic
+  // reopens unprompted, so ambient noise must not count as the user talking —
+  // 240ms of sustained energy to qualify as speech, and the window's first
+  // frames seed an adaptive noise floor (see VadEndpointer). Wake-word turns
+  // keep the permissive gate: the user deliberately invoked those.
+  vad = vadActive
+    ? new window.AriaAudio.VadEndpointer(
+      opts && opts.followup
+        ? { frameMs: 20, hangMs: 850, minSpeechMs: 240, seedFloor: true }
+        : { frameMs: 20, hangMs: 850 })
+    : null;
   clearTimeout(vadSafetyTimer);
   if (vadActive) vadSafetyTimer = setTimeout(endUtterance, 8000); // hard cap
   // Follow-up (conversation-mode) window: if no speech starts within a few
@@ -608,6 +618,9 @@ aria.stt.onResult((text) => {
   // A silent follow-up window was closed: drop this result (it's silence, and
   // whisper may have hallucinated a phantom phrase) and stay idle.
   if (discardSttResult) { discardSttResult = false; partialEl.textContent = ''; orbState('idle'); return; }
+  // De-loop: whisper can emit the same phrase repeated ("what's the weather"
+  // ×3) on noisy audio — collapse a fully periodic transcript to one phrase.
+  text = window.AriaAudio.collapseRepeats(text);
   if (text.trim()) {
     partialEl.textContent = '';
     perf.mark(currentVoiceTurnId, 'stt_result_render', { chars: text.trim().length });
@@ -1146,26 +1159,37 @@ function playWakeChime() {
   }
 }
 
-// Distinct descending two-note chime when ARIA stops listening. It confirms that
-// the utterance was endpointed and transcription is starting, without reusing the
-// ascending wake-word tone that means "start talking now".
+// Soft "glass" descend when ARIA stops listening — confirms the utterance was
+// endpointed and transcription is starting, distinct from the ascending wake
+// tone that means "start talking now". A single sine glide (B5 → G5) doubled by
+// a slightly detuned partner through a gentle lowpass, with a soft swell and a
+// long airy tail: closer to the glass UI than the old two-note triangle beep.
+// Still WebAudio-synthesized (no asset) and routed through the master gain so
+// it respects the volume slider.
 function playDoneListeningChime() {
   const ctx = getAudioCtx();
   if (!ctx) return;
   const dest = ttsGain || ctx.destination;
   const now = ctx.currentTime;
-  for (const [freq, t] of [[1175, 0], [784, 0.07]]) { // D6 -> G5
+  const lp = ctx.createBiquadFilter();
+  lp.type = 'lowpass';
+  lp.frequency.value = 2400; // rounds off the sine edges -> soft, not beepy
+  lp.Q.value = 0.7;
+  const master = ctx.createGain();
+  lp.connect(master);
+  master.connect(dest);
+  master.gain.setValueAtTime(0.0001, now);
+  master.gain.exponentialRampToValueAtTime(0.09, now + 0.035); // soft swell in
+  master.gain.exponentialRampToValueAtTime(0.0001, now + 0.4); // airy tail out
+  for (const detune of [0, 7]) { // pair of barely-detuned sines = subtle shimmer
     const osc = ctx.createOscillator();
-    const g = ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.value = freq;
-    const start = now + t;
-    g.gain.setValueAtTime(0.0001, start);
-    g.gain.exponentialRampToValueAtTime(0.10, start + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.0001, start + 0.12);
-    osc.connect(g); g.connect(dest);
-    osc.start(start);
-    osc.stop(start + 0.14);
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(988, now); // B5…
+    osc.frequency.exponentialRampToValueAtTime(784, now + 0.16); // …gliding to G5
+    osc.detune.value = detune;
+    osc.connect(lp);
+    osc.start(now);
+    osc.stop(now + 0.42);
   }
 }
 
@@ -2132,9 +2156,7 @@ if (settingsNav) {
     navItems.forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
     panels.forEach((p) => p.classList.toggle('active', p.dataset.panel === tab));
     const active = settingsNav.querySelector('.snav-item.active');
-    // lastChild is the label text node after the .snav-ico emoji span — use it so
-    // the header title reads "Voice", not "🎙Voice".
-    if (active && settingsTabTitle) settingsTabTitle.textContent = (active.lastChild && active.lastChild.textContent || active.textContent).trim();
+    if (active && settingsTabTitle) settingsTabTitle.textContent = active.textContent.trim();
     if (content) content.scrollTop = 0;
   }
   navItems.forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));

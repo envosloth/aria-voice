@@ -106,7 +106,12 @@ class SttSidecar(BaseSidecar):
     _CTX_FLOOR = 256      # never request a window smaller than this
 
     def _transcribe_server(self, pcm_data: bytes) -> str:
-        extra = {"temperature": "0", "response_format": "json"}
+        # temperature_inc=0 disables the server's temperature-retry ladder — the
+        # same determinism knob as the CLI path's --no-fallback. The retry ladder
+        # is what produces looped/phantom phrases on noisy or edge-clipped audio
+        # ("what's the weather what's the weather…"); an empty result beats a
+        # fake one.
+        extra = {"temperature": "0", "temperature_inc": "0", "response_format": "json"}
         if os.environ.get("ARIA_STT_AUDIO_CTX", "").strip().lower() not in ("0", "off"):
             pcm_data = pcm_data + b"\x00" * (16000 * 2 * self._CTX_PAD_MS // 1000)
             secs = len(pcm_data) / 32000.0

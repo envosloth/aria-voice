@@ -383,7 +383,6 @@
     .snav-item:hover { color: var(--text); background: rgba(255,255,255,.05); }
     .snav-item.active { color: var(--text); background: linear-gradient(160deg, rgba(255,255,255,.1), rgba(255,255,255,.035)); border: 1px solid rgba(255,255,255,.14); box-shadow: inset 0 1px 0 rgba(255,255,255,.16); font-weight: 600; }
     html[data-theme="light"] .snav-item.active { background: color-mix(in srgb, var(--accent-active) 10%, transparent); border-color: color-mix(in srgb, var(--accent-active) 25%, transparent); }
-    .snav-ico { width: 16px; text-align: center; opacity: .85; flex: none; }
     .settings-nav-foot { margin-top: auto; padding: 10px 12px 2px; font: 400 9.5px var(--mono); color: var(--text-muted); }
     .settings-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
     .settings-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 22px 14px; border-bottom: 1px solid var(--border); }
@@ -603,12 +602,12 @@
     <div class="settings-panel">
       <nav class="settings-nav" id="settings-nav">
         <div class="settings-title">Settings</div>
-        <button class="snav-item active" data-tab="connections"><span class="snav-ico">🔌</span>Connections</button>
-        <button class="snav-item" data-tab="voice"><span class="snav-ico">🎙</span>Voice</button>
-        <button class="snav-item" data-tab="appearance"><span class="snav-ico">🎨</span>Appearance</button>
-        <button class="snav-item" data-tab="performance"><span class="snav-ico">⚡</span>Performance</button>
-        <button class="snav-item" data-tab="remote"><span class="snav-ico">🌐</span>Remote</button>
-        <button class="snav-item" data-tab="updates"><span class="snav-ico">⭯</span>Updates</button>
+        <button class="snav-item active" data-tab="connections">Connections</button>
+        <button class="snav-item" data-tab="voice">Voice</button>
+        <button class="snav-item" data-tab="appearance">Appearance</button>
+        <button class="snav-item" data-tab="performance">Performance</button>
+        <button class="snav-item" data-tab="remote">Remote</button>
+        <button class="snav-item" data-tab="updates">Updates</button>
         <div class="settings-nav-foot">ARIA</div>
       </nav>
 

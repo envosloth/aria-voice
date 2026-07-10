@@ -57,32 +57,61 @@
   // raw frames); it reports when an utterance has ended — i.e. speech was seen
   // and then `hangMs` of sustained silence followed. Decoupled from timers so
   // it can be unit-tested deterministically.
+  //
+  // Noise hardening (the conversation-mode "picks up background noise" fix):
+  // (1) `minSpeechMs` — energy must stay above the gate for this long
+  //     CONSECUTIVELY before it counts as speech, so a door slam, key click, or
+  //     cough transient can't open a turn on its own.
+  // (2) `seedFloor` + adaptive noise floor — the first frame seeds an ambient
+  //     noise estimate (an EMA updated by every below-gate frame), and the
+  //     effective gate is max(threshold, noiseFloor * 3). A room with a fan,
+  //     music, or street noise reads as silence unless the user speaks OVER it.
+  //     Seeding is opt-in (follow-up windows only): their first frames are
+  //     reliably pre-speech ambience, whereas a wake-word turn may begin with
+  //     the user already mid-sentence.
+  // ponytail: energy-only. Steady noise as LOUD as speech (TV dialogue at desk
+  // volume) still reads as speech — renderer-side Silero VAD if that matters.
   function VadEndpointer(opts) {
     opts = opts || {};
     const threshold = opts.threshold != null ? opts.threshold : 0.012;
     const hangMs = opts.hangMs != null ? opts.hangMs : 800;
     const frameMs = opts.frameMs != null ? opts.frameMs : 20;
+    const minSpeechMs = opts.minSpeechMs != null ? opts.minSpeechMs : 40;
+    const seedFloor = !!opts.seedFloor;
     let sawSpeech = false;
+    let speechMs = 0;   // consecutive above-gate ms (resets on any quiet frame)
     let silenceMs = 0;
     let ended = false;
+    let noiseFloor = -1; // ambient RMS estimate; -1 = not yet seeded
 
     // Returns true exactly once, on the frame that ends the utterance.
     this.pushRms = function (frameRms) {
       if (ended) return false;
-      if (frameRms >= threshold) {
-        sawSpeech = true;
-        silenceMs = 0;
-      } else if (sawSpeech) {
-        silenceMs += frameMs;
-        if (silenceMs >= hangMs) {
-          ended = true;
-          return true;
+      if (noiseFloor < 0) noiseFloor = seedFloor ? frameRms : 0;
+      const gate = Math.max(threshold, noiseFloor * 3);
+      if (frameRms >= gate) {
+        speechMs += frameMs;
+        if (!sawSpeech && speechMs >= minSpeechMs) sawSpeech = true;
+        // Once an utterance is qualified, every above-gate frame is speech. Do
+        // not make a resumed speaker re-qualify before clearing a brief pause:
+        // follow-up turns need 240ms to open, but a mid-sentence word after a
+        // pause must reset the endpoint timer immediately.
+        if (sawSpeech) silenceMs = 0;
+      } else {
+        speechMs = 0;
+        noiseFloor = noiseFloor * 0.95 + frameRms * 0.05;
+        if (sawSpeech) {
+          silenceMs += frameMs;
+          if (silenceMs >= hangMs) {
+            ended = true;
+            return true;
+          }
         }
       }
       return false;
     };
     this.pushFrame = function (float32) { return this.pushRms(rms(float32)); };
-    this.reset = function () { sawSpeech = false; silenceMs = 0; ended = false; };
+    this.reset = function () { sawSpeech = false; speechMs = 0; silenceMs = 0; ended = false; noiseFloor = -1; };
     this.hasSpeech = function () { return sawSpeech; };
   }
 
@@ -222,9 +251,32 @@
     return s;
   }
 
+  // Collapse a transcript that is one phrase repeated back-to-back ("what's the
+  // weather what's the weather what's the weather" -> "what's the weather").
+  // whisper's decoder can loop on noisy or edge-clipped audio; the sidecar's
+  // silence pad + temperature_inc=0 prevent most loops, this catches the rest
+  // before the loop becomes a garbled triple-length user turn. Finds the
+  // smallest token period that the WHOLE transcript is a repetition of (a
+  // partial trailing repeat counts), so a phrase that legitimately repeats
+  // INSIDE a longer sentence is never touched.
+  function collapseRepeats(text) {
+    const tokens = (text || '').trim().split(/\s+/).filter(Boolean);
+    const norm = tokens.map((t) => t.toLowerCase().replace(/[^\p{L}\p{N}']/gu, ''));
+    const n = norm.length;
+    if (n < 4) return tokens.join(' '); // "no no no" stays — too short to be a loop
+    for (let p = 1; p * 2 <= n; p++) {
+      let periodic = true;
+      for (let i = p; i < n; i++) {
+        if (norm[i] !== norm[i - p]) { periodic = false; break; }
+      }
+      if (periodic) return tokens.slice(0, p).join(' ');
+    }
+    return tokens.join(' ');
+  }
+
   const api = {
     TARGET_RATE, downsampleTo16k, floatToInt16, micFrameToPcm16k, rms, VadEndpointer,
-    sanitizeForSpeech,
+    sanitizeForSpeech, collapseRepeats,
   };
 
   if (typeof module !== 'undefined' && module.exports) {
