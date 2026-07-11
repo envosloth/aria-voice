@@ -127,6 +127,10 @@ Vulkan STT transcription runs** saturated the GPU and took the renderer down on
 
 ## Platform & lifecycle
 
+- **Never build both macOS architectures from one runner when bundling native
+  sidecars or whisper.cpp.** Keep macOS targets architecture-neutral in
+  `electron-builder.yml`; release CI selects `--arm64` on `macos-15` and `--x64`
+  on `macos-15-intel`, then merges `latest-mac.yml` after both native builds.
 - **Keep one Linux desktop ID for the current app.** The current Electron package
   owns `aria.desktop`; the legacy `aria-voice` package owns
   `aria-voice.desktop`. Co-installing both exposes two apps named ARIA, so release

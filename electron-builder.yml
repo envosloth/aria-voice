@@ -88,10 +88,10 @@ mac:
   icon: assets/icon.png
   category: public.app-category.productivity
   target:
-    - target: dmg
-      arch: [arm64, x64]
-    - target: zip
-      arch: [arm64, x64]
+    # Architecture comes from the native CI job (`--arm64` / `--x64`). Do not
+    # build both here: sidecars and whisper.cpp are native per runner.
+    - dmg
+    - zip
   hardenedRuntime: false
   gatekeeperAssess: false
 

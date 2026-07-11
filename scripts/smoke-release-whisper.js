@@ -9,6 +9,7 @@ const { execFileSync } = require('child_process');
 const root = path.join(__dirname, '..');
 const workflow = fs.readFileSync(path.join(root, '.github', 'workflows', 'release.yml'), 'utf8');
 const buildScript = fs.readFileSync(path.join(root, 'scripts', 'build-whispercpp.sh'), 'utf8');
+const builderConfig = fs.readFileSync(path.join(root, 'electron-builder.yml'), 'utf8');
 
 let pass = true;
 function check(name, condition, detail) {
@@ -23,6 +24,7 @@ check('whisper-stage-is-release-fatal', !/stage-whisper\.sh\s*\|\|/.test(workflo
 check('linux-build-preflight-requires-glslc', /REQUIRED=\([^\n]*glslc[^\n]*\)/.test(buildScript));
 check('mac-arm64-build-is-native', /os:\s*macos-15[\s\S]{0,160}target:\s*--mac --arm64/.test(workflow));
 check('mac-x64-build-is-native', /os:\s*macos-15-intel[\s\S]{0,160}target:\s*--mac --x64/.test(workflow));
+check('mac-targets-do-not-cross-package-native-resources', !/arch:\s*\[arm64,\s*x64\]/.test(builderConfig));
 check('mac-update-metadata-is-merged', /merge-mac-update-metadata\.js/.test(workflow));
 check('mac-disables-broken-native-probe', /Darwin\)[\s\S]{0,600}-DGGML_NATIVE=OFF/.test(buildScript));
 
