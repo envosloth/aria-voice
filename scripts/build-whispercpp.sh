@@ -27,7 +27,11 @@ NEED_VULKAN_CHECK=0
 case "$OS" in
   Darwin)
     echo "=== Building whisper.cpp ${WHISPER_VERSION} (Metal backend) ==="
-    CMAKE_BACKEND=(-DGGML_METAL=1)
+    # GGML v1.7.6's native feature probe mis-detects i8mm on GitHub's Apple
+    # Silicon runners with AppleClang 17, then compiles contradictory +noi8mm
+    # flags. A portable armv8.5 baseline avoids that compiler bug; Metal remains
+    # the primary acceleration backend. The ARM option is ignored on Intel Macs.
+    CMAKE_BACKEND=(-DGGML_METAL=1 -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8.5-a)
     ;;
   MINGW*|MSYS*|CYGWIN*|Windows_NT)
     if command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary >/dev/null 2>&1; then

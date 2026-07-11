@@ -28,13 +28,22 @@ jobs:
           # deb+AppImage only (no rpmbuild needed on a dev box).
           - os: ubuntu-latest
             platform: linux
-            ebargs: --linux AppImage deb rpm
+            target: --linux AppImage deb rpm
+            artifact: linux
           - os: windows-latest
             platform: win
-            ebargs: --win
-          - os: macos-latest
+            target: --win
+            artifact: win
+          # Native sidecars and whisper.cpp cannot be shared between Apple
+          # Silicon and Intel. Build each installer on its matching runner.
+          - os: macos-15
             platform: mac
-            ebargs: --mac
+            target: --mac --arm64
+            artifact: mac-arm64
+          - os: macos-15-intel
+            platform: mac
+            target: --mac --x64
+            artifact: mac-x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -91,12 +100,12 @@ jobs:
       - name: Package installers
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder ${{ matrix.ebargs }} --config electron-builder.yml --publish onTagOrDraft
+        run: npx electron-builder ${{ matrix.target }} --config electron-builder.yml --publish onTagOrDraft
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: aria-${{ matrix.platform }}
+          name: aria-${{ matrix.artifact }}
           path: |
             dist-installers/*.deb
             dist-installers/*.rpm
@@ -105,3 +114,26 @@ jobs:
             dist-installers/*.dmg
             dist-installers/*.zip
           if-no-files-found: ignore
+
+  # Each native mac job writes an architecture-specific latest-mac.yml. Merge
+  # them after both complete so electron-updater sees both native downloads.
+  finalize-mac-metadata:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: aria-mac-arm64
+          path: mac-arm64
+      - uses: actions/download-artifact@v4
+        with:
+          name: aria-mac-x64
+          path: mac-x64
+      - name: Merge and upload macOS updater metadata
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/merge-mac-update-metadata.js mac-arm64 mac-x64 latest-mac.yml
+          gh release upload "$GITHUB_REF_NAME" latest-mac.yml --clobber
