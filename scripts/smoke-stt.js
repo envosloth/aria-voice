@@ -40,6 +40,8 @@ async function main() {
 
   let result = null;
   let ready = false;
+  let utteranceStarted = false;
+  const utteranceId = 'smoke-stt-1';
 
   const sup = new Supervisor(
     (name, status, detail) => {
@@ -47,6 +49,7 @@ async function main() {
       if (status === 'ready') ready = true;
     },
     (name, msg) => {
+      if (msg.type === 'stt_started' && msg.utterance_id === utteranceId) utteranceStarted = true;
       if (msg.type === 'stt_result') {
         result = msg.text;
         console.log(`  <- stt_result: "${msg.text}"`);
@@ -62,13 +65,16 @@ async function main() {
 
   console.log('\n=== Streaming PCM over socket, then transcribe control over stdin ===');
   const t0 = Date.now();
+  sup.sendToSidecar('stt', { type: 'start', utterance_id: utteranceId });
+  for (let i = 0; i < 50 && !utteranceStarted; i++) await sleep(20);
+  if (!utteranceStarted) { console.log('FAIL: STT start was not acknowledged'); await sup.stopAll(); process.exit(1); }
   // Stream PCM in chunks over the socket (simulating mic capture)
   const CHUNK = 8192;
   for (let off = 0; off < pcm.length; off += CHUNK) {
     sup.sendPcm('stt', pcm.subarray(off, Math.min(off + CHUNK, pcm.length)));
   }
-  await sleep(100); // let socket drain
-  sup.sendToSidecar('stt', { type: 'transcribe' });
+  // No arbitrary drain sleep: audio_bytes is the cross-channel completion barrier.
+  sup.sendToSidecar('stt', { type: 'transcribe', utterance_id: utteranceId, audio_bytes: pcm.length });
 
   for (let i = 0; i < 150 && result === null; i++) await sleep(100);
   const elapsed = Date.now() - t0;

@@ -51,7 +51,22 @@ Vulkan STT transcription runs** saturated the GPU and took the renderer down on
   noise/ARIA's own audio barge in and cut replies; too strict → misses. There's a
   barge-in score gate while speaking. Re-tune deliberately, both directions.
 - **Whisper hallucinates on silence** ("Thank you.", "you"). Silent follow-up windows
-  must **discard** the STT result, never submit it as a user turn.
+  must **discard** the STT result, never submit it as a user turn. Correlate that
+  discard with the silent turn's ID; a global "drop the next result" boolean can
+  survive when a stale result is rejected and then erase the next real utterance.
+- **A detected GPU is not a ready whisper HTTP server.** The Vulkan log appears
+  during model loading; `_start_server` must still wait for a listening log/port
+  probe before the sidecar emits `ready`. Also discover `whisper-cli` even on the
+  warm-server path so a later HTTP failure has a real cold fallback.
+- **STT stdin and PCM sockets race each other.** Utterance start is acknowledged
+  before queued PCM is flushed, end declares its expected byte count, and final
+  results carry the utterance ID. This prevents erased leading audio, clipped last
+  words, and stale/duplicate results becoming repeated chat turns. The complete
+  audio wait is conditional (normally zero; capped at 120 ms), not a fixed delay.
+- **16 kHz mic downsampling must anti-alias.** At the common 48 kHz input rate,
+  selecting every third sample folds high-frequency noise into speech. The
+  interval-average filter in `audio-utils.js` is frame-local (no added buffering)
+  and shared by wake-word/STT capture.
 
 ## Renderer sandbox & UI
 

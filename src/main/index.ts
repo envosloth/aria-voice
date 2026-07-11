@@ -20,6 +20,7 @@ import {
 import { IPC } from '../shared/ipc-channels';
 import { SidecarName } from '../shared/constants';
 import { tunnel, installTunnelHook } from './tunnel-supervisor';
+import { SttTurnGate, TranscribeRequest } from './stt-turn';
 
 // Chromium feature flags must be set in ONE enable-features switch — calling
 // appendSwitch('enable-features', …) twice overwrites rather than merges.
@@ -438,32 +439,47 @@ function setupIpcHandlers(): void {
   ipcMain.on(IPC.MIC_AUDIO, (_e, chunk: ArrayBuffer) => {
     const buf = Buffer.from(chunk);
     if (config.get('wakeword.enabled')) supervisor.sendPcm('wakeword', buf);
-    if (sttListening) supervisor.sendPcm('stt', buf);
+    const readyChunk = sttGate.pushAudio(buf);
+    if (readyChunk) supervisor.sendPcm('stt', readyChunk);
   });
 
   ipcMain.on(IPC.STT_START, async (_e, turnId?: string) => {
-    sttTurnId = turnId || '';
-    perfMark(sttTurnId, 'stt_start');
+    const requestedTurnId = turnId || `voice-${Date.now()}`;
+    sttTurnId = requestedTurnId;
+    sttGate.begin(requestedTurnId);
+    perfMark(requestedTurnId, 'stt_start');
     try {
       await ensureSidecar('stt');
-      supervisor.sendToSidecar('stt', { type: 'reset' });
-      sttListening = true;
+      // A newer utterance may supersede this async startup. Never let an old
+      // promise reset the new turn's buffered audio.
+      if (sttGate.isCurrent(requestedTurnId)) {
+        supervisor.sendToSidecar('stt', { type: 'start', utterance_id: requestedTurnId });
+      }
     } catch (e) {
+      sttGate.failStart(requestedTurnId);
       console.error('[ARIA] STT start failed:', (e as Error).message);
     }
   });
 
   ipcMain.on(IPC.STT_END, () => {
-    sttListening = false;
     perfMark(sttTurnId, 'stt_transcribe_req');
-    supervisor.sendToSidecar('stt', { type: 'transcribe' });
+    const request = sttGate.end();
+    if (request) sendSttTranscribe(request);
   });
 }
 
-let sttListening = false;
+const sttGate = new SttTurnGate();
 // Turn id of the in-flight voice utterance (from the renderer), so the STT
 // stage marks join the same timeline as that turn's later LLM/TTS marks.
 let sttTurnId = '';
+
+function sendSttTranscribe(request: TranscribeRequest): void {
+  supervisor.sendToSidecar('stt', {
+    type: 'transcribe',
+    utterance_id: request.turnId,
+    audio_bytes: request.audioBytes,
+  });
+}
 
 app.whenReady().then(async () => {
   // Wire the SSH tunnel supervisor to the renderer BEFORE we instantiate
@@ -1178,9 +1194,21 @@ async function ensureSidecar(name: SidecarName): Promise<void> {
 function routeSidecarMessage(name: SidecarName, msg: Record<string, unknown>): void {
   const type = msg.type as string;
   switch (type) {
+    case 'stt_started': {
+      const turnId = typeof msg.utterance_id === 'string' ? msg.utterance_id : '';
+      const action = sttGate.ackStarted(turnId);
+      if (!action) break;
+      for (const chunk of action.chunks) supervisor.sendPcm('stt', chunk);
+      if (action.transcribe) sendSttTranscribe(action.transcribe);
+      break;
+    }
     case 'stt_result':
-      perfMark(sttTurnId, 'stt_result', { chars: typeof msg.text === 'string' ? msg.text.length : 0 });
-      mainWindow?.webContents.send(IPC.STT_RESULT, msg.text);
+      {
+        const turnId = typeof msg.utterance_id === 'string' ? msg.utterance_id : '';
+        if (!sttGate.acceptResult(turnId)) break;
+        perfMark(turnId, 'stt_result', { chars: typeof msg.text === 'string' ? msg.text.length : 0 });
+        mainWindow?.webContents.send(IPC.STT_RESULT, { text: msg.text, turnId });
+      }
       break;
     case 'stt_partial':
       mainWindow?.webContents.send(IPC.STT_PARTIAL, msg.text);

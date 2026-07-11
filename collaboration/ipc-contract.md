@@ -22,6 +22,18 @@ Rules learned the hard way:
 - **PCM is a byte stream with no framing.** UDS segments are *not* aligned to the
   2-byte sample boundary. The consumer must carry a trailing odd byte into the next
   segment (renderer does this in `onAudio`; a barge-in must reset that carry byte).
+- **STT controls and PCM have no cross-channel ordering guarantee.** Main sends
+  `{type:"start", utterance_id}` and queues mic PCM until the sidecar replies with
+  `stt_started` for that ID. `transcribe` includes `audio_bytes`; the sidecar waits
+  (up to 120 ms, only when bytes are actually late) until that many bytes have
+  reached its buffer. Do not replace this with an unacknowledged `reset` followed
+  immediately by socket writes — the reset can erase the first frame, while an
+  end control can overtake the final frame and clip the last word.
+- **Every STT result is turn-correlated and exactly-once.** The sidecar echoes
+  `utterance_id` in `stt_result`; main's `SttTurnGate` rejects stale/duplicate
+  results and sends `{text, turnId}` over `STT_RESULT`. The renderer checks the ID
+  again before creating a user chat turn. Preserve all three layers when changing
+  the voice pipeline.
 - **`--socket`** is passed to every sidecar: a UDS path on POSIX, a `tcp://host:port`
   URL on Windows (no `AF_UNIX` there). `base_sidecar._connect_socket` branches on the
   `tcp://` prefix.

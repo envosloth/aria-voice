@@ -60,6 +60,8 @@ async function main() {
 
   const ready = new Set();
   let transcription = null;
+  let utteranceStarted = false;
+  const utteranceId = 'smoke-e2e-1';
   let ttsChunks = 0;
   let ttsBytes = 0;
   let ttsFirstChunkAt = 0;
@@ -68,6 +70,7 @@ async function main() {
   const sup = new Supervisor(
     (name, status) => { if (status === 'ready') ready.add(name); },
     (name, msg) => {
+      if (msg.type === 'stt_started' && msg.utterance_id === utteranceId) utteranceStarted = true;
       if (msg.type === 'stt_result') transcription = msg.text;
       if (msg.type === 'tts_chunk') {
         if (ttsChunks === 0) ttsFirstChunkAt = Date.now();
@@ -87,10 +90,12 @@ async function main() {
   // --- Stage 1: STT ---
   console.log('\n[1] STT: streaming speech PCM -> transcribe');
   const tStt = Date.now();
+  sup.sendToSidecar('stt', { type: 'start', utterance_id: utteranceId });
+  for (let i = 0; i < 50 && !utteranceStarted; i++) await sleep(20);
+  if (!utteranceStarted) { console.log('FAIL: STT start was not acknowledged'); await sup.stopAll(); process.exit(1); }
   const CH = 8192;
   for (let o = 0; o < pcm.length; o += CH) sup.sendPcm('stt', pcm.subarray(o, Math.min(o + CH, pcm.length)));
-  await sleep(100);
-  sup.sendToSidecar('stt', { type: 'transcribe' });
+  sup.sendToSidecar('stt', { type: 'transcribe', utterance_id: utteranceId, audio_bytes: pcm.length });
   for (let i = 0; i < 150 && transcription === null; i++) await sleep(50);
   const sttMs = Date.now() - tStt;
   console.log(`    -> "${transcription}" (${sttMs}ms)`);

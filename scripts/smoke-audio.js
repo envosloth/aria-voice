@@ -14,6 +14,14 @@ const src48 = new Float32Array(4800); // 0.1s @ 48k
 const ds = A.downsampleTo16k(src48, 48000);
 check('downsample-length', ds.length === 1600, `got ${ds.length}, expected 1600`);
 
+// 1b. 48 -> 16 kHz must low-pass each 3-sample source interval instead of
+// selecting every third sample. Straight decimation aliases ultrasonic/noisy mic
+// energy into Whisper's speech band; interval averaging improves recognition
+// without buffering another frame or adding user-visible latency.
+const aliasedImpulse = A.downsampleTo16k(new Float32Array([1, 0, 0, 0, 0, 0]), 48000);
+check('downsample-antialiases', aliasedImpulse.length === 2 && Math.abs(aliasedImpulse[0] - (1 / 3)) < 1e-6,
+  `got ${Array.from(aliasedImpulse).join(', ')}`);
+
 // 2. Passthrough when already 16k
 const at16 = new Float32Array(1600);
 check('passthrough-16k', A.downsampleTo16k(at16, 16000).length === 1600);
@@ -133,6 +141,18 @@ check('rep-emphatic-yes-kept', C('yes yes yes yes') === 'yes yes yes yes');
 check('rep-two-part-kept', C('one two one two') === 'one two one two');
 check('rep-single-token-loop-kept', C('you you you you you you') === 'you you you you you you');
 check('rep-empty', C('') === '' && C(null) === '');
+
+// 9h. Silent follow-up discard state is turn-correlated. If follow-up A is
+// superseded before its stale result arrives, beginning B must clear A's discard
+// marker so B's valid transcription is never treated as "the next result to drop".
+const discardGate = new A.SttDiscardGate();
+discardGate.begin('turn-a');
+discardGate.markDiscard('turn-a');
+discardGate.begin('turn-b');
+check('discard-stale-followup-does-not-drop-next-turn', discardGate.consume('turn-b') === false);
+check('discard-old-turn-cleared-on-new-begin', discardGate.consume('turn-a') === false);
+discardGate.markDiscard('turn-b');
+check('discard-matching-silent-turn-once', discardGate.consume('turn-b') === true && discardGate.consume('turn-b') === false);
 
 // 10. sanitizeForSpeech: strips markup/links/emoji but keeps the words so the
 //     voice never reads "asterisk" or spells out a URL.

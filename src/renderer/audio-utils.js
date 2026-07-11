@@ -3,13 +3,15 @@
 //
 // The mic delivers Float32 samples at the AudioContext rate (commonly 48000 Hz).
 // The STT/wake-word sidecars expect 16000 Hz mono signed-16-bit PCM. These
-// helpers downsample (linear interpolation — adequate for speech) and convert.
+// helpers downsample with an interval-average anti-alias filter and convert.
 
 (function (root) {
   const TARGET_RATE = 16000;
 
-  // Downsample a Float32 mono buffer from sourceRate to 16000 Hz via linear
-  // interpolation. Returns a Float32Array at the target rate.
+  // Downsample a Float32 mono buffer to 16 kHz. Each output sample is the
+  // weighted average of its source interval, so energy above the 8 kHz target
+  // Nyquist limit is attenuated instead of aliased into Whisper's speech band.
+  // This is frame-local and adds no buffering latency.
   function downsampleTo16k(float32, sourceRate) {
     if (sourceRate === TARGET_RATE) return float32;
     if (sourceRate < TARGET_RATE) {
@@ -19,11 +21,14 @@
     const outLength = Math.floor(float32.length / ratio);
     const out = new Float32Array(outLength);
     for (let i = 0; i < outLength; i++) {
-      const srcPos = i * ratio;
-      const i0 = Math.floor(srcPos);
-      const i1 = Math.min(i0 + 1, float32.length - 1);
-      const frac = srcPos - i0;
-      out[i] = float32[i0] * (1 - frac) + float32[i1] * frac;
+      const start = i * ratio;
+      const end = start + ratio;
+      let sum = 0;
+      for (let j = Math.floor(start); j < Math.ceil(end) && j < float32.length; j++) {
+        const weight = Math.min(end, j + 1) - Math.max(start, j);
+        if (weight > 0) sum += float32[j] * weight;
+      }
+      out[i] = sum / ratio;
     }
     return out;
   }
@@ -287,9 +292,23 @@
     return tokens.join(' ');
   }
 
+  // Turn-correlated "silent follow-up" discard state. A global "drop the next
+  // result" boolean is unsafe: if follow-up A is superseded and main correctly
+  // drops A's stale result, that boolean survives and discards real turn B.
+  function SttDiscardGate() {
+    let discardTurnId = null;
+    this.begin = function () { discardTurnId = null; };
+    this.markDiscard = function (turnId) { discardTurnId = turnId || null; };
+    this.consume = function (turnId) {
+      if (!turnId || turnId !== discardTurnId) return false;
+      discardTurnId = null;
+      return true;
+    };
+  }
+
   const api = {
     TARGET_RATE, downsampleTo16k, floatToInt16, micFrameToPcm16k, rms, VadEndpointer,
-    sanitizeForSpeech, collapseRepeats,
+    SttDiscardGate, sanitizeForSpeech, collapseRepeats,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

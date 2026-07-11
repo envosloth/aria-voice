@@ -29,8 +29,8 @@ const api = {
   stt: {
     start: (turnId?: string) => ipcRenderer.send(IPC.STT_START, turnId || ''),
     end: () => ipcRenderer.send(IPC.STT_END),
-    onResult: (cb: (text: string) => void) =>
-      ipcRenderer.on(IPC.STT_RESULT, (_e, text) => cb(text)),
+    onResult: (cb: (result: { text: string; turnId: string }) => void) =>
+      ipcRenderer.on(IPC.STT_RESULT, (_e, result) => cb(result)),
     onPartial: (cb: (text: string) => void) =>
       ipcRenderer.on(IPC.STT_PARTIAL, (_e, text) => cb(text)),
     onState: (cb: (state: string) => void) =>

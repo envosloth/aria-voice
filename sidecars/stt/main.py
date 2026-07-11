@@ -38,6 +38,8 @@ class SttSidecar(BaseSidecar):
         self._force_cpu = os.environ.get("ARIA_STT_BACKEND", "").lower() == "cpu"
         self._audio_buffer = bytearray()
         self._buffer_lock = threading.Lock()
+        self._audio_ready = threading.Condition(self._buffer_lock)
+        self._utterance_id = ""
         self._server_proc: subprocess.Popen | None = None
         self._server_port = 0
         self._cli_bin = ""  # fallback
@@ -45,13 +47,16 @@ class SttSidecar(BaseSidecar):
     def initialize(self) -> None:
         self.model_path = self._find_model()
         server_bin = self._find_binary("whisper-server")
+        # Discover the cold CLI even when the warm server is available. Server
+        # inference can fail after startup; without this, the advertised fallback
+        # tries to execute an empty path.
+        self._cli_bin = self._find_binary("whisper-cli") or ""
 
         if server_bin:
             self._start_server(server_bin)
 
         if not self._server_proc:
             # Fallback path: per-call whisper-cli
-            self._cli_bin = self._find_binary("whisper-cli") or ""
             if not self._cli_bin:
                 raise FileNotFoundError("Neither whisper-server nor whisper-cli found. Build whisper.cpp.")
 
@@ -62,13 +67,31 @@ class SttSidecar(BaseSidecar):
     # ---- audio handling ----
 
     def on_pcm(self, data: bytes) -> None:
-        with self._buffer_lock:
+        with self._audio_ready:
             self._audio_buffer.extend(data)
+            self._audio_ready.notify_all()
 
     def on_control(self, msg: dict) -> None:
         mtype = msg.get("type")
-        if mtype == "transcribe":
-            with self._buffer_lock:
+        if mtype == "start":
+            utterance_id = str(msg.get("utterance_id", ""))
+            with self._audio_ready:
+                self._audio_buffer.clear()
+                self._utterance_id = utterance_id
+            self.emit({"type": "stt_started", "utterance_id": utterance_id})
+        elif mtype == "transcribe":
+            utterance_id = str(msg.get("utterance_id", self._utterance_id))
+            try:
+                expected_bytes = max(0, int(msg.get("audio_bytes", 0)))
+            except (TypeError, ValueError):
+                expected_bytes = 0
+            deadline = time.monotonic() + 0.12
+            with self._audio_ready:
+                while len(self._audio_buffer) < expected_bytes:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    self._audio_ready.wait(remaining)
                 pcm = bytes(self._audio_buffer)
                 self._audio_buffer.clear()
             t0 = time.time()
@@ -78,7 +101,10 @@ class SttSidecar(BaseSidecar):
             # Measured inference latency (prove the warm/GPU path is fast, and let
             # the perf panel / logs show real numbers instead of guesses).
             self._emit_status("info", f"transcribe {ms}ms for {audio_ms}ms audio ({'vulkan' if self.using_vulkan else 'cpu'})")
-            self.emit({"type": "stt_result", "text": text, "transcribe_ms": ms})
+            self.emit({
+                "type": "stt_result", "utterance_id": utterance_id,
+                "text": text, "transcribe_ms": ms,
+            })
         elif mtype == "reset":
             with self._buffer_lock:
                 self._audio_buffer.clear()
@@ -148,7 +174,7 @@ class SttSidecar(BaseSidecar):
             # Together they kill the "Thanks for watching" hallucination on
             # clipped audio — the high-temp retry path is what produced the
             # phantom phrase in the first place. Empty result beats a fake one.
-            cmd += ["--temperature", "0.0", "--no-fallback"]
+            cmd += ["--temperature", "0.0", "--no-fallback", "--suppress-nst"]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=self._env())
             return result.stdout.strip()
         finally:
@@ -183,7 +209,7 @@ class SttSidecar(BaseSidecar):
         # decoding; if the first pass doesn't transcribe, you get an empty
         # result, which is preferable to a hallucinated phrase. The CLI side
         # uses --temperature 0.0 + --no-fallback for the same reason.
-        cmd += ["--no-fallback"]
+        cmd += ["--no-fallback", "--suppress-nst"]
         self._server_proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             env=self._env(), text=True,
@@ -205,8 +231,10 @@ class SttSidecar(BaseSidecar):
                 return
             line = self._server_proc.stdout.readline()
             if line:
-                if self._detect_gpu_line(line):
-                    break  # GPU confirmed + (by ordering) load is essentially done
+                # GPU detection happens during model load, before the HTTP socket
+                # is guaranteed to accept requests. Record it, but keep waiting
+                # for a listening log line or a successful port probe.
+                self._detect_gpu_line(line)
                 low = line.lower()
                 if "listening" in low or "http server" in low or "server is listening" in low:
                     ready = True

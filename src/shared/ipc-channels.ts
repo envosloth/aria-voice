@@ -10,7 +10,7 @@ export const IPC = {
   MIC_AUDIO: 'mic:audio',       // renderer -> main: raw PCM frames from getUserMedia
   STT_START: 'stt:start',       // renderer -> main: begin an utterance (route mic to STT)
   STT_END: 'stt:end',           // renderer -> main: end utterance, trigger transcription
-  STT_RESULT: 'stt:result',
+  STT_RESULT: 'stt:result',     // main -> renderer: { text, turnId } exactly once
   STT_PARTIAL: 'stt:partial',
   STT_STATE: 'stt:state',
 

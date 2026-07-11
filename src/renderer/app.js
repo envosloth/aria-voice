@@ -469,7 +469,7 @@ let vadSafetyTimer = null;
 let conversationMode = false;
 let lastTurnWasVoice = false;   // was the turn being answered started by voice?
 let noSpeechTimer = null;       // closes a follow-up window if nobody speaks
-let discardSttResult = false;   // drop the next STT result (silent follow-up)
+const sttDiscardGate = new window.AriaAudio.SttDiscardGate();
 // How long a follow-up window waits for the user to START talking before it
 // gives up and returns to idle. Long enough to react to a reply, short enough
 // that the mic isn't hanging open. Once speech starts, VAD endpointing takes over.
@@ -509,10 +509,14 @@ function bargeIn() {
 }
 
 function beginUtterance(opts) {
+  // Duplicate wake detections while the mic is already open must not reset the
+  // live buffer or create overlapping STT turns.
+  if (listening) return;
   bargeIn(); // interrupt whatever ARIA is currently saying/generating
   const turnId = perf.newTurn('voice');
   currentTurnId = turnId;
   currentVoiceTurnId = turnId;
+  sttDiscardGate.begin(turnId);
   resetTurnMarkers();
   perf.mark(turnId, 'audio_start');
   listening = true;
@@ -571,7 +575,7 @@ function endUtterance(opts) {
   // A silent follow-up: finalize STT to keep the sidecar clean but drop whatever
   // it returns, and go straight back to idle instead of flashing 'processing'.
   if (opts && opts.discard) {
-    discardSttResult = true;
+    sttDiscardGate.markDiscard(currentVoiceTurnId);
     orbState('idle');
   } else {
     orbState('processing'); // STT + LLM working
@@ -608,7 +612,13 @@ micBtn.addEventListener('mouseleave', endUtterance);
 // Start capturing as soon as we have a user gesture (autoplay policy) or load.
 startMicCapture();
 
-aria.stt.onResult((text) => {
+aria.stt.onResult((result) => {
+  const textResult = typeof result === 'string' ? result : (result && result.text) || '';
+  const resultTurnId = typeof result === 'object' && result ? result.turnId : currentVoiceTurnId;
+  // Ignore stale results from a transcription superseded by barge-in, plus any
+  // duplicate result after this turn has already been consumed.
+  if (!currentVoiceTurnId || (resultTurnId && resultTurnId !== currentVoiceTurnId)) return;
+  let text = textResult;
   // STT transcription is done; lift the orb's GPU throttling. The orb flips
   // back to its per-state cap (full refresh on the high tier). Wrapped in a
   // try/catch in case the orb isn't ready yet (tests, headless boot).
@@ -617,7 +627,12 @@ aria.stt.onResult((text) => {
   try { window.AriaOrb && window.AriaOrb.endSttCompute && window.AriaOrb.endSttCompute(); } catch (e) {}
   // A silent follow-up window was closed: drop this result (it's silence, and
   // whisper may have hallucinated a phantom phrase) and stay idle.
-  if (discardSttResult) { discardSttResult = false; partialEl.textContent = ''; orbState('idle'); return; }
+  if (sttDiscardGate.consume(resultTurnId)) {
+    currentVoiceTurnId = null;
+    partialEl.textContent = '';
+    orbState('idle');
+    return;
+  }
   // De-loop: whisper can emit the same phrase repeated ("what's the weather"
   // ×3) on noisy audio — collapse a fully periodic transcript to one phrase.
   text = window.AriaAudio.collapseRepeats(text);
@@ -626,9 +641,11 @@ aria.stt.onResult((text) => {
     perf.mark(currentVoiceTurnId, 'stt_result_render', { chars: text.trim().length });
     // Chain the recognized text onto the SAME voice turn so audio_start..tts_*
     // are one timeline; clear it so a later typed turn starts fresh.
-    submitUserMessage(text, currentVoiceTurnId); // handles screen-share commands + frame attachment
+    const voiceTurnId = currentVoiceTurnId;
     currentVoiceTurnId = null;
+    submitUserMessage(text, voiceTurnId); // handles screen-share commands + frame attachment
   } else {
+    currentVoiceTurnId = null;
     orbState('idle'); // nothing recognized
   }
 });
@@ -1130,6 +1147,7 @@ aria.wakeword.onDetected((phrase, score) => {
   if (orbStateName === 'speaking' && typeof score === 'number' && score < BARGE_IN_MIN_SCORE) {
     return; // too weak to be a real interruption — don't cut off the reply
   }
+  if (listening) return; // repeated detection: do not chime into active STT audio
   playWakeChime(); // audible "I'm listening" confirmation
   // Wake word heard -> open a hands-free STT utterance with VAD endpointing:
   // it ends automatically after ~850ms of silence (or the 8s safety cap).
