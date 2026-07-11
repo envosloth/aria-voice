@@ -40,7 +40,7 @@ case "$OS" in
   *)  # Linux — Vulkan, the primary target (unchanged).
     echo "=== Building whisper.cpp ${WHISPER_VERSION} with Vulkan backend ==="
     CMAKE_BACKEND=(-DGGML_VULKAN=1)
-    REQUIRED=(cmake g++ git vulkaninfo)
+    REQUIRED=(cmake g++ git vulkaninfo glslc)
     NEED_VULKAN_CHECK=1
     ;;
 esac
