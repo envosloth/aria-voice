@@ -108,7 +108,7 @@ class WakewordSidecar(BaseSidecar):
             audio = np.frombuffer(frame, dtype=np.int16)
             prediction = self.model.predict(audio)
 
-            now = time.time()
+            now = time.monotonic()
             if now - self._last_detect < self.cooldown_s:
                 self._consec = 0
                 continue  # still cooling down from the last trigger — don't re-fire
@@ -152,10 +152,14 @@ class WakewordSidecar(BaseSidecar):
           5. a safe default + a 'warning' status naming the built-in options.
         """
         req = self._normalize(DEFAULT_MODEL)
-        custom_dirs = [
+        custom_dirs = []
+        models_dir = os.environ.get("ARIA_MODELS_DIR")
+        if models_dir:
+            custom_dirs.append(os.path.join(models_dir, "wakeword"))
+        custom_dirs.extend([
             os.path.join(os.path.dirname(__file__), "..", "..", "models", "wakeword"),
             os.path.expanduser("~/.local/share/aria/models/wakeword"),
-        ]
+        ])
 
         custom = []
         for d in custom_dirs:

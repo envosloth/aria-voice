@@ -12,7 +12,7 @@ const path = require('path');
 const srcDir = path.join(__dirname, '..', 'src', 'renderer');
 const outDir = path.join(__dirname, '..', 'dist', 'renderer');
 const files = [
-  'index.html', 'app.js', 'audio-utils.js', 'mic-worklet.js',
+  'index.html', 'app.js', 'audio-utils.js', 'mic-lifecycle.js', 'mic-worklet.js',
   'harnesses.js', 'orb.js', 'perf.js',
 ];
 

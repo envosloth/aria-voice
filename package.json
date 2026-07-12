@@ -26,6 +26,7 @@
     "smoke:stt": "npm run build && bash scripts/gen-test-audio.sh && node scripts/smoke-stt.js",
     "smoke:stt-turn": "npm run build && node scripts/smoke-stt-turn.js && python3 scripts/smoke-stt-control.py",
     "smoke:release-whisper": "node scripts/smoke-release-whisper.js",
+    "smoke:release-packaging": "node scripts/smoke-release-packaging.js",
     "smoke:resilience": "npm run build && node scripts/smoke-resilience.js",
     "smoke:pdeathsig": "npm run build && node scripts/smoke-pdeathsig.js",
     "smoke:llm": "npm run build && node scripts/smoke-llm.js",
@@ -59,14 +60,15 @@
     "smoke:menu": "npm run build && node scripts/smoke-menu.js",
     "smoke:hover": "npm run build && node scripts/smoke-hover.js",
     "smoke:screenshare": "npm run build && node scripts/smoke-screenshare.js",
-    "smoke:routing-invariant": "npm run build && node scripts/smoke-routing-invariant.js"
+    "smoke:routing-invariant": "npm run build && node scripts/smoke-routing-invariant.js",
+    "smoke:core-security": "npm run build && node scripts/smoke-core-security.js"
   },
   "author": "ARIA Project <aria@localhost>",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^22.0.0",
     "electron": "^40.0.0",
-    "electron-builder": "^25.1.8",
+    "electron-builder": "^26.15.3",
     "esbuild": "^0.28.1",
     "eslint": "^9.0.0",
     "playwright-core": "^1.61.1",

@@ -28,23 +28,24 @@ const api = {
 
   stt: {
     start: (turnId?: string) => ipcRenderer.send(IPC.STT_START, turnId || ''),
-    end: () => ipcRenderer.send(IPC.STT_END),
+    end: (turnId?: string) => ipcRenderer.send(IPC.STT_END, turnId || ''),
     onResult: (cb: (result: { text: string; turnId: string }) => void) =>
       ipcRenderer.on(IPC.STT_RESULT, (_e, result) => cb(result)),
-    onPartial: (cb: (text: string) => void) =>
-      ipcRenderer.on(IPC.STT_PARTIAL, (_e, text) => cb(text)),
-    onState: (cb: (state: string) => void) =>
+    onPartial: (cb: (result: { text: string; turnId: string }) => void) =>
+      ipcRenderer.on(IPC.STT_PARTIAL, (_e, result) => cb(result)),
+    onState: (cb: (state: { state: string; turnId?: string; error?: string }) => void) =>
       ipcRenderer.on(IPC.STT_STATE, (_e, state) => cb(state)),
   },
 
   tts: {
-    play: (text: string) => ipcRenderer.send(IPC.TTS_PLAY, text),
-    stop: () => ipcRenderer.send(IPC.TTS_STOP),
-    onAudio: (cb: (pcm: ArrayBuffer) => void) =>
-      ipcRenderer.on(IPC.TTS_AUDIO, (_e, pcm: Buffer) => {
-        const copy = new Uint8Array(pcm.byteLength);
-        copy.set(pcm);
-        cb(copy.buffer);
+    play: (request: { text: string; replyId: string; requestId: string; epoch: number }) => ipcRenderer.send(IPC.TTS_PLAY, request),
+    stop: (request?: { replyId?: string; epoch?: number }) => ipcRenderer.send(IPC.TTS_STOP, request || {}),
+    replyDone: (request: { replyId: string; epoch: number }) => ipcRenderer.send(IPC.TTS_REPLY_DONE, request),
+    onAudio: (cb: (packet: { pcm: ArrayBuffer; replyId: string; requestId: string; epoch: number; sampleRate: number }) => void) =>
+      ipcRenderer.on(IPC.TTS_AUDIO, (_e, packet: { pcm: Buffer; replyId: string; requestId: string; epoch: number; sampleRate: number }) => {
+        const copy = new Uint8Array(packet.pcm.byteLength);
+        copy.set(packet.pcm);
+        cb({ ...packet, pcm: copy.buffer });
       }),
     onState: (cb: (state: unknown) => void) =>
       ipcRenderer.on(IPC.TTS_STATE, (_e, state) => cb(state)),
@@ -58,9 +59,9 @@ const api = {
   },
 
   llm: {
-    send: (message: string, image?: string | null, turnId?: string) =>
-      ipcRenderer.send(IPC.LLM_SEND, { message, image: image || null, turnId: turnId || '' }),
-    cancel: () => ipcRenderer.send(IPC.LLM_CANCEL),
+    send: (message: string, image?: string | null, turnId?: string, generationId?: number) =>
+      ipcRenderer.send(IPC.LLM_SEND, { message, image: image || null, turnId: turnId || '', generationId: generationId || 0 }),
+    cancel: (turnId?: string, generationId?: number) => ipcRenderer.send(IPC.LLM_CANCEL, { turnId: turnId || '', generationId: generationId || 0 }),
     reset: () => ipcRenderer.send(IPC.LLM_RESET),
     test: (opts: { endpoint: string; model: string; apiKey?: string }) =>
       ipcRenderer.invoke(IPC.LLM_TEST, opts),
@@ -75,15 +76,15 @@ const api = {
     // apiKey?, source?, message }. Settings/onboarding call this to pre-fill.
     detectHarness: (id: string) =>
       ipcRenderer.invoke(IPC.LLM_DETECT_HARNESS, id),
-    onToken: (cb: (token: string) => void) =>
-      ipcRenderer.on(IPC.LLM_TOKEN, (_e, token) => cb(token)),
-    onTool: (cb: (info: { name: string; args?: string }) => void) =>
+    onToken: (cb: (info: { token: string; turnId: string; generationId: number }) => void) =>
+      ipcRenderer.on(IPC.LLM_TOKEN, (_e, info) => cb(info)),
+    onTool: (cb: (info: { name: string; args?: string; turnId: string; generationId: number }) => void) =>
       ipcRenderer.on(IPC.LLM_TOOL, (_e, info) => cb(info)),
-    onDone: (cb: (fullText: string) => void) =>
-      ipcRenderer.on(IPC.LLM_DONE, (_e, text) => cb(text)),
-    onError: (cb: (error: string) => void) =>
-      ipcRenderer.on(IPC.LLM_ERROR, (_e, error) => cb(error)),
-    onRoute: (cb: (info: { target: string; name: string }) => void) =>
+    onDone: (cb: (info: { text: string; turnId: string; generationId: number }) => void) =>
+      ipcRenderer.on(IPC.LLM_DONE, (_e, info) => cb(info)),
+    onError: (cb: (info: { error: string; turnId: string; generationId: number }) => void) =>
+      ipcRenderer.on(IPC.LLM_ERROR, (_e, info) => cb(info)),
+    onRoute: (cb: (info: { target: string; name: string; turnId: string; generationId: number }) => void) =>
       ipcRenderer.on(IPC.LLM_ROUTE, (_e, info) => cb(info)),
   },
 

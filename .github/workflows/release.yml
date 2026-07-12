@@ -50,7 +50,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - uses: actions/setup-python@v5
@@ -68,8 +68,18 @@ jobs:
       - name: Install JS deps
         run: npm ci
 
-      - name: Compile TypeScript + renderer
-        run: npm run build
+      - name: Validate tagged release version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: node scripts/validate-release-version.js "$GITHUB_REF_NAME"
+
+      - name: Build, lint, and typecheck
+        run: |
+          npm run build
+          npm run lint
+          npm run typecheck
+
+      - name: Release packaging guard
+        run: npm run smoke:release-packaging
 
       # Each sidecar is frozen from its OWN venv (scripts/package-sidecar.sh),
       # which a fresh runner doesn't have — this was the long-standing release
@@ -123,6 +133,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install JS deps
+        run: npm ci
       - uses: actions/download-artifact@v4
         with:
           name: aria-mac-arm64

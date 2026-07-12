@@ -86,7 +86,7 @@
     // Only low-level frames may establish a follow-up's baseline. This keeps
     // immediate speech from poisoning the floor while adapting to typical room
     // ambience (the follow-up caller can tune it for unusual microphones).
-    const floorCaptureMax = opts.floorCaptureMax != null ? opts.floorCaptureMax : 0.08;
+    const floorCaptureMax = opts.floorCaptureMax != null ? opts.floorCaptureMax : 0.06;
     let sawSpeech = false;
     let speechMs = 0;   // consecutive above-gate ms (resets on any quiet frame)
     let silenceMs = 0;

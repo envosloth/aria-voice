@@ -59,14 +59,17 @@ The Python side uses `socket.AF_UNIX`. Both ends must agree per platform.
   `venv/bin/python`), system fallback `python` on win32 (else `python3`).
 
 ## D. Auto-updater channel selection (HIGH)
-- [x] D1. `deliveryChannel()` now returns `win`/`mac` (checked before APPIMAGE so
-  Linux is unchanged); added `usesElectronUpdater()` and `initUpdater` wires the
-  autoUpdater for appimage/win/mac. NSIS (Win) + dmg-zip (Mac) self-update.
-  CAVEAT: macOS auto-apply needs a signed app; unsigned builds degrade to
-  notify (acceptable). Updater + update-progress smoke PASS.
+- [x] D1. `deliveryChannel()` returns `win`/`mac` (checked before APPIMAGE so
+  Linux is unchanged), but `usesElectronUpdater()` enables only AppImage and a
+  Windows package whose embedded update metadata declares a signing
+  `publisherName`. The current unsigned macOS and Windows builds are notify/
+  manual-download only (`canAutoInstall: false`); macOS never auto-applies an
+  unsigned zip/dmg. Updater + update-progress smoke PASS.
 - [x] D2. `installDebUpdate` (pkexec/dpkg) is only reachable via `pendingDeb`,
-  which is only set when `deliveryChannel()==='deb'`. Win/Mac route to
-  `autoUpdater.quitAndInstall`, so pkexec can never run off-Linux.
+  which is only set when `deliveryChannel()==='deb'`. Windows uses
+  `autoUpdater.quitAndInstall` only after the signed-update D1 gate; unsigned
+  Windows and all current macOS builds use the release-page fallback. pkexec can
+  never run off Debian-family Linux.
 
 ## E. Secure storage (DONE)
 - [x] E1. `src/main/secure-storage.ts` `getSelectedStorageBackend()` is Linux-only

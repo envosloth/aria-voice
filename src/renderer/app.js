@@ -17,6 +17,8 @@ const perf = window.AriaPerf || {
 // up in one timeline.
 let currentTurnId = null;
 let currentVoiceTurnId = null;
+let currentGenerationId = 0;
+let currentReplyId = null;
 // Per-turn "first occurrence" guards so each stage is marked once per turn.
 let firstTokenRenderMarked = false;
 let ttsFirstRequestMarked = false;
@@ -75,16 +77,31 @@ let currentAssistantMsg = null;
 // reaches the speakers after a barge-in. Re-armed by ttsPlay() the instant we
 // intentionally ask for new speech.
 let ttsMuted = false;
+let ttsEpoch = 0;
+let activeTtsReplyId = null;
+let ttsRequestId = 0;
 
 // Single funnel for every "speak this text" request. Strips markdown, links,
 // code, emoji and stray symbols so the voice never reads "asterisk" or spells
 // out a URL (the on-screen transcript keeps the original text). Marks audio as
 // wanted again so the onAudio gate lets the freshly-synthesized PCM through.
-function ttsPlay(text) {
+function ttsPlay(text, replyId, replyDone) {
+  const id = replyId || `speech-${++ttsRequestId}`;
+  if (activeTtsReplyId !== id) {
+    activeTtsReplyId = id;
+    ttsRequestId = 0;
+  }
   const speakable = window.AriaAudio.sanitizeForSpeech(text);
-  if (!speakable) return; // nothing worth speaking (e.g. a chunk that was just a URL)
+  if (!speakable) {
+    if (replyDone) { try { aria.tts.replyDone({ replyId: id, epoch: ttsEpoch }); } catch (e) {} }
+    return; // nothing worth speaking (e.g. a chunk that was just a URL)
+  }
   ttsMuted = false;
-  try { aria.tts.play(speakable); } catch (e) {}
+  const requestId = `${id}:${++ttsRequestId}`;
+  try {
+    aria.tts.play({ text: speakable, replyId: id, requestId, epoch: ttsEpoch });
+    if (replyDone) aria.tts.replyDone({ replyId: id, epoch: ttsEpoch });
+  } catch (e) {}
 }
 
 // Autoscroll only when the user is already pinned near the bottom — scrolling
@@ -133,12 +150,12 @@ window.addEventListener('unhandledrejection', (e) => {
 
 function assistantSay(text) {
   addMessage('assistant', text);
-  try { stopPlayback(true); ttsPlay(text); orbState('speaking'); } catch (e) {}
+  try { stopPlayback(true); ttsPlay(text, null, true); orbState('speaking'); } catch (e) {}
 }
 
 // Speak without adding a transcript line (used for the "hold on" filler).
 function speakOnly(text) {
-  try { stopPlayback(true); ttsPlay(text); orbState('speaking'); } catch (e) {}
+  try { stopPlayback(true); ttsPlay(text, null, true); orbState('speaking'); } catch (e) {}
 }
 
 // Single entry point for user turns (text box + voice). Handles screen-share
@@ -154,14 +171,18 @@ async function submitUserMessage(rawText, existingTurnId) {
   // a follow-up listen after spoken exchanges, never after a typed message.
   lastTurnWasVoice = !!existingTurnId;
   currentTurnId = turnId;
+  const generationId = ++currentGenerationId;
+  currentReplyId = `${turnId}:${generationId}`;
   resetTurnMarkers();
   perf.mark(turnId, 'user_input', { chars: text.length });
   addMessage('user', text);
   if (await handleScreenCommand(text)) return;
+  if (turnId !== currentTurnId || generationId !== currentGenerationId) return;
   orbState('processing');
   const image = shouldAttachScreen(text) ? await captureScreenFrame() : null;
+  if (turnId !== currentTurnId || generationId !== currentGenerationId) return;
   perf.mark(turnId, 'dispatch', image ? { image: 1 } : undefined);
-  aria.llm.send(text, image, turnId);
+  aria.llm.send(text, image, turnId, generationId);
   armThinkingHold(text);
 }
 
@@ -207,7 +228,7 @@ function holdOnPhrase(text) {
 // rather than truncate it. `speakOnly` runs stopPlayback first (which clears the
 // flag), so set the flag AFTER it.
 function speakFiller(phrase) {
-  speakOnly(phrase);
+  try { stopPlayback(true); ttsPlay(phrase, currentReplyId, false); orbState('speaking'); } catch (e) {}
   fillerSpeaking = true;
 }
 
@@ -416,17 +437,22 @@ async function handleScreenCommand(text) {
 // wake-word sidecar (and to STT while an utterance is active). Push-to-talk and
 // wake-word detection both open an STT utterance.
 let micStarted = false;
+const micLifecycle = new window.AriaMicLifecycle.MicStartupGate();
 
-async function startMicCapture() {
-  if (micStarted) return;
+async function createMicGraph() {
+  let stream = null;
+  let ctx = null;
+  let source = null;
+  let worklet = null;
+  let sink = null;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
+    stream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
     });
-    const ctx = new AudioContext();
+    ctx = new AudioContext();
     await ctx.audioWorklet.addModule('mic-worklet.js');
-    const source = ctx.createMediaStreamSource(stream);
-    const worklet = new AudioWorkletNode(ctx, 'mic-capture');
+    source = ctx.createMediaStreamSource(stream);
+    worklet = new AudioWorkletNode(ctx, 'mic-capture');
 
     worklet.port.onmessage = (e) => {
       // A bad frame (e.g. an unusual device sample rate that the downsampler
@@ -446,12 +472,34 @@ async function startMicCapture() {
 
     source.connect(worklet);
     // Keep the graph alive without audible output.
-    const sink = ctx.createGain();
+    sink = ctx.createGain();
     sink.gain.value = 0;
     worklet.connect(sink).connect(ctx.destination);
 
-    micStarted = true;
+    return async () => {
+      try { worklet.port.onmessage = null; } catch (e) {}
+      try { source.disconnect(); } catch (e) {}
+      try { worklet.disconnect(); } catch (e) {}
+      try { sink.disconnect(); } catch (e) {}
+      for (const track of stream.getTracks()) track.stop();
+      try { await ctx.close(); } catch (e) {}
+    };
+  } catch (error) {
+    try { source && source.disconnect(); } catch (e) {}
+    try { worklet && worklet.disconnect(); } catch (e) {}
+    try { sink && sink.disconnect(); } catch (e) {}
+    if (stream) for (const track of stream.getTracks()) track.stop();
+    try { if (ctx) await ctx.close(); } catch (e) {}
+    throw error;
+  }
+}
+
+async function startMicCapture() {
+  try {
+    await micLifecycle.start(createMicGraph);
+    micStarted = micLifecycle.started();
   } catch (err) {
+    micStarted = false;
     showError(`Microphone unavailable: ${err.message}. Use text input instead.`);
   }
 }
@@ -494,7 +542,12 @@ function orbState(s) { orbStateName = s; document.body.dataset.state = s; if (wi
 // you cut ARIA off mid-answer with "hey jarvis…" to redirect it.
 function bargeIn() {
   cancelThinkingHold();
-  try { aria.llm.cancel(); } catch (e) {}   // stop generating server-side
+  try { aria.llm.cancel(currentTurnId || '', currentGenerationId); } catch (e) {}   // stop generating server-side
+  // Invalidate a submit that is still awaiting a screen frame as well as any
+  // already-streaming callbacks. Without this, New session/barge-in could let
+  // that late async capture dispatch the reply we explicitly cancelled.
+  currentGenerationId++;
+  currentReplyId = null;
   stopPlayback(true);                        // halt audio + cancel TTS synthesis
   resetTtsStream();                          // drop any half-buffered sentence
   // Finalize any in-progress streaming assistant bubble so the next reply opens
@@ -580,7 +633,7 @@ function endUtterance(opts) {
   } else {
     orbState('processing'); // STT + LLM working
   }
-  aria.stt.end();
+  aria.stt.end(currentVoiceTurnId || '');
   // The transcribe (whisper Vulkan compute) starts now. Freeze the orb's GPU work
   // until the result arrives so the compute queue never contends with the orb's
   // graphics queue — the amdgpu/RDNA4 GPU-reset crash on auto/balanced. Fires for
@@ -650,8 +703,25 @@ aria.stt.onResult((result) => {
   }
 });
 
-aria.stt.onPartial((text) => {
-  partialEl.textContent = text;
+aria.stt.onPartial((result) => {
+  if (!result || result.turnId !== currentVoiceTurnId) return;
+  partialEl.textContent = result.text || '';
+});
+
+aria.stt.onState((event) => {
+  if (!event || event.state !== 'stt_failed' || event.turnId !== currentVoiceTurnId) return;
+  listening = false;
+  vadActive = false;
+  vad = null;
+  clearTimeout(vadSafetyTimer);
+  clearTimeout(noSpeechTimer); noSpeechTimer = null;
+  micBtn.classList.remove('listening');
+  currentVoiceTurnId = null;
+  partialEl.textContent = '';
+  try { window.AriaOrb && window.AriaOrb.endStt && window.AriaOrb.endStt(); } catch (e) {}
+  try { window.AriaOrb && window.AriaOrb.endSttCompute && window.AriaOrb.endSttCompute(); } catch (e) {}
+  orbState('idle');
+  showError(`Speech recognition unavailable: ${event.error || 'startup timed out'}. Use text input instead.`);
 });
 
 // Ctrl+Shift+F toggles the live FPS counter on the orb.
@@ -674,6 +744,7 @@ window.addEventListener('keydown', (e) => {
 // Which target (LLM vs Agent harness) the coordinator routed to.
 let pendingRoute = null;
 aria.llm.onRoute((info) => {
+  if (!info || info.turnId !== currentTurnId || info.generationId !== currentGenerationId) return;
   pendingRoute = info;
   // Only the agent harness runs tools long enough to need a spoken "hold on".
   // Arm the filler for it; the fast LLM path cancels the hold so it stays quiet
@@ -808,7 +879,7 @@ function speakChunk(text) {
     ttsTurnSpeaking = true;
   }
   if (!ttsFirstRequestMarked) { ttsFirstRequestMarked = true; perf.mark(currentTurnId, 'tts_first_request'); }
-  ttsPlay(text);          // queues serially behind earlier sentences in the sidecar
+  ttsPlay(text, currentReplyId, false); // queues serially behind earlier sentences in the sidecar
 }
 
 // Where to cut the next speakable chunk out of `buf`, or -1 to keep buffering.
@@ -858,9 +929,14 @@ function feedTtsStream(token) {
 function resetTtsStream() { ttsStreamBuf = ''; ttsTurnSpeaking = false; }
 
 // A tool the harness invoked — show it above the reply as it happens.
-aria.llm.onTool((info) => { try { addToolChip(info); } catch (e) {} });
+aria.llm.onTool((info) => {
+  if (!info || info.turnId !== currentTurnId || info.generationId !== currentGenerationId) return;
+  try { addToolChip(info); } catch (e) {}
+});
 
-aria.llm.onToken((token) => {
+aria.llm.onToken((info) => {
+  if (!info || info.turnId !== currentTurnId || info.generationId !== currentGenerationId) return;
+  const token = info.token || '';
   if (!firstTokenRenderMarked) { firstTokenRenderMarked = true; perf.mark(currentTurnId, 'first_token_render'); }
   cancelThinkingHold(); // reply has started — no "hold on" needed
   ensureAssistantMsg();
@@ -872,7 +948,9 @@ aria.llm.onToken((token) => {
   feedTtsStream(token);
 });
 
-aria.llm.onDone((fullText) => {
+aria.llm.onDone((info) => {
+  if (!info || info.turnId !== currentTurnId || info.generationId !== currentGenerationId) return;
+  const fullText = info.text || '';
   perf.mark(currentTurnId, 'turn_complete', { chars: (fullText || '').length });
   cancelThinkingHold();
   flushStream(); // drain any tokens buffered since the last frame
@@ -897,6 +975,7 @@ aria.llm.onDone((fullText) => {
   // returned no summary) — don't leave the user in silence wondering if it heard
   // them. A short spoken nudge is the "asked something and got no answer" fix.
   else if (!ttsTurnSpeaking) speakChunk("Sorry, I didn't get an answer for that — could you try again?");
+  if (currentReplyId) { try { aria.tts.replyDone({ replyId: currentReplyId, epoch: ttsEpoch }); } catch (e) {} }
   ttsTurnSpeaking = false; // next response starts a fresh turn
   try { renderSessionList(); } catch (e) {} // this turn was just persisted — refresh the list
 });
@@ -907,7 +986,7 @@ aria.llm.onDone((fullText) => {
 // run at the device's native rate and tag each AudioBuffer with the chunk's true
 // rate, so Web Audio resamples correctly regardless of engine. Chunks are
 // scheduled back-to-back so sentence chunks play seamlessly as they stream in.
-let ttsChunkRate = 24000; // updated per chunk from the 'chunk' state message
+let ttsChunkRate = 24000; // fallback when a malformed packet omits its true rate
 let audioCtx = null;
 let nextPlayTime = 0;
 let ttsSources = [];      // currently scheduled buffer sources (this utterance)
@@ -988,12 +1067,16 @@ function stopPlayback(cancelSidecar) {
   // intentional ttsPlay() re-arms playback — otherwise the sidecar's already-
   // emitted tail would leak out after we've "stopped".
   ttsMuted = true;
+  activeTtsReplyId = null;
   // Also drop any pending half-sample carry byte. Without this, an interruption
   // that left an odd trailing byte would prepend it to the NEXT reply's first
   // PCM segment, misaligning every 16-bit sample and turning the whole reply
   // into noise.
   pcmCarryByte = -1;
-  if (cancelSidecar) { try { aria.tts.stop(); } catch (e) {} }
+  if (cancelSidecar) {
+    ttsEpoch++;
+    try { aria.tts.stop({ epoch: ttsEpoch }); } catch (e) {}
+  }
 }
 
 let ttsAnalyser = null;
@@ -1030,15 +1113,15 @@ function startTtsLevelPoll() { if (ttsLevelRaf == null) ttsLevelRaf = requestAni
 // boundary (see below), prepended to the next segment.
 let pcmCarryByte = -1;
 
-aria.tts.onAudio((pcmArrayBuffer) => {
-  if (ttsMuted) return; // interrupted: discard the stale tail of a stopped reply
+aria.tts.onAudio((packet) => {
+  if (!packet || ttsMuted || packet.replyId !== activeTtsReplyId || packet.epoch !== ttsEpoch) return;
   try {
     // The PCM stream arrives in arbitrarily-sized UDS segments that are NOT
     // aligned to the 2-byte sample boundary. Building an Int16Array over an
     // odd-length buffer throws ("byte length must be a multiple of 2") — an
     // intermittent renderer crash. Carry any trailing odd byte into the next
     // segment so every sample is reconstructed intact.
-    let bytes = new Uint8Array(pcmArrayBuffer);
+    let bytes = new Uint8Array(packet.pcm);
     if (pcmCarryByte >= 0) {
       const merged = new Uint8Array(bytes.length + 1);
       merged[0] = pcmCarryByte;
@@ -1061,7 +1144,7 @@ aria.tts.onAudio((pcmArrayBuffer) => {
       float32[i] = int16[i] / 32768;
     }
 
-    const buffer = ctx.createBuffer(1, float32.length, ttsChunkRate);
+    const buffer = ctx.createBuffer(1, float32.length, packet.sampleRate || ttsChunkRate);
     buffer.getChannelData(0).set(float32);
 
     const source = ctx.createBufferSource();
@@ -1090,18 +1173,10 @@ aria.tts.onAudio((pcmArrayBuffer) => {
 });
 
 aria.tts.onState((state) => {
-  if (!state) return;
-  if (state.state === 'chunk') {
-    if (state.sample_rate) ttsChunkRate = state.sample_rate; // true rate for buffers
-    // A new utterance's first sentence: clear any leftover scheduling so chunks
-    // line up seamlessly (backstop to stopPlayback at play time).
-    if (state.index === 0 && idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
-  }
-  if (state.state === 'done') {
-    // Synthesis finished. Arm the return-to-idle for the moment the last scheduled
-    // audio finishes playing; armIdleAtAudioEnd re-arms if more PCM arrives after
-    // this (stdout 'done' can beat the final UDS PCM), so the orb holds green for
-    // the FULL utterance instead of dropping to idle early.
+  if (!state || state.replyId !== activeTtsReplyId || state.epoch !== ttsEpoch) return;
+  if (state.state === 'reply_done') {
+    // The main process releases reply_done only after every announced PCM byte
+    // for this reply crossed IPC, so this is end-of-reply rather than one request.
     ttsSynthDone = true;
     armIdleAtAudioEnd();
     // NOTE: do NOT reset nextPlayTime here — that previously let the tail be
@@ -1109,7 +1184,9 @@ aria.tts.onState((state) => {
   }
 });
 
-aria.llm.onError((error) => {
+aria.llm.onError((info) => {
+  if (!info || info.turnId !== currentTurnId || info.generationId !== currentGenerationId) return;
+  const error = info.error || 'unknown error';
   cancelThinkingHold();
   streamBuf = '';
   streamTextNode = null;
@@ -2232,46 +2309,48 @@ if (cfg.discoverLlm)     cfg.discoverLlm.addEventListener('click',     () => dis
 if (cfg.discoverHarness) cfg.discoverHarness.addEventListener('click', () => discoverModel('harness'));
 
 settingsSave.addEventListener('click', async () => {
-  await aria.config.set('routing.mode', cfg.routingMode.value);
-  await aria.config.set('llm.endpoint', cfg.llmEndpoint.value.trim());
-  await aria.config.set('llm.model', cfg.llmModel.value.trim());
-  await aria.config.set('harness.id', cfg.harness.value);
-  await aria.config.set('harness.endpoint', cfg.harnessEndpoint.value.trim());
-  await aria.config.set('harness.model', cfg.harnessModel.value.trim());
-  await aria.config.set('stt.model', cfg.sttModel.value);
-  await aria.config.set('stt.backend', cfg.sttBackend.value);
-  applyOrbSttBackend(cfg.sttBackend.value);
-  // Derive the TTS engine from the chosen voice: Kokoro voices are af_/am_/bf_/bm_;
-  // anything else (e.g. en_US-lessac-medium) is a Piper voice.
-  const ttsVoice = cfg.ttsVoice.value.trim();
-  await aria.config.set('tts.engine', /^(af_|am_|bf_|bm_)/.test(ttsVoice) ? 'kokoro' : 'piper');
-  await aria.config.set('tts.voice', ttsVoice);
-  await aria.config.set('wakeword.enabled', cfg.wwEnabled.checked);
-  await aria.config.set('wakeword.phrase', cfg.wwPhrase.value.trim());
-  if (cfg.conversationEnabled) {
-    conversationMode = cfg.conversationEnabled.checked;
-    await aria.config.set('conversation.enabled', conversationMode);
+  settingsSave.disabled = true;
+  try {
+    // Secrets go first: an unavailable/insecure keyring must not leave provider
+    // configuration half-saved while the credentials were rejected.
+    const lk = cfg.llmKey.value.trim();
+    lk ? await aria.secure.set('llm-api-key', lk) : await aria.secure.delete('llm-api-key');
+    const hk = cfg.harnessKey.value.trim();
+    hk ? await aria.secure.set('harness-api-key', hk) : await aria.secure.delete('harness-api-key');
+
+    await aria.config.set('routing.mode', cfg.routingMode.value);
+    await aria.config.set('llm.endpoint', cfg.llmEndpoint.value.trim());
+    await aria.config.set('llm.model', cfg.llmModel.value.trim());
+    await aria.config.set('harness.id', cfg.harness.value);
+    await aria.config.set('harness.endpoint', cfg.harnessEndpoint.value.trim());
+    await aria.config.set('harness.model', cfg.harnessModel.value.trim());
+    await aria.config.set('stt.model', cfg.sttModel.value);
+    await aria.config.set('stt.backend', cfg.sttBackend.value);
+    applyOrbSttBackend(cfg.sttBackend.value);
+    const ttsVoice = cfg.ttsVoice.value.trim();
+    await aria.config.set('tts.engine', /^(af_|am_|bf_|bm_)/.test(ttsVoice) ? 'kokoro' : 'piper');
+    await aria.config.set('tts.voice', ttsVoice);
+    await aria.config.set('wakeword.enabled', cfg.wwEnabled.checked);
+    await aria.config.set('wakeword.phrase', cfg.wwPhrase.value.trim());
+    if (cfg.conversationEnabled) {
+      conversationMode = cfg.conversationEnabled.checked;
+      await aria.config.set('conversation.enabled', conversationMode);
+    }
+    await aria.config.set('ui.theme', cfg.theme.value);
+    applyTheme(cfg.theme.value);
+    if (cfg.perfPreset) {
+      cfg.perfPreset.value = (await aria.config.get('ui.perfPreset')) || 'power-saver';
+      updatePresetHint();
+    }
+    loadHardwareInfo().then((info) => applyOrbQuality(info));
+    savedMsg.textContent = 'Saved ✓';
+    updateChatSub();
+    setTimeout(() => { savedMsg.textContent = ''; }, 2500);
+  } catch (e) {
+    savedMsg.textContent = 'Save failed: ' + (e && e.message ? e.message : String(e));
+  } finally {
+    settingsSave.disabled = false;
   }
-  await aria.config.set('ui.theme', cfg.theme.value);
-  applyTheme(cfg.theme.value);
-  // The GPU cap is preset-driven (no separate control). Manually editing the STT
-  // model / backend / TTS voice above flips the active preset to 'custom' in main;
-  // re-read it so the Resource-usage dropdown reflects that.
-  if (cfg.perfPreset) { cfg.perfPreset.value = (await aria.config.get('ui.perfPreset')) || 'power-saver'; updatePresetHint(); }
-  // A changed STT model/backend may not be downloaded yet + needs a sidecar
-  // reload; that's handled in main. Re-derive the orb quality from the (possibly
-  // preset-changed) GPU cap so the orb matches what was saved.
-  loadHardwareInfo().then((info) => applyOrbQuality(info));
-
-  // Persist exactly what's in the key fields (they stay populated, not cleared).
-  const lk = cfg.llmKey.value.trim();
-  lk ? await aria.secure.set('llm-api-key', lk) : await aria.secure.delete('llm-api-key');
-  const hk = cfg.harnessKey.value.trim();
-  hk ? await aria.secure.set('harness-api-key', hk) : await aria.secure.delete('harness-api-key');
-
-  savedMsg.textContent = 'Saved ✓';
-  setTimeout(() => { savedMsg.textContent = ''; }, 2500);
-  updateChatSub();
 });
 
 // --- First-run onboarding walkthrough ---

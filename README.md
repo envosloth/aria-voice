@@ -111,10 +111,13 @@ npm run dist     # freezes sidecars (PyInstaller onedir) + builds AppImage and .
 
 Output lands in `dist-installers/`. Notes:
 
-- Model weights are **not** bundled — they download on first run (resumable,
-  checksummed). The installer stays small.
-- The `.deb` declares `gnome-keyring` / `libsecret-1-0` as dependencies — without
-  a secret store, `safeStorage` silently falls back to plaintext obfuscation.
+- Model weights are **not** bundled — they download on first run and resume
+  interrupted transfers. Integrity is enforced whenever the manifest carries
+  authoritative size or SHA-256 metadata; this repository does not claim every
+  upstream model URL is currently checksum-pinned. The installer stays small.
+- The `.deb` declares `gnome-keyring` / `libsecret-1-0` as dependencies — if the
+  OS keyring is unavailable, ARIA refuses to persist API keys rather than using
+  safeStorage's plaintext-obfuscation fallback.
 - AppImage may need `libfuse2` on older targets.
 - The Chromium SUID sandbox must be configured (root:root, mode 4755) —
   electron-builder handles this for the packaged app. Never ship `--no-sandbox`.

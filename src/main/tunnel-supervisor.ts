@@ -34,7 +34,7 @@ import { ChildProcess, spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import net from 'net';
 import { config } from './config';
-import { buildTunnelArgv, parseForwardPort } from './tunnel-args';
+import { buildTunnelArgv, parseForwardPort, TunnelStartGate } from './tunnel-args';
 
 // Ask the OS for a free local TCP port (bind 0, read the assigned port, release).
 // We hand this concrete port to `ssh -L` instead of letting ssh pick, because
@@ -85,6 +85,7 @@ export class TunnelSupervisor extends EventEmitter {
   private attempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private connectPollTimer: ReturnType<typeof setTimeout> | null = null;
+  private startGate = new TunnelStartGate();
   private startedAt = 0;
   // Last non-empty line ssh wrote to stderr, surfaced in exit/error messages so a
   // failure is diagnosable ("Permission denied (publickey)" = your key; "Could
@@ -147,11 +148,15 @@ export class TunnelSupervisor extends EventEmitter {
       return;
     }
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
-    this.spawn(r);
+    const generation = this.startGate.begin();
+    if (generation === null) return;
+    this.setState('starting', 'allocating local tunnel port…');
+    this.spawn(r, generation);
   }
 
   // Manually stop the tunnel (also called on `enabled = false`).
   stop(): void {
+    this.startGate.cancel();
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     if (this.connectPollTimer) { clearTimeout(this.connectPollTimer); this.connectPollTimer = null; }
     if (this.child && !this.child.killed) {
@@ -167,12 +172,12 @@ export class TunnelSupervisor extends EventEmitter {
     sshHost: string; sshPort: number; identityFile: string;
     remoteHost: string; remotePort: number; localPort: number;
     rawCommand: string; target: 'harness' | 'llm' | 'custom';
-  }): void {
+  }, generation: number): void {
     // rawCommand: the user owns the whole argv; we can't inject a port, so we fall
     // back to discovering it from ssh's stderr (the user should add `-v` for that
     // to work). Split on whitespace — the user is responsible for quoting.
     if (r.rawCommand && r.rawCommand.trim()) {
-      this.launch(r, r.rawCommand.trim().split(/\s+/), null);
+      if (this.startGate.claim(generation)) this.launch(r, r.rawCommand.trim().split(/\s+/), null);
       return;
     }
     // Structured form. Never hand ssh a local port of 0 — OpenSSH rejects
@@ -181,16 +186,23 @@ export class TunnelSupervisor extends EventEmitter {
     // When the user asked for an OS-assigned port (0), allocate a concrete free
     // port ourselves and hand ssh that.
     if (r.localPort && r.localPort > 0) {
-      this.launch(r, buildTunnelArgv(r, r.localPort), r.localPort);
+      if (this.startGate.claim(generation)) this.launch(r, buildTunnelArgv(r, r.localPort), r.localPort);
       return;
     }
     freePort().then((port) => {
       // Config may have been toggled off while we were picking a port.
-      if (!(config.get('remote') as { enabled: boolean }).enabled) return;
-      if (this.state === 'stopped' || this.state === 'connected') return;
+      if (!this.startGate.isCurrent(generation)) return;
+      if (!(config.get('remote') as { enabled: boolean }).enabled
+        || this.state === 'stopped' || this.state === 'connected') {
+        this.startGate.claim(generation);
+        return;
+      }
+      if (!this.startGate.claim(generation)) return;
       this.launch(r, buildTunnelArgv(r, port), port);
     }).catch((e) => {
-      this.scheduleReconnect(`could not allocate a local port: ${(e as Error).message}`);
+      if (this.startGate.claim(generation)) {
+        this.scheduleReconnect(`could not allocate a local port: ${(e as Error).message}`);
+      }
     });
   }
 

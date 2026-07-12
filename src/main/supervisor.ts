@@ -18,6 +18,7 @@ interface SidecarState {
   process: ChildProcess | null;
   socket: net.Socket | null;
   server: net.Server | null;
+  socketPath: string | null;
   restartCount: number;
   lastHeartbeat: number;
   circuitOpen: boolean;
@@ -27,6 +28,9 @@ interface SidecarState {
   // True between start() and stop()/stopAll(): the caller wants this sidecar
   // running. Used to auto-revive it after the circuit breaker's cooldown.
   desiredRunning: boolean;
+  // Bumped by intentional stop/restart. A crash backoff remembers its value so
+  // it cannot respawn a sidecar the user deliberately stopped in the meantime.
+  restartGeneration: number;
   // Pending circuit-breaker cooldown reset (see CIRCUIT_RESET_MS), cleared on
   // any intentional (re)start/stop so it can't revive a sidecar we just stopped.
   circuitResetTimer: ReturnType<typeof setTimeout> | null;
@@ -58,6 +62,7 @@ export class Supervisor {
   private shuttingDown = false;
   private rssLimitsMb: Record<string, number>;
   private memoryCheckMs: number;
+  private socketDir: string | null = null;
 
   constructor(
     onStatus: StatusCallback,
@@ -89,10 +94,18 @@ export class Supervisor {
     state.stdoutBuf = '';
 
     const server = net.createServer((conn) => {
+      // One sidecar owns one PCM connection. Reject stale/extra clients instead
+      // of letting a late old process replace the live sidecar's audio stream.
+      if (state.server !== server || !state.process || state.socket) {
+        conn.destroy();
+        return;
+      }
       state.socket = conn;
-      conn.on('data', (data) => this.handleSidecarData(name, data));
-      conn.on('error', () => { state.socket = null; });
-      conn.on('close', () => { state.socket = null; });
+      conn.on('data', (data) => {
+        if (state.socket === conn) this.handleSidecarData(name, data);
+      });
+      conn.on('error', () => { if (state.socket === conn) state.socket = null; });
+      conn.on('close', () => { if (state.socket === conn) state.socket = null; });
     });
 
     // PCM data channel. The address string handed to the sidecar via --socket
@@ -112,19 +125,28 @@ export class Supervisor {
       socketArg = `tcp://127.0.0.1:${port}`;
     } else {
       // POSIX (Linux/macOS): filesystem Unix domain socket (unchanged).
-      const socketPath = path.join(SOCKET_DIR, `${name}.sock`);
-      fs.mkdirSync(SOCKET_DIR, { recursive: true });
+      const socketDir = this.getSocketDir();
+      const socketPath = path.join(socketDir, `${name}.sock`);
       try { fs.unlinkSync(socketPath); } catch {}
       await new Promise<void>((resolve, reject) => {
         server.listen(socketPath, () => resolve());
         server.on('error', reject);
       });
       socketArg = socketPath;
+      state.socketPath = socketPath;
     }
 
     state.server = server;
 
     const { bin, args: binArgs } = this.resolveSidecarCommand(name);
+    // ARIA is often launched from another Python application (including Hermes).
+    // Never let that parent's virtualenv/PYTHONPATH contaminate the sidecar's
+    // dedicated interpreter with binary wheels from a different Python version.
+    const childEnv: NodeJS.ProcessEnv = { ...process.env, PYTHONNOUSERSITE: '1' };
+    delete childEnv.PYTHONPATH;
+    delete childEnv.PYTHONHOME;
+    delete childEnv.VIRTUAL_ENV;
+    delete childEnv.__PYVENV_LAUNCHER__;
     const child = spawn(bin, [...binArgs, '--socket', socketArg], {
       stdio: ['pipe', 'pipe', 'pipe'],
       // POSIX: own process group so killSidecar can tree-kill via negative PID.
@@ -132,6 +154,7 @@ export class Supervisor {
       // and detaching would spawn a stray console — so detach POSIX-only.
       detached: process.platform !== 'win32',
       windowsHide: true,
+      env: childEnv,
     });
 
     child.stdout?.on('data', (data: Buffer) => {
@@ -174,6 +197,7 @@ export class Supervisor {
     const state = this.sidecars.get(name);
     if (state) {
       state.recovering = true; // suppress the exit handler's crash-restart
+      state.restartGeneration++;
       await this.killSidecar(name, state);
       state.recovering = false;
       state.circuitOpen = false;
@@ -187,11 +211,13 @@ export class Supervisor {
     const state = this.sidecars.get(name);
     if (!state) return;
     state.desiredRunning = false;
+    state.restartGeneration++;
     if (state.circuitResetTimer) { clearTimeout(state.circuitResetTimer); state.circuitResetTimer = null; }
     state.recovering = true;
     await this.killSidecar(name, state);
     state.recovering = false;
     state.process = null;
+    this.resetReadyLatch(state);
   }
 
   async stopAll(): Promise<void> {
@@ -201,12 +227,39 @@ export class Supervisor {
 
     for (const state of this.sidecars.values()) {
       state.desiredRunning = false;
+      state.restartGeneration++;
       if (state.circuitResetTimer) { clearTimeout(state.circuitResetTimer); state.circuitResetTimer = null; }
     }
     const kills = Array.from(this.sidecars.entries()).map(([name, state]) =>
       this.killSidecar(name, state)
     );
     await Promise.allSettled(kills);
+    if (this.socketDir) {
+      try { fs.rmSync(this.socketDir, { recursive: true, force: true }); } catch {}
+      this.socketDir = null;
+    }
+  }
+
+  /**
+   * Reversibly stop only sidecars that are live for an update attempt. Unlike
+   * stopAll(), this leaves monitoring and the supervisor usable if installation
+   * is cancelled or fails.
+   */
+  async quiesceForUpdate(): Promise<SidecarName[]> {
+    const running = Array.from(this.sidecars.entries())
+      .filter(([, state]) => !!state.process)
+      .map(([name]) => name);
+    await Promise.allSettled(running.map((name) => this.stop(name)));
+    return running;
+  }
+
+  /** Restart exactly the sidecars captured by quiesceForUpdate(). */
+  async resumeAfterUpdate(names: SidecarName[]): Promise<void> {
+    for (const name of names) {
+      const state = this.sidecars.get(name);
+      if (!state || state.process || this.shuttingDown) continue;
+      try { await this.start(name); } catch { /* resume the remaining snapshot */ }
+    }
   }
 
   startMonitoring(): void {
@@ -297,6 +350,8 @@ export class Supervisor {
     if (!state || this.shuttingDown) return;
 
     state.process = null;
+    this.resetReadyLatch(state);
+    const restartGeneration = state.restartGeneration;
     state.restartCount++;
 
     if (state.restartCount >= MAX_RESTART_ATTEMPTS) {
@@ -309,7 +364,7 @@ export class Supervisor {
       if (state.circuitResetTimer) clearTimeout(state.circuitResetTimer);
       state.circuitResetTimer = setTimeout(() => {
         state.circuitResetTimer = null;
-        if (this.shuttingDown) return;
+        if (this.shuttingDown || !state.desiredRunning || state.restartGeneration !== restartGeneration) return;
         state.circuitOpen = false;
         state.restartCount = 0;
         this.onStatus(name, 'circuit-reset', 'cooldown elapsed — retrying');
@@ -327,7 +382,7 @@ export class Supervisor {
     // Recovery cycle complete — clear the guard so the monitors resume. A
     // healthy restart will reset restartCount when the sidecar emits 'ready'.
     state.recovering = false;
-    if (!this.shuttingDown) {
+    if (!this.shuttingDown && state.desiredRunning && state.restartGeneration === restartGeneration) {
       await this.start(name);
     }
   }
@@ -371,13 +426,17 @@ export class Supervisor {
   }
 
   private async killSidecar(name: SidecarName, state: SidecarState): Promise<void> {
+    if (state.socket) {
+      state.socket.destroy();
+      state.socket = null;
+    }
     if (state.server) {
       state.server.close();
       state.server = null;
     }
-    if (state.socket) {
-      state.socket.destroy();
-      state.socket = null;
+    if (state.socketPath) {
+      try { fs.unlinkSync(state.socketPath); } catch {}
+      state.socketPath = null;
     }
     if (!state.process?.pid) return;
 
@@ -460,11 +519,13 @@ export class Supervisor {
         process: null,
         socket: null,
         server: null,
+        socketPath: null,
         restartCount: 0,
         lastHeartbeat: 0,
         circuitOpen: false,
         recovering: false,
         desiredRunning: false,
+        restartGeneration: 0,
         circuitResetTimer: null,
         ready: false,
         readyPromise: Promise.resolve(),
@@ -492,12 +553,28 @@ export class Supervisor {
    */
   async waitForReady(name: SidecarName, timeoutMs = 20000): Promise<void> {
     const state = this.sidecars.get(name);
-    if (!state || state.ready || state.circuitOpen) return;
+    if (!state) throw new Error(`${name} sidecar has not been started`);
+    if (!state.desiredRunning && !state.process) throw new Error(`${name} sidecar is stopped`);
+    if (state.circuitOpen) throw new Error(`${name} sidecar circuit is open`);
+    if (state.ready) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
       state.readyPromise,
-      new Promise<void>((resolve) => { timer = setTimeout(resolve, timeoutMs); }),
+      new Promise<void>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${name} sidecar did not become ready within ${timeoutMs}ms`)), timeoutMs);
+      }),
     ]);
     if (timer) clearTimeout(timer);
+  }
+
+  private getSocketDir(): string {
+    if (this.socketDir) return this.socketDir;
+    const owner = typeof process.getuid === 'function' ? process.getuid() : process.pid;
+    const socketRoot = `${SOCKET_DIR}-${owner}`;
+    fs.mkdirSync(socketRoot, { recursive: true, mode: 0o700 });
+    try { fs.chmodSync(socketRoot, 0o700); } catch { /* Windows TCP does not use this directory */ }
+    this.socketDir = fs.mkdtempSync(path.join(socketRoot, 'instance-'));
+    try { fs.chmodSync(this.socketDir, 0o700); } catch { /* Windows TCP does not use this directory */ }
+    return this.socketDir;
   }
 }

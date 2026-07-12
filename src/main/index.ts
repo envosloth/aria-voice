@@ -10,7 +10,7 @@ import { detectHarness } from './harness-detect';
 import { coordinate, cancelCoordination, resetConversation, resumeSession, deletePersistedSession } from './coordinator';
 import { initTimers } from './timers';
 import * as sessions from './sessions';
-import { buildManifest, missingModels, downloadModel } from './model-manager';
+import { buildManifest, missingOrInvalidModels, downloadModel } from './model-manager';
 import { perfEnabled, setPerfEnabled, perfMark, perfMarkExternal } from './perf';
 import { detectHardware, perfProfile, clampCap, resolveProfile, isPerfPreset, PerfPreset, ResourceProfile } from './hardware';
 import {
@@ -21,6 +21,7 @@ import { IPC } from '../shared/ipc-channels';
 import { SidecarName } from '../shared/constants';
 import { tunnel, installTunnelHook } from './tunnel-supervisor';
 import { SttTurnGate, TranscribeRequest } from './stt-turn';
+import { LlmGeneration, LlmGenerationGate, TtsAudioGate, TtsAudioPacket } from './voice-lifecycle';
 
 // Chromium feature flags must be set in ONE enable-features switch — calling
 // appendSwitch('enable-features', …) twice overwrites rather than merges.
@@ -337,18 +338,28 @@ function setupIpcHandlers(): void {
   ipcMain.handle(IPC.SECURE_STORE_SET, (_e, key: string, value: string) => setSecret(key, value));
   ipcMain.handle(IPC.SECURE_STORE_DELETE, (_e, key: string) => deleteSecret(key));
 
-  ipcMain.on(IPC.LLM_SEND, (_e, payload: string | { message: string; image?: string | null; turnId?: string }) => {
+  ipcMain.on(IPC.LLM_SEND, (_e, payload: string | { message: string; image?: string | null; turnId?: string; generationId?: number }) => {
     const message = typeof payload === 'string' ? payload : payload.message;
     const image = typeof payload === 'string' ? null : (payload.image || null);
     const turnId = typeof payload === 'string' ? '' : (payload.turnId || '');
+    const generationId = typeof payload === 'string' || !Number.isFinite(payload.generationId)
+      ? Date.now() : Number(payload.generationId);
+    const generation = llmGenerationGate.begin(turnId || `text-${Date.now()}`, generationId);
+    // Abort the prior stream before starting this generation. Its callbacks can
+    // still arrive, so every callback below also checks the generation gate.
+    cancelCoordination();
     perfMark(turnId, 'main_recv', image ? { image: 1 } : undefined);
-    coordinate(message, {
-      onRoute: (info) => mainWindow?.webContents.send(IPC.LLM_ROUTE, info),
-      onToken: (token) => mainWindow?.webContents.send(IPC.LLM_TOKEN, token),
-      onTool: (info) => mainWindow?.webContents.send(IPC.LLM_TOOL, info),
-      onDone: (text) => mainWindow?.webContents.send(IPC.LLM_DONE, text),
-      onError: (err) => mainWindow?.webContents.send(IPC.LLM_ERROR, err),
-    }, { image, turnId });
+    const isCurrent = () => llmGenerationGate.isCurrent(generation);
+    const send = (channel: string, body: Record<string, unknown>) => {
+      if (isCurrent()) mainWindow?.webContents.send(channel, { ...body, turnId: generation.turnId, generationId: generation.generationId });
+    };
+    void coordinate(message, {
+      onRoute: (info) => send(IPC.LLM_ROUTE, info),
+      onToken: (token) => send(IPC.LLM_TOKEN, { token }),
+      onTool: (info) => send(IPC.LLM_TOOL, info),
+      onDone: (text) => send(IPC.LLM_DONE, { text }),
+      onError: (error) => send(IPC.LLM_ERROR, { error }),
+    }, { image, turnId: generation.turnId, isCurrent });
   });
 
   // Latency instrumentation (see perf.ts): the renderer asks once whether marks
@@ -379,23 +390,48 @@ function setupIpcHandlers(): void {
 
   // Barge-in: the renderer heard the wake word (or push-to-talk) while a reply
   // was still streaming — abort generation so ARIA stops talking and listens.
-  ipcMain.on(IPC.LLM_CANCEL, () => cancelCoordination());
-
-  // New session: abort anything in flight and wipe the conversation history so
-  // the next turn starts with no prior context.
-  ipcMain.on(IPC.LLM_RESET, () => { cancelCoordination(); resetConversation(); });
-
-  ipcMain.on(IPC.TTS_PLAY, async (_e, text: string) => {
-    try {
-      await ensureSidecar('tts');
-      supervisor.sendToSidecar('tts', { type: 'synthesize', text });
-    } catch (e) {
-      console.error('[ARIA] TTS play failed:', (e as Error).message);
+  ipcMain.on(IPC.LLM_CANCEL, (_e, requested?: Partial<LlmGeneration>) => {
+    const generation = requested?.turnId && Number.isFinite(requested.generationId)
+      ? { turnId: requested.turnId, generationId: Number(requested.generationId) }
+      : undefined;
+    if (!generation || llmGenerationGate.isCurrent(generation)) {
+      llmGenerationGate.cancel(generation);
+      cancelCoordination();
     }
   });
 
-  ipcMain.on(IPC.TTS_STOP, () => {
-    supervisor.sendToSidecar('tts', { type: 'stop' });
+  // New session: abort anything in flight and wipe the conversation history so
+  // the next turn starts with no prior context.
+  ipcMain.on(IPC.LLM_RESET, () => { llmGenerationGate.cancel(); cancelCoordination(); resetConversation(); });
+
+  ipcMain.on(IPC.TTS_PLAY, (_e, request: { text?: string; replyId?: string; requestId?: string; epoch?: number }) => {
+    const text = request?.text || '';
+    const replyId = request?.replyId || '';
+    const requestId = request?.requestId || '';
+    const epoch = Number(request?.epoch);
+    if (!text || !replyId || !requestId || !Number.isFinite(epoch) || epoch !== ttsEpoch) return;
+    ttsAudioGate.activate(replyId, epoch);
+    queueTtsControl(epoch, async () => {
+      supervisor.sendToSidecar('tts', { type: 'synthesize', text, reply_id: replyId, request_id: requestId, epoch });
+    });
+  });
+
+  ipcMain.on(IPC.TTS_REPLY_DONE, (_e, request: { replyId?: string; epoch?: number }) => {
+    const replyId = request?.replyId || '';
+    const epoch = Number(request?.epoch);
+    if (!replyId || !Number.isFinite(epoch) || epoch !== ttsEpoch) return;
+    ttsAudioGate.activate(replyId, epoch);
+    queueTtsControl(epoch, async () => {
+      supervisor.sendToSidecar('tts', { type: 'reply_done', reply_id: replyId, epoch });
+    });
+  });
+
+  ipcMain.on(IPC.TTS_STOP, (_e, request?: { epoch?: number }) => {
+    const requestedEpoch = Number(request?.epoch);
+    const nextEpoch = Number.isFinite(requestedEpoch) && requestedEpoch > ttsEpoch ? requestedEpoch : ttsEpoch + 1;
+    ttsEpoch = nextEpoch;
+    ttsAudioGate.activate('', ttsEpoch);
+    supervisor.sendToSidecar('tts', { type: 'stop', epoch: ttsEpoch });
   });
 
   // Onboarding "Test connection": one short non-streaming round-trip to confirm
@@ -443,25 +479,30 @@ function setupIpcHandlers(): void {
     if (readyChunk) supervisor.sendPcm('stt', readyChunk);
   });
 
-  ipcMain.on(IPC.STT_START, async (_e, turnId?: string) => {
+  ipcMain.on(IPC.STT_START, (_e, turnId?: string) => {
     const requestedTurnId = turnId || `voice-${Date.now()}`;
     sttTurnId = requestedTurnId;
     sttGate.begin(requestedTurnId);
     perfMark(requestedTurnId, 'stt_start');
-    try {
-      await ensureSidecar('stt');
-      // A newer utterance may supersede this async startup. Never let an old
-      // promise reset the new turn's buffered audio.
-      if (sttGate.isCurrent(requestedTurnId)) {
-        supervisor.sendToSidecar('stt', { type: 'start', utterance_id: requestedTurnId });
+    void (async () => {
+      try {
+        await ensureSidecar('stt', STT_START_DEADLINE_MS);
+        // A newer utterance may supersede this async startup. Never let an old
+        // promise reset the new turn's buffered audio.
+        if (sttGate.isCurrent(requestedTurnId)) {
+          supervisor.sendToSidecar('stt', { type: 'start', utterance_id: requestedTurnId });
+        }
+      } catch (e) {
+        if (sttGate.failStart(requestedTurnId)) {
+          mainWindow?.webContents.send(IPC.STT_STATE, { state: 'stt_failed', turnId: requestedTurnId, error: (e as Error).message });
+        }
+        console.error('[ARIA] STT start failed:', (e as Error).message);
       }
-    } catch (e) {
-      sttGate.failStart(requestedTurnId);
-      console.error('[ARIA] STT start failed:', (e as Error).message);
-    }
+    })();
   });
 
-  ipcMain.on(IPC.STT_END, () => {
+  ipcMain.on(IPC.STT_END, (_e, turnId?: string) => {
+    if (turnId && !sttGate.isCurrent(turnId)) return;
     perfMark(sttTurnId, 'stt_transcribe_req');
     const request = sttGate.end();
     if (request) sendSttTranscribe(request);
@@ -469,9 +510,37 @@ function setupIpcHandlers(): void {
 }
 
 const sttGate = new SttTurnGate();
+const llmGenerationGate = new LlmGenerationGate();
+const ttsAudioGate = new TtsAudioGate();
+let ttsEpoch = 0;
+let ttsControlChain: Promise<void> = Promise.resolve();
+const STT_START_DEADLINE_MS = 5000;
 // Turn id of the in-flight voice utterance (from the renderer), so the STT
 // stage marks join the same timeline as that turn's later LLM/TTS marks.
 let sttTurnId = '';
+
+function queueTtsControl(epoch: number, action: () => Promise<void>): void {
+  ttsControlChain = ttsControlChain.catch(() => {}).then(async () => {
+    if (epoch !== ttsEpoch) return;
+    await ensureSidecar('tts');
+    if (epoch === ttsEpoch) await action();
+  }).catch((e) => console.error('[ARIA] TTS control failed:', (e as Error).message));
+}
+
+function deliverTtsPackets(packets: TtsAudioPacket[]): void {
+  for (const packet of packets) {
+    mainWindow?.webContents.send(IPC.TTS_AUDIO, {
+      pcm: packet.pcm,
+      replyId: packet.replyId,
+      requestId: packet.requestId,
+      epoch: packet.epoch,
+      sampleRate: packet.sampleRate,
+    });
+  }
+  for (const done of ttsAudioGate.takeReplyDone()) {
+    mainWindow?.webContents.send(IPC.TTS_STATE, { state: 'reply_done', replyId: done.replyId, epoch: done.epoch });
+  }
+}
 
 function sendSttTranscribe(request: TranscribeRequest): void {
   supervisor.sendToSidecar('stt', {
@@ -507,6 +576,7 @@ app.whenReady().then(async () => {
 
   supervisor = new Supervisor(
     (name: SidecarName, status: string, detail?: string) => {
+      if (name === 'tts' && (status === 'started' || status === 'exited')) ttsAudioGate.resetTransport();
       mainWindow?.webContents.send(IPC.SIDECAR_STATUS, { name, status, detail });
       if (status === 'error' || status === 'circuit-open') {
         mainWindow?.webContents.send(IPC.SIDECAR_ERROR, { name, status, detail });
@@ -519,9 +589,11 @@ app.whenReady().then(async () => {
   );
 
   supervisor.onBinaryData((name: SidecarName, data: Buffer) => {
-    // TTS PCM stream -> renderer for playback (size announced via tts_chunk).
+    // TTS PCM has no packet boundaries. Frame it with the corresponding stdout
+    // byte announcements before crossing Electron IPC so metadata and bytes
+    // cannot be paired with another request after a stop/new-play race.
     if (name === 'tts') {
-      mainWindow?.webContents.send(IPC.TTS_AUDIO, data);
+      deliverTtsPackets(ttsAudioGate.push(data));
     }
   });
 
@@ -569,12 +641,17 @@ app.whenReady().then(async () => {
   }
   registerGlobalShortcut();
 
-  // In-app updates. beforeInstall stops the sidecars so an AppImage relaunch
-  // never orphans a child process. A one-shot check runs shortly after launch
-  // (skipped under the headless smoke harness) so a returning user is told about
-  // a new release without having to open Settings.
+  // Update installation quiesces only live sidecars. If polkit/the installer is
+  // cancelled, that exact snapshot is resumed instead of leaving voice disabled.
   if (!SMOKE) {
-    initUpdater(mainWindow, { beforeInstall: () => supervisor.stopAll() });
+    let updateSidecars: SidecarName[] = [];
+    initUpdater(mainWindow, {
+      beforeInstall: async () => { updateSidecars = await supervisor.quiesceForUpdate(); },
+      afterInstallFailure: async () => {
+        await supervisor.resumeAfterUpdate(updateSidecars);
+        updateSidecars = [];
+      },
+    });
     setTimeout(() => { void checkForUpdates(); }, 8000);
   }
 
@@ -606,7 +683,7 @@ app.whenReady().then(async () => {
   // the "laggy until STT finishes" hitch. Done in the background so it doesn't
   // block startup. TTS stays lazy (loaded when first needed).
   if (modelsOk && !SMOKE && config.get('stt.prewarm') !== false) {
-    setTimeout(() => { void ensureSidecar('stt'); }, 2500);
+    setTimeout(() => { void ensureSidecar('stt').catch((e) => console.error('[ARIA] STT prewarm failed:', (e as Error).message)); }, 2500);
   }
 
   // Pre-warm TTS too (staggered after STT to avoid a load spike), so the first
@@ -614,7 +691,7 @@ app.whenReady().then(async () => {
   // the dominant chunk of the text->audio delay. The sidecar runs a throwaway
   // synthesis on load, so by 'ready' the graph is hot.
   if (modelsOk && !SMOKE && config.get('tts.prewarm') !== false) {
-    setTimeout(() => { void ensureSidecar('tts'); }, 3500);
+    setTimeout(() => { void ensureSidecar('tts').catch((e) => console.error('[ARIA] TTS prewarm failed:', (e as Error).message)); }, 3500);
   }
 
   if (SMOKE) {
@@ -947,12 +1024,13 @@ app.whenReady().then(async () => {
             );
             await new Promise((r) => setTimeout(r, 100));
             const wc = mainWindow.webContents;
-            wc.send(IPC.LLM_ROUTE, { target: 'harness', name: 'Agent' });
-            wc.send(IPC.LLM_TOOL, { name: 'web_search', args: '{"q":"weather Austin"}' });
-            wc.send(IPC.LLM_TOOL, { name: 'get_weather' });
-            wc.send(IPC.LLM_TOOL, { name: 'web_search' }); // duplicate -> ×2
+            const demoCorrelation = { turnId: 'demo', generationId: 1 };
+            wc.send(IPC.LLM_ROUTE, { target: 'harness', name: 'Agent', ...demoCorrelation });
+            wc.send(IPC.LLM_TOOL, { name: 'web_search', args: '{"q":"weather Austin"}', ...demoCorrelation });
+            wc.send(IPC.LLM_TOOL, { name: 'get_weather', ...demoCorrelation });
+            wc.send(IPC.LLM_TOOL, { name: 'web_search', ...demoCorrelation }); // duplicate -> ×2
             for (const tok of ['It’s ', 'sunny ', 'and 75°F ', 'in Austin ', 'right now.']) {
-              wc.send(IPC.LLM_TOKEN, tok);
+              wc.send(IPC.LLM_TOKEN, { token: tok, ...demoCorrelation });
             }
             await new Promise((r) => setTimeout(r, 300));
             // The first-run onboarding overlay loads async and can re-show after
@@ -1150,8 +1228,14 @@ async function ensureModelsReady(): Promise<boolean> {
   const sttModel = config.get('stt.model') as string;
   const ttsVoice = config.get('tts.voice') as string;
   const ttsEngine = (config.get('tts.engine') as string) || 'kokoro';
-  const manifest = buildManifest(sttModel, ttsVoice, ttsEngine);
-  const missing = missingModels(manifest);
+  let manifest;
+  try {
+    manifest = buildManifest(sttModel, ttsVoice, ttsEngine);
+  } catch (err) {
+    mainWindow?.webContents.send(IPC.MODEL_ERROR, (err as Error).message);
+    return false;
+  }
+  const missing = await missingOrInvalidModels(manifest);
 
   if (missing.length === 0) return true;
 
@@ -1178,17 +1262,22 @@ async function ensureModelsReady(): Promise<boolean> {
 }
 
 const lazyStarted = new Set<SidecarName>();
+const sidecarStarts = new Map<SidecarName, Promise<void>>();
 
-async function ensureSidecar(name: SidecarName): Promise<void> {
+async function ensureSidecar(name: SidecarName, timeoutMs = 20000): Promise<void> {
   if (!lazyStarted.has(name)) {
-    lazyStarted.add(name);
-    await supervisor.start(name);
+    let start = sidecarStarts.get(name);
+    if (!start) {
+      start = supervisor.start(name).then(() => { lazyStarted.add(name); }).finally(() => { sidecarStarts.delete(name); });
+      sidecarStarts.set(name, start);
+    }
+    await start;
   }
   // Block until the sidecar has loaded its model and emitted 'ready'. Without
   // this the first 'synthesize'/'transcribe' could reach the process before
   // initialize() finished, hitting a not-yet-loaded model (the first-utterance
   // "'NoneType' object has no attribute 'create'" race).
-  await supervisor.waitForReady(name);
+  await supervisor.waitForReady(name, timeoutMs);
 }
 
 function routeSidecarMessage(name: SidecarName, msg: Record<string, unknown>): void {
@@ -1211,20 +1300,51 @@ function routeSidecarMessage(name: SidecarName, msg: Record<string, unknown>): v
       }
       break;
     case 'stt_partial':
-      mainWindow?.webContents.send(IPC.STT_PARTIAL, msg.text);
+      {
+        const turnId = typeof msg.utterance_id === 'string' ? msg.utterance_id : '';
+        if (sttGate.isCurrent(turnId)) mainWindow?.webContents.send(IPC.STT_PARTIAL, { text: msg.text, turnId });
+      }
+      break;
+    case 'stt_failed':
+      {
+        const turnId = typeof msg.utterance_id === 'string' ? msg.utterance_id : '';
+        if (sttGate.failStart(turnId)) {
+          mainWindow?.webContents.send(IPC.STT_STATE, { state: 'stt_failed', turnId, error: msg.error || msg.detail || 'Speech recognition failed' });
+        }
+      }
       break;
     case 'wakeword_detected':
       // Forward the confidence too: the renderer requires a stronger score to
       // barge in on ARIA's own speech than to wake it from idle, so leaked TTS
       // audio / marginal room noise can't self-interrupt a reply mid-sentence.
       mainWindow?.webContents.send(IPC.WAKEWORD_DETECTED, msg.phrase, msg.score);
-      void ensureSidecar('stt');
+      void ensureSidecar('stt').catch((e) => console.error('[ARIA] STT wake prewarm failed:', (e as Error).message));
       break;
     case 'tts_chunk':
-      mainWindow?.webContents.send(IPC.TTS_STATE, { state: 'chunk', ...msg });
+      {
+        const replyId = typeof msg.reply_id === 'string' ? msg.reply_id : '';
+        const requestId = typeof msg.request_id === 'string' ? msg.request_id : '';
+        const epoch = Number(msg.epoch);
+        const size = Number(msg.size);
+        const sampleRate = Number(msg.sample_rate);
+        deliverTtsPackets(ttsAudioGate.announce({ replyId, requestId, epoch, size, sampleRate }));
+      }
       break;
     case 'tts_done':
-      mainWindow?.webContents.send(IPC.TTS_STATE, { state: 'done' });
+      mainWindow?.webContents.send(IPC.TTS_STATE, {
+        state: 'request_done',
+        replyId: msg.reply_id,
+        requestId: msg.request_id,
+        epoch: msg.epoch,
+      });
+      break;
+    case 'tts_reply_done':
+      {
+        const replyId = typeof msg.reply_id === 'string' ? msg.reply_id : '';
+        const epoch = Number(msg.epoch);
+        ttsAudioGate.markReplyDone(replyId, epoch);
+        deliverTtsPackets([]);
+      }
       break;
   }
 }

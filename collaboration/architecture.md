@@ -41,7 +41,7 @@ The orb's state machine (`idle → listening → processing → speaking`) is dr
 | `hardware.ts` | CPU/RAM/GPU detection → adaptive perf profile (STT threads/backend, orb quality, GPU cap). |
 | `model-manager.ts` | Resumable, checksummed model downloads (STT/TTS weights, not bundled). |
 | `perf.ts` | Latency instrumentation (stage marks → the Settings → Performance panel). |
-| `updater.ts` | electron-updater (AppImage/exe/dmg) + release-page fallback (.deb/dev). |
+| `updater.ts` | electron-updater (AppImage and signed Windows only) + release-page fallback (.deb/rpm/dev/unsigned desktop). |
 | `tunnel-supervisor.ts` | SSH tunnel to a remote harness/LLM, with reconnect backoff. |
 
 ## Renderer — `src/renderer/` (vanilla JS, no bundler)

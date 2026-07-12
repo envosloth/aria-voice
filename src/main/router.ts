@@ -25,8 +25,7 @@ const AGENTIC = new RegExp(
     // coding / files / system
     // NOTE: bare 'fix'/'test'/'tests' were removed — they false-matched pure
     // chat ("how do I fix my sleep schedule", "test my knowledge"); real coding
-    // asks virtually always carry another keyword ('bug', 'code', 'file',
-    // 'run', …), and the LLM's ARIA_AGENT_HANDOFF safety net catches the rest.
+    // asks virtually always carry another keyword ('bug', 'code', 'file', 'run', …).
     'code', 'coding', 'refactor', 'refactoring', 'debug', 'debugging', 'bug',
     'implement', 'implementation', 'function', 'class', 'method', 'variable',
     'file', 'files', 'directory', 'folder', 'repo', 'repository', 'commit', 'branch',

@@ -66,6 +66,9 @@ server.listen(0, async () => {
 
     const dead = await listModels('http://127.0.0.1:1/x', '');
     check('list.conn-fail', dead.ok === false, JSON.stringify(dead));
+
+    const insecure = await listModels('http://example.invalid/v1', 'secret');
+    check('list.remote-http-key-refused', insecure.ok === false && /HTTPS/.test(insecure.error || ''), JSON.stringify(insecure));
   } catch (e) {
     check('list.threw', false, String(e));
   } finally {

@@ -12,6 +12,33 @@ WHISPER_VERSION="${WHISPER_VERSION:-v1.7.6}"
 BUILD_DIR="${BUILD_DIR:-${TMPDIR:-/tmp}/whisper-build}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-$HOME/.local}"
 
+# `rm -rf "$BUILD_DIR"` is intentional for reproducible rebuilds, but it must
+# never accept a root/current/shallow temp directory supplied by the environment.
+# Resolve the existing parent first so lexical paths such as /tmp/foo/.. cannot
+# collapse to a dangerous cleanup target.
+case "$BUILD_DIR" in
+  ''|/|.|..|/tmp|/var/tmp)
+    echo "ERROR: unsafe BUILD_DIR: $BUILD_DIR" >&2
+    exit 2
+    ;;
+esac
+BUILD_PARENT="$(cd "$(dirname "$BUILD_DIR")" 2>/dev/null && pwd -P)" || {
+  echo "ERROR: unsafe BUILD_DIR (parent does not exist): $BUILD_DIR" >&2
+  exit 2
+}
+BUILD_BASE="$(basename "$BUILD_DIR")"
+BUILD_PARENT="${BUILD_PARENT%/}"
+[ -n "$BUILD_PARENT" ] || BUILD_PARENT=/
+BUILD_DIR="$BUILD_PARENT/$BUILD_BASE"
+WORK_DIR="$(pwd -P)"
+HOME_DIR="$(cd "$HOME" 2>/dev/null && pwd -P || true)"
+case "$BUILD_DIR" in
+  /|/tmp|/var/tmp|/home|"$WORK_DIR"|"$HOME_DIR"|*/.|*/..)
+    echo "ERROR: unsafe BUILD_DIR: $BUILD_DIR" >&2
+    exit 2
+    ;;
+esac
+
 OS="$(uname -s)"
 
 # Portable core count for `-j`.
@@ -69,7 +96,7 @@ if [ "$NEED_VULKAN_CHECK" -eq 1 ]; then
 fi
 
 # Clone and build
-rm -rf "$BUILD_DIR"
+rm -rf -- "$BUILD_DIR"
 git clone --depth 1 --branch "$WHISPER_VERSION" https://github.com/ggerganov/whisper.cpp.git "$BUILD_DIR"
 
 cd "$BUILD_DIR"
@@ -83,4 +110,4 @@ cmake --install build
 
 echo
 echo "=== Installed whisper.cpp ($OS) to $INSTALL_PREFIX ==="
-rm -rf "$BUILD_DIR"
+rm -rf -- "$BUILD_DIR"

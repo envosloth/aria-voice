@@ -23,6 +23,9 @@ app.whenReady().then(() => {
     const userData = app.getPath('userData');
     const file = path.join(userData, 'aria-secure.json');
     const backend = safeStorage.isEncryptionAvailable() ? safeStorage.getSelectedStorageBackend() : 'unavailable';
+    if (backend === 'unavailable' || backend === 'basic_text') {
+      throw new Error(`refusing to persist a key with insecure safeStorage backend "${backend}"; install or unlock the OS keyring first`);
+    }
 
     // Round-trip sanity check first.
     const probe = safeStorage.decryptString(safeStorage.encryptString('roundtrip-probe'));

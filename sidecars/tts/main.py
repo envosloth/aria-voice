@@ -56,7 +56,7 @@ class TtsSidecar(BaseSidecar):
         # 'stop' control message is read and applied immediately — that's what
         # makes barge-in crisp. `_epoch` is bumped on every stop; queued and
         # in-progress synthesis whose epoch is stale is discarded.
-        self._synth_queue: "queue.Queue[tuple[int, str]]" = queue.Queue()
+        self._synth_queue: "queue.Queue[tuple[str, int, str, str, int, str]]" = queue.Queue()
         self._epoch = 0
         self._epoch_lock = threading.Lock()
 
@@ -155,6 +155,8 @@ class TtsSidecar(BaseSidecar):
     def _find_piper_voice(self) -> str:
         voice_file = f"{self.voice_name}.onnx"
         search_paths = [
+            os.path.join(os.environ["ARIA_MODELS_DIR"], voice_file)
+            if os.environ.get("ARIA_MODELS_DIR") else "",
             os.path.join(os.path.dirname(__file__), "..", "..", "models", voice_file),
             os.path.expanduser(f"~/.local/share/aria/models/{voice_file}"),
             os.path.expanduser(f"~/.local/share/piper/voices/{voice_file}"),
@@ -177,7 +179,22 @@ class TtsSidecar(BaseSidecar):
         if mtype == "synthesize":
             # Tag the request with the current epoch and hand it to the worker;
             # the stdin thread stays free to receive a 'stop' mid-synthesis.
-            self._synth_queue.put((self._current_epoch(), msg.get("text", "")))
+            reply_id = str(msg.get("reply_id", ""))
+            request_id = str(msg.get("request_id", ""))
+            try:
+                epoch = int(msg.get("epoch", 0))
+            except (TypeError, ValueError):
+                epoch = 0
+            self._synth_queue.put(("synthesize", self._current_epoch(), reply_id, request_id, epoch, msg.get("text", "")))
+        elif mtype == "reply_done":
+            reply_id = str(msg.get("reply_id", ""))
+            try:
+                epoch = int(msg.get("epoch", 0))
+            except (TypeError, ValueError):
+                epoch = 0
+            # This marker queues behind all prior requests for the reply, so it
+            # means end-of-reply rather than the completion of one sentence.
+            self._synth_queue.put(("reply_done", self._current_epoch(), reply_id, "", epoch, ""))
         elif mtype == "set_speed":
             # Live speaking-rate change (Settings slider) — applied to the next
             # synthesized utterance, no model reload. Float assignment is atomic
@@ -197,7 +214,7 @@ class TtsSidecar(BaseSidecar):
                     self._synth_queue.task_done()
                 except queue.Empty:
                     break
-            self.emit({"type": "tts_stopped"})
+            self.emit({"type": "tts_stopped", "epoch": msg.get("epoch")})
 
     def _synth_worker(self) -> None:
         """Consume the synthesis queue off the stdin thread. Each item carries
@@ -206,18 +223,21 @@ class TtsSidecar(BaseSidecar):
         over the user's next utterance."""
         while self._running:
             try:
-                item_epoch, text = self._synth_queue.get(timeout=0.1)
+                item_type, item_epoch, reply_id, request_id, epoch, text = self._synth_queue.get(timeout=0.1)
             except queue.Empty:
                 continue
             try:
                 if item_epoch == self._current_epoch():
-                    self._synthesize(text, item_epoch)
+                    if item_type == "synthesize":
+                        self._synthesize(text, item_epoch, reply_id, request_id, epoch)
+                    elif item_type == "reply_done":
+                        self.emit({"type": "tts_reply_done", "reply_id": reply_id, "epoch": epoch})
             except Exception as e:  # one bad utterance must not kill the worker
                 self._emit_status("error", f"synthesize: {e}")
             finally:
                 self._synth_queue.task_done()
 
-    def _synthesize(self, text: str, item_epoch: int) -> None:
+    def _synthesize(self, text: str, item_epoch: int, reply_id: str, request_id: str, epoch: int) -> None:
         """Synthesize sentence by sentence, streaming PCM as each is ready.
 
         Sentence chunking lets the renderer start playback after the first
@@ -236,12 +256,12 @@ class TtsSidecar(BaseSidecar):
             if item_epoch != self._current_epoch():
                 return  # superseded by a stop — drop the rest, no tts_done
             if self.engine == "kokoro":
-                self._emit_kokoro(chunk, i, total, item_epoch)
+                self._emit_kokoro(chunk, i, total, item_epoch, reply_id, request_id, epoch)
             else:
-                self._emit_piper(chunk, i, total, item_epoch)
+                self._emit_piper(chunk, i, total, item_epoch, reply_id, request_id, epoch)
 
         if item_epoch == self._current_epoch():
-            self.emit({"type": "tts_done"})
+            self.emit({"type": "tts_done", "reply_id": reply_id, "request_id": request_id, "epoch": epoch})
 
     def _chunks_for(self, text: str) -> list:
         """Split text into speakable chunks. Sentences are the base unit; the
@@ -261,7 +281,7 @@ class TtsSidecar(BaseSidecar):
                     return [head, tail] + sentences[1:]
         return sentences
 
-    def _emit_kokoro(self, sentence: str, index: int, total: int, item_epoch: int) -> None:
+    def _emit_kokoro(self, sentence: str, index: int, total: int, item_epoch: int, reply_id: str, request_id: str, epoch: int) -> None:
         import numpy as np
         samples, sr = self._kokoro.create(
             sentence, voice=self.voice_name, speed=self.speed,
@@ -273,10 +293,11 @@ class TtsSidecar(BaseSidecar):
         self.emit({
             "type": "tts_chunk", "index": index, "total": total,
             "size": len(pcm), "sample_rate": int(sr),
+            "reply_id": reply_id, "request_id": request_id, "epoch": epoch,
         })
         self.send_pcm(pcm)
 
-    def _emit_piper(self, sentence: str, index: int, total: int, item_epoch: int) -> None:
+    def _emit_piper(self, sentence: str, index: int, total: int, item_epoch: int, reply_id: str, request_id: str, epoch: int) -> None:
         from piper import SynthesisConfig
         # Piper's length_scale stretches duration: it's the inverse of speed
         # (length_scale 2.0 = half speed). Kokoro takes `speed` directly (see above).
@@ -288,6 +309,7 @@ class TtsSidecar(BaseSidecar):
             self.emit({
                 "type": "tts_chunk", "index": index, "total": total,
                 "size": len(pcm), "sample_rate": chunk.sample_rate,
+                "reply_id": reply_id, "request_id": request_id, "epoch": epoch,
             })
             self.send_pcm(pcm)
 

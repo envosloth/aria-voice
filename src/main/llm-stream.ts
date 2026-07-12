@@ -1,312 +1,326 @@
 import https from 'https';
 import http from 'http';
 import { URL } from 'url';
+import { StringDecoder } from 'string_decoder';
+import { credentialedEndpointSecurityError } from './endpoint-security';
 
 // Keep-alive connection pools, shared across every request. Without these Node
-// opens a fresh TCP (and, for https providers, a full TLS) connection for EVERY
-// turn — a handshake that adds ~100-400ms of dead time before the model can even
-// start, on top of the model's own latency. Reusing a warm socket removes that
-// per-turn overhead, which is pure win for the "direct LLM should be fast" path.
-// maxSockets is small: ARIA issues one streamed request at a time per target.
+// opens a fresh TCP (and, for https providers, a full TLS) connection for every
+// turn. maxSockets stays small because ARIA streams one request per target.
 const httpAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 15000, maxSockets: 8 });
 const httpsAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 15000, maxSockets: 8 });
 
-// One fully-assembled tool call the model asked us to run (arguments may stream
-// across many deltas; these are accumulated before being surfaced).
-export interface ToolCall {
-  id: string;
-  name: string;
-  arguments: string;
-}
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+const MAX_SSE_RECORD_BYTES = 512 * 1024;
+const MAX_COMPLETION_CHARS = 1_000_000;
 
 export interface LlmCallbacks {
   onToken: (token: string) => void;
   onDone: (fullText: string) => void;
   onError: (error: string) => void;
-  // A tool/function the agent harness invoked, surfaced as it streams so the UI
-  // can show "what tools are being used" above the final answer. Optional — a
-  // plain chat LLM never emits any.
+  // Harnesses may stream their own tool events. They are display-only here;
+  // routing never depends on a conversational model requesting a tool.
   onTool?: (info: { name: string; args?: string }) => void;
-  // The model finished a turn by REQUESTING tool calls (OpenAI function calling)
-  // rather than answering. When provided AND the model emitted tool calls, this
-  // fires INSTEAD of onDone, handing the assembled calls to the caller to execute
-  // and continue the conversation. Used by the direct-LLM delegate-to-agent path;
-  // omitted for the harness path (the harness runs its own tools), where tool
-  // events just drive onTool chips and onDone fires normally.
-  onToolCalls?: (calls: ToolCall[]) => void;
-  // Token usage for the turn, reported by OpenAI-compatible servers in the final
-  // stream chunk (we ask for it via stream_options.include_usage). Fires at most
-  // once, just before onDone/onToolCalls. Absent if the server doesn't report it.
   onUsage?: (usage: TokenUsage) => void;
 }
 
 export interface TokenUsage { prompt: number; completion: number; total: number; }
 
-// Pull tool/function names out of one parsed SSE JSON object. Supports the
-// OpenAI streaming + non-streaming `tool_calls` shape (the de-facto standard a
-// harness/proxy emits), the legacy `function_call`, and a couple of generic
-// agent-event shapes — so we recognise tool use across harnesses. Returns
-// [{name, args, key}] where `key` dedupes a call whose name streams once but
-// whose argument fragments stream across many deltas.
 function extractTools(obj: unknown): { name: string; args?: string; key: string }[] {
   const out: { name: string; args?: string; key: string }[] = [];
   if (!obj || typeof obj !== 'object') return out;
   const o = obj as Record<string, any>;
   const choice = o.choices?.[0];
   const delta = choice?.delta || choice?.message || {};
-
   const calls = delta.tool_calls || o.tool_calls;
   if (Array.isArray(calls)) {
-    for (const c of calls) {
-      const name = c?.function?.name || c?.name;
-      if (name) out.push({ name, args: c?.function?.arguments, key: 'idx' + (c?.index ?? c?.id ?? name) });
+    for (const call of calls) {
+      const name = call?.function?.name || call?.name;
+      if (name) out.push({ name, args: call?.function?.arguments, key: 'idx' + (call?.index ?? call?.id ?? name) });
     }
   }
-  const fc = delta.function_call || o.function_call;
-  if (fc?.name) out.push({ name: fc.name, args: fc.arguments, key: 'fc:' + fc.name });
-
-  // Generic agent event shapes: {type:'tool_use'|'tool', name|tool|tool_name}
-  const t = o.type || o.event;
-  const gname = o.tool || o.tool_name || (t && /tool/i.test(String(t)) ? o.name : null);
-  if (typeof gname === 'string' && gname) out.push({ name: gname, key: 'g:' + gname });
-
+  const functionCall = delta.function_call || o.function_call;
+  if (functionCall?.name) out.push({ name: functionCall.name, args: functionCall.arguments, key: 'fc:' + functionCall.name });
+  const type = o.type || o.event;
+  const genericName = o.tool || o.tool_name || (type && /tool/i.test(String(type)) ? o.name : null);
+  if (typeof genericName === 'string' && genericName) out.push({ name: genericName, key: 'g:' + genericName });
   return out;
 }
 
-// content is a string for normal turns, or an OpenAI-vision content array
-// (text + image_url parts) when a screen-share frame is attached.
 export type MessageContent = string | Array<Record<string, unknown>>;
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: MessageContent;
-  // Present on an assistant turn that requested tool calls, and echoed back so
-  // the model can match its tool result. OpenAI function-calling shape.
-  tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
-  tool_call_id?: string; // present on a role:'tool' result message
+  tool_call_id?: string;
 }
 
 export interface ChatOptions {
   endpoint: string;
   model: string;
   apiKey?: string | null;
-  message?: string;             // single-turn convenience
-  messages?: ChatMessage[];     // full conversation (takes precedence)
-  tools?: unknown[];            // OpenAI tool/function definitions (optional)
+  message?: string;
+  messages?: ChatMessage[];
   timeoutMs?: number;
-  // Extra request headers. Used to carry X-Hermes-Session-Id so a local Hermes
-  // gateway keeps every turn in ONE session instead of deriving a fresh one per
-  // request (unknown to other harnesses, which ignore it).
+  // A request timeout is idle-time based; this deadline also bounds a peer that
+  // keeps dribbling bytes forever.
+  overallDeadlineMs?: number;
+  maxResponseBytes?: number;
+  maxSseRecordBytes?: number;
+  maxCompletionChars?: number;
   headers?: Record<string, string>;
 }
 
-// Handle returned by streamChat so a caller can abort an in-flight request
-// (e.g. the user barges in with the wake word and we must stop generating).
-export interface ChatHandle {
-  cancel: () => void;
+export interface ChatHandle { cancel: () => void; }
+
+function positiveLimit(value: number | undefined, fallback: number): number {
+  return Number.isFinite(value) && value! > 0 ? Math.floor(value!) : fallback;
+}
+
+function timeoutSeconds(ms: number): number {
+  return Math.max(1, Math.ceil(ms / 1000));
+}
+
+function chatUrl(rawEndpoint: string): URL | null {
+  if (!rawEndpoint) return null;
+  let url: URL;
+  try { url = new URL(rawEndpoint); } catch { return null; }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  const basePath = url.pathname.replace(/\/+$/, '');
+  if (basePath === '') url.pathname = '/v1/chat/completions';
+  else if (/\/v\d+$/.test(basePath)) url.pathname = basePath + '/chat/completions';
+  else url.pathname = basePath;
+  return url;
 }
 
 /**
- * Pure SSE chat streamer for OpenAI-compatible /chat/completions endpoints.
- * No Electron dependency — unit-testable against a mock HTTP server.
- *
- * Returns a ChatHandle whose cancel() aborts the request and silences any
- * further callbacks — used for barge-in (interrupt mid-reply).
+ * Pure OpenAI-compatible SSE chat streamer. Every network terminal path funnels
+ * through one settlement guard so late request/response events cannot duplicate
+ * a callback. Caller cancellation remains intentionally silent for barge-in.
  */
 export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHandle {
-  const { endpoint, model, apiKey, message, messages, tools, timeoutMs = 30000, headers: extraHeaders } = opts;
+  const timeoutMs = positiveLimit(opts.timeoutMs, 30_000);
+  const overallDeadlineMs = positiveLimit(opts.overallDeadlineMs, Math.max(120_000, timeoutMs * 4));
+  const maxResponseBytes = positiveLimit(opts.maxResponseBytes, MAX_RESPONSE_BYTES);
+  const maxSseRecordBytes = positiveLimit(opts.maxSseRecordBytes, MAX_SSE_RECORD_BYTES);
+  const maxCompletionChars = positiveLimit(opts.maxCompletionChars, MAX_COMPLETION_CHARS);
 
-  // Once cancelled we destroy the socket AND swallow any late callbacks, so an
-  // aborted reply never reaches the renderer (no stray tokens after barge-in).
   let cancelled = false;
+  let settled = false;
   let req: http.ClientRequest | null = null;
+  let response: http.IncomingMessage | null = null;
+  let deadline: NodeJS.Timeout | null = null;
+
+  const destroyTransport = () => {
+    try { if (response && !response.destroyed) response.destroy(); } catch { /* already closed */ }
+    try { if (req && !req.destroyed) req.destroy(); } catch { /* already closed */ }
+  };
+  const clearDeadline = () => { if (deadline) { clearTimeout(deadline); deadline = null; } };
+  const finishError = (message: string, destroy = true) => {
+    if (settled) return;
+    settled = true;
+    clearDeadline();
+    if (destroy) destroyTransport();
+    if (!cancelled) callbacks.onError(message);
+  };
+  const finishDone = (fullText: string, usage: TokenUsage | null) => {
+    if (settled) return;
+    settled = true;
+    clearDeadline();
+    if (!cancelled) {
+      if (usage) callbacks.onUsage?.(usage);
+      callbacks.onDone(fullText);
+    }
+  };
   const handle: ChatHandle = {
     cancel: () => {
+      if (settled) return;
       cancelled = true;
-      if (req) { try { req.destroy(); } catch { /* already gone */ } }
+      settled = true;
+      clearDeadline();
+      destroyTransport();
     },
   };
-  const cb: LlmCallbacks = {
-    onToken: (t) => { if (!cancelled) callbacks.onToken(t); },
-    onDone: (f) => { if (!cancelled) callbacks.onDone(f); },
-    onError: (e) => { if (!cancelled) callbacks.onError(e); },
-    onTool: (info) => { if (!cancelled) callbacks.onTool?.(info); },
-    onToolCalls: (calls) => { if (!cancelled) callbacks.onToolCalls?.(calls); },
-    onUsage: (usage) => { if (!cancelled) callbacks.onUsage?.(usage); },
-  };
-  // Accumulate streamed tool calls (id/name arrive once, arguments fragment
-  // across many deltas) keyed by their stream index, for callers that execute
-  // them (the direct-LLM delegate path).
-  const toolAcc = new Map<number, ToolCall>();
-  // A tool's name streams once but its argument fragments arrive across many
-  // deltas — track keys so each distinct tool call is reported to the UI once.
-  const seenTools = new Set<string>();
 
-  if (!endpoint) {
-    cb.onError('No LLM endpoint configured. Go to Settings to add one.');
+  if (!opts.endpoint) {
+    finishError('No LLM endpoint configured. Go to Settings to add one.', false);
+    return handle;
+  }
+  const url = chatUrl(opts.endpoint);
+  if (!url) {
+    finishError(`Invalid LLM endpoint URL: ${opts.endpoint}`, false);
+    return handle;
+  }
+  const transportSecurityError = credentialedEndpointSecurityError(url, !!opts.apiKey);
+  if (transportSecurityError) {
+    finishError(transportSecurityError, false);
     return handle;
   }
 
-  const chatMessages: ChatMessage[] =
-    messages && messages.length ? messages : [{ role: 'user', content: message ?? '' }];
-
-  let url: URL;
-  try {
-    url = new URL(endpoint);
-  } catch {
-    cb.onError(`Invalid LLM endpoint URL: ${endpoint}`);
-    return handle;
-  }
-
-  // Normalize a base URL to the OpenAI chat route so users can paste whatever
-  // their local server documents — the full "…/v1/chat/completions", just the
-  // host ("http://127.0.0.1:8642"), or the "…/v1" base that Ollama/LM Studio/
-  // vLLM advertise. Without this a POST to "/" or "/v1" 404s, which (not being a
-  // connection error) silently fell back to the other target.
-  const basePath = url.pathname.replace(/\/+$/, ''); // drop trailing slash(es)
-  if (basePath === '') {
-    url.pathname = '/v1/chat/completions';            // host only
-  } else if (/\/v\d+$/.test(basePath)) {
-    url.pathname = basePath + '/chat/completions';    // "…/v1" base
-  } else {
-    url.pathname = basePath;                          // full/custom path, left as-is
-  }
-
+  const chatMessages: ChatMessage[] = opts.messages && opts.messages.length
+    ? opts.messages
+    : [{ role: 'user', content: opts.message ?? '' }];
+  const body = JSON.stringify({
+    model: opts.model,
+    messages: chatMessages,
+    stream: true,
+    stream_options: { include_usage: true },
+  });
   const isHttps = url.protocol === 'https:';
   const transport = isHttps ? https : http;
 
-  const body = JSON.stringify({
-    model,
-    messages: chatMessages,
-    stream: true,
-    // Ask the server to append a final usage chunk (prompt/completion tokens) so
-    // ARIA can show tokens-spent per session. Standard OpenAI param; servers that
-    // don't support it ignore it (usage simply stays unreported).
-    stream_options: { include_usage: true },
-    ...(tools && tools.length ? { tools, tool_choice: 'auto' } : {}),
-  });
+  deadline = setTimeout(() => {
+    finishError(`LLM request exceeded its overall deadline of ${timeoutSeconds(overallDeadlineMs)}s.`);
+  }, overallDeadlineMs);
 
-  req = transport.request(
-    {
-      hostname: url.hostname,
-      port: url.port || (isHttps ? 443 : 80),
-      path: url.pathname + url.search,
-      method: 'POST',
-      // Reuse a warm keep-alive socket instead of handshaking per request.
-      agent: isHttps ? httpsAgent : httpAgent,
-      headers: {
-        'Content-Type': 'application/json',
-        // Advertise SSE so OpenAI-compatible servers/proxies stream the response
-        // incrementally instead of buffering the whole thing and sending it at
-        // the end. Without this some proxies (e.g. nginx-fronted gateways) hold
-        // the full reply, which silently degrades streaming into a long
-        // wait-for-everything — a real "large response delay even with a direct
-        // provider" cause that no app-side change other than this header fixes.
-        Accept: 'text/event-stream',
-        'Content-Length': Buffer.byteLength(body),
-        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-        ...(extraHeaders || {}),
+  try {
+    req = transport.request(
+      {
+        hostname: url.hostname,
+        port: url.port || (isHttps ? 443 : 80),
+        path: url.pathname + url.search,
+        method: 'POST',
+        agent: isHttps ? httpsAgent : httpAgent,
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
+          'Content-Length': Buffer.byteLength(body),
+          ...(opts.apiKey ? { Authorization: `Bearer ${opts.apiKey}` } : {}),
+          ...(opts.headers || {}),
+        },
       },
-    },
-    (res) => {
-      if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) {
-        let errBody = '';
-        res.on('data', (chunk) => { errBody += chunk; });
-        res.on('end', () => {
-          cb.onError(`LLM returned ${res.statusCode}: ${errBody.slice(0, 200)}`);
+      (res) => {
+        response = res;
+        let ended = false;
+        let responseBytes = 0;
+        const countChunk = (chunk: Buffer): boolean => {
+          responseBytes += chunk.length;
+          if (responseBytes > maxResponseBytes) {
+            finishError(`LLM response exceeded the ${maxResponseBytes}-byte limit.`);
+            return false;
+          }
+          return true;
+        };
+        const declaredLength = Number(res.headers['content-length']);
+        if (Number.isFinite(declaredLength) && declaredLength > maxResponseBytes) {
+          finishError(`LLM response exceeded the ${maxResponseBytes}-byte limit.`);
+          return;
+        }
+        res.setTimeout(timeoutMs, () => {
+          finishError(`LLM response timed out after ${timeoutSeconds(timeoutMs)}s.`);
         });
-        return;
-      }
+        res.on('aborted', () => finishError('LLM response was aborted before completion.', false));
+        res.on('error', (error) => finishError(`LLM response failed: ${error.message}`, false));
+        res.on('close', () => {
+          if (!ended && !settled) finishError('LLM response closed before completion.', false);
+        });
 
-      let fullText = '';
-      let buffer = '';
-      let usage: TokenUsage | null = null;
+        if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
+          let errorBody = '';
+          res.on('data', (chunk: Buffer) => {
+            if (countChunk(chunk)) errorBody += chunk.toString('utf8', 0, Math.min(chunk.length, 512));
+          });
+          res.on('end', () => {
+            ended = true;
+            if (!settled) finishError(`LLM returned ${res.statusCode}: ${errorBody.slice(0, 200)}`, false);
+          });
+          return;
+        }
 
-      res.on('data', (chunk: Buffer) => {
-        if (cancelled) return;
-        buffer += chunk.toString();
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
+        let fullText = '';
+        let buffer = '';
+        let usage: TokenUsage | null = null;
+        const decoder = new StringDecoder('utf8');
+        const seenTools = new Set<string>();
 
-        for (const line of lines) {
-          const trimmed = line.trimStart();
-          if (!trimmed.startsWith('data:')) continue;
-          const payload = trimmed.slice(5).trim();
-          if (payload === '[DONE]') continue;
-
+        const processRecord = (record: string) => {
+          if (settled || !record) return;
+          if (Buffer.byteLength(record) > maxSseRecordBytes) {
+            finishError(`LLM SSE record exceeded the ${maxSseRecordBytes}-byte limit.`);
+            return;
+          }
+          const payload = record.split(/\r?\n/)
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).trimStart())
+            .join('\n')
+            .trim();
+          if (!payload || payload === '[DONE]') return;
+          if (Buffer.byteLength(payload) > maxSseRecordBytes) {
+            finishError(`LLM SSE record exceeded the ${maxSseRecordBytes}-byte limit.`);
+            return;
+          }
           try {
-            const parsed = JSON.parse(payload);
-            // Surface any tool the harness invoked (once per distinct call).
+            const parsed = JSON.parse(payload) as Record<string, any>;
             for (const tool of extractTools(parsed)) {
               if (!seenTools.has(tool.key)) {
                 seenTools.add(tool.key);
-                cb.onTool?.({ name: tool.name, args: tool.args });
-              }
-            }
-            // Accumulate any tool-call fragments (for the delegate path). id +
-            // name arrive in the first delta of a call; argument text streams
-            // across later deltas — concatenate by stream index.
-            const tcs = parsed.choices?.[0]?.delta?.tool_calls;
-            if (Array.isArray(tcs)) {
-              for (const tc of tcs) {
-                const idx = typeof tc.index === 'number' ? tc.index : 0;
-                const cur = toolAcc.get(idx) || { id: '', name: '', arguments: '' };
-                if (tc.id) cur.id = tc.id;
-                if (tc.function?.name) cur.name = tc.function.name;
-                if (tc.function?.arguments) cur.arguments += tc.function.arguments;
-                toolAcc.set(idx, cur);
+                if (!cancelled) callbacks.onTool?.({ name: tool.name, args: tool.args });
               }
             }
             const delta = parsed.choices?.[0]?.delta?.content;
-            if (delta) {
+            if (typeof delta === 'string' && delta) {
+              if (fullText.length + delta.length > maxCompletionChars) {
+                finishError(`LLM completion exceeded the ${maxCompletionChars}-character limit.`);
+                return;
+              }
               fullText += delta;
-              cb.onToken(delta);
+              if (!cancelled) callbacks.onToken(delta);
             }
-            // The include_usage final chunk carries usage with an empty choices
-            // array. Some servers also attach usage to the last content chunk —
-            // keep the latest non-null reading either way.
-            const u = parsed.usage;
-            if (u && (u.prompt_tokens != null || u.completion_tokens != null || u.total_tokens != null)) {
-              const prompt = Number(u.prompt_tokens) || 0;
-              const completion = Number(u.completion_tokens) || 0;
-              usage = { prompt, completion, total: Number(u.total_tokens) || prompt + completion };
+            const rawUsage = parsed.usage;
+            if (rawUsage && (rawUsage.prompt_tokens != null || rawUsage.completion_tokens != null || rawUsage.total_tokens != null)) {
+              const prompt = Number(rawUsage.prompt_tokens) || 0;
+              const completion = Number(rawUsage.completion_tokens) || 0;
+              usage = { prompt, completion, total: Number(rawUsage.total_tokens) || prompt + completion };
             }
           } catch {
-            // skip malformed SSE lines
+            // A malformed event is isolated; subsequent valid SSE records remain usable.
           }
-        }
-      });
+        };
+        const consumeRecords = (includeTrailing: boolean) => {
+          while (!settled) {
+            const boundary = /\r?\n\r?\n/.exec(buffer);
+            if (!boundary || boundary.index == null) break;
+            const record = buffer.slice(0, boundary.index);
+            buffer = buffer.slice(boundary.index + boundary[0].length);
+            processRecord(record);
+          }
+          if (!settled && Buffer.byteLength(buffer) > maxSseRecordBytes) {
+            finishError(`LLM SSE record exceeded the ${maxSseRecordBytes}-byte limit.`);
+            return;
+          }
+          if (!settled && includeTrailing && buffer.trim()) {
+            processRecord(buffer);
+            buffer = '';
+          }
+        };
 
-      res.on('end', () => {
-        if (usage) cb.onUsage?.(usage); // report tokens before ending the turn
-        // If the model finished by requesting tool calls and the caller wants to
-        // execute them, hand them over INSTEAD of ending the turn. Otherwise end
-        // normally (the harness path, or a plain text answer).
-        const calls = Array.from(toolAcc.values()).filter((c) => c.name);
-        if (calls.length && callbacks.onToolCalls) {
-          cb.onToolCalls?.(calls);
-        } else {
-          cb.onDone(fullText);
-        }
-      });
-    },
-  );
+        res.on('data', (chunk: Buffer) => {
+          if (!countChunk(chunk) || settled) return;
+          buffer += decoder.write(chunk);
+          consumeRecords(false);
+        });
+        res.on('end', () => {
+          ended = true;
+          if (settled) return;
+          buffer += decoder.end();
+          consumeRecords(true);
+          if (!settled) finishDone(fullText, usage);
+        });
+      },
+    );
+  } catch (error) {
+    finishError(`Could not start LLM request: ${(error as Error).message}`, false);
+    return handle;
+  }
 
-  // Disable Nagle so the request body (and the server's first SSE bytes) aren't
-  // held back by TCP coalescing — shaves a little more off time-to-first-token.
   req.on('socket', (socket) => { try { socket.setNoDelay(true); } catch { /* best effort */ } });
-
-  req.on('error', (err) => {
-    // A cancel() destroy() also surfaces here as ECONNRESET/aborted — cb guards
-    // it so a deliberate barge-in isn't reported to the user as a failure.
-    cb.onError(`LLM connection failed: ${err.message}. Check endpoint and network.`);
+  req.on('error', (error) => {
+    finishError(`LLM connection failed: ${error.message}. Check endpoint and network.`, false);
   });
-
+  req.on('abort', () => finishError('LLM request was aborted before completion.', false));
   req.setTimeout(timeoutMs, () => {
-    req!.destroy();
-    cb.onError(`LLM request timed out after ${Math.round(timeoutMs / 1000)}s.`);
+    finishError(`LLM request timed out after ${timeoutSeconds(timeoutMs)}s.`);
   });
-
   req.write(body);
   req.end();
   return handle;

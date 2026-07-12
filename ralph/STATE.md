@@ -4,16 +4,15 @@
 > Those files are now historical; this file is canonical going forward.
 
 ## Current Status (overwrite each iteration)
-Run #: 1 | Iteration #: 3 (+ ship gate) | Status: RUN COMPLETE — priority items cleared, §13 ship gate PASSED, v2.0.1 installers built & smoke-tested | Verified?: yes
-Last benchmark: STT 953→~450ms (e2e) | TTS first-chunk -350 to -490ms on clause-leading replies | direct-LLM tools 1→0 (invariant restored)
-Biggest remaining bottleneck (for NEXT run): TTS first-chunk floor for COMMA-LESS single sentences (~600-800ms kokoro, inherent) + run-to-run jitter — see BACKLOG.
-Next target (NEXT run): TTS comma-less floor (needs audio QA) OR real-provider latency baseline (needs a live provider). Both blocked on resources unavailable this run.
+Run #: 2 | Status: v3.0.4 reliability/security hardening complete | Verified?: software/static/package-dir gates yes; full native STT suite environment-blocked
+Architecture invariant: routing decides delegation before invocation; the direct conversational LLM receives no tools or handoff sentinel.
+Current limitation: this Fedora checkout lacks `cmake`, `glslc`, `whisper-server`, `whisper-cli`, and the optional Kokoro model files. `smoke:all` therefore stops at STT lifecycle startup and the Kokoro settings-live gate cannot exercise its voice switch; cleanup reports zero orphaned sidecars. Piper TTS and STT control/lifecycle tests pass. This is an environment/tooling/assets block, not a passing ship gate.
+Next target: run native Whisper/Vulkan STT, resilience, pdeathsig, e2e, frozen-sidecar, and installer smoke gates on the release environment before calling v3.0.4 shippable.
 
-## Ship artifacts (Run 1, v2.0.1 — local build, NOT released)
-- dist-installers/ARIA-2.0.1-x86_64.AppImage (259 MB)
-- dist-installers/aria_2.0.1_amd64.deb (211 MB)
-- Frozen sidecars: build/sidecars/{stt,tts,wakeword} (re-frozen 17:04 with iter-2/3 changes)
-- NOT pushed / NOT tagged / NOT released (per harness: only on explicit user request).
+## Current artifacts (v3.0.4 — local verification, NOT released)
+- `dist-installers/linux-unpacked/` produced successfully by electron-builder 26.15.3.
+- No new `.deb`, `.rpm`, `.AppImage`, Windows, or macOS installer was produced in this run.
+- NOT pushed, tagged, or released.
 
 ## Pre-loop baseline (from Item 0 harness, prior loop)
 - App-side pre-network overhead: ~3ms, TTFT-independent (user_input → llm_request).
@@ -24,16 +23,22 @@ Next target (NEXT run): TTS comma-less floor (needs audio QA) OR real-provider l
 - `Accept: text/event-stream` header already added (fixes buffering proxies, item5).
 Harness commands: `npm run perf:baseline`, `npm run perf:live [ttftMs]`, `npm run perf:llm-path`.
 
-## Build / test commands (confirmed 2026-06-26)
+## Build / test commands (confirmed 2026-07-12)
 - Build: `npm run build` (tsc + preload + copy renderer)
-- Suite (10): `npm run smoke:all` = smoke + tts + stt + resilience + pdeathsig + memory + llm + router + models + audio + e2e
-- Boot: `npm run smoke:boot` ; Package: `npm run dist`
-- Extra gates: `smoke:router`, `smoke:delegate` (→ being repurposed as routing-invariant gate), `smoke:settings/onboarding/local-llm/menu/hover/screenshare`
+- Static gates: `npm run lint`; `npm run typecheck`; `npm audit --audit-level=high`; `git diff --check`
+- Full suite: `npm run smoke:all` (native Whisper/model/tooling required)
+- Focused hardening gates: `smoke:core-security`, `smoke:routing-invariant`, `smoke:release-packaging`, plus `scripts/smoke-{voice,supervisor,mic,update}-*.js` and `scripts/smoke-sidecar-lifecycle.py`
+- Boot: `npm run smoke:boot`; package: `npm run dist`; config/package-dir validation: `npx electron-builder --linux dir --config electron-builder.yml`
 
 ## Backlog
 → ./ralph/BACKLOG.md
 
 ## History (append-only, newest first)
+
+### Run 2 Reliability and Security Hardening — 2026-07-12
+Corrected router/direct-LLM boundaries, concurrent turn correlation, settle-once and bounded HTTP/SSE handling, credential transport policy, model-download integrity, pinned-session retention, and secure-storage behavior. Reworked STT/TTS/microphone/VAD/orb and supervisor lifecycle handling, including correlated completion/failure events, cross-channel PCM framing, nonblocking STT readiness, restart cancellation, isolated Python environments, single-owner PCM sockets, and private per-user/per-process socket directories. Hardened unsigned updater behavior, moved `.deb` verification/installation into root-owned staging with dependency resolution, made failed update quiescing reversible, pinned and startup-verified model revisions/checksums, upgraded electron-builder to 26.15.3, removed generated machine-specific PyInstaller specs, and strengthened release gates.
+
+Verification: build, lint, typecheck, npm audit (0 vulnerabilities), shell/Python syntax, boot smoke, routing invariant, LLM/network/model/session/security, hardware/updater/UI/audio, release/package, voice/mic/supervisor/update lifecycle, Python sidecar lifecycle, Piper TTS, and STT turn-control gates passed. electron-builder 26.15.3 produced `dist-installers/linux-unpacked`. `npm run smoke:all` was attempted and stopped at STT startup because this host lacks `cmake`, `glslc`, and whisper.cpp executables; sidecar cleanup found zero orphans. No release artifacts were claimed.
 
 ### Run 1 Ship Gate (§13) — 2026-06-26
 Stopped after iter 3: priority items cleared (KNOWN ISSUE routing fix + top two TTFA bottlenecks STT/TTS), remaining backlog items lower-yield/higher-risk or blocked on unavailable resources (live provider, audio QA). Not a plateau-by-failure — all 3 iters were measurable wins; stopped per §12 "all priority items clear → proceed to §13".

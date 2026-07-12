@@ -49,9 +49,10 @@ class BaseSidecar(ABC):
                     signal.signal(_sig, self._handle_signal)
                 except (ValueError, OSError):
                     pass  # not registerable on this platform/thread
-        self._set_parent_death_signal()
-
         self._running = True
+        # The non-Linux parent watcher loops on `_running`; set it before the
+        # watcher starts or its daemon exits immediately during process startup.
+        self._set_parent_death_signal()
         self._connect_socket(args.socket)
 
         threading.Thread(target=self._heartbeat_loop, daemon=True).start()

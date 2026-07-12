@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /* Unit test for the LLM SSE streamer (streamChat) against a local mock
- * OpenAI-compatible endpoint. Covers: token streaming + onDone aggregation,
- * non-2xx error surfacing, and connection failure.
+ * OpenAI-compatible endpoint. Covers normal SSE aggregation plus terminal
+ * failure modes that must settle exactly once.
  */
 
 const http = require('http');
@@ -15,6 +15,53 @@ function makeServer() {
     if (req.url === '/error') {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'invalid api key' }));
+      return;
+    }
+
+    if (req.url === '/trailing') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      // No final newline/event separator: a compliant client must still parse
+      // the trailing record when the response ends.
+      res.end(`data: ${JSON.stringify({ choices: [{ delta: { content: 'tail' } }] })}`);
+      return;
+    }
+
+    if (req.url === '/abort') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Content-Length': 1024 });
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'partial' } }] })}\n\n`);
+      setTimeout(() => res.socket.destroy(), 10);
+      return;
+    }
+
+    if (req.url === '/stall') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      return;
+    }
+
+    if (req.url === '/dribble') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      const timer = setInterval(() => {
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: '.' } }] })}\n\n`);
+      }, 5);
+      req.on('close', () => clearInterval(timer));
+      return;
+    }
+
+    if (req.url === '/large-response') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end('x'.repeat(4096));
+      return;
+    }
+
+    if (req.url === '/large-record') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end(`data: ${'x'.repeat(4096)}\n\n`);
+      return;
+    }
+
+    if (req.url === '/long-completion') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end(`data: ${JSON.stringify({ choices: [{ delta: { content: 'x'.repeat(128) } }] })}\n\n`);
       return;
     }
 
@@ -67,12 +114,13 @@ function runCase(name, opts) {
     let done = null;
     let error = null;
     let usage = null;
+    let terminalCalls = 0;
     streamChat(opts, {
       onToken: (t) => tokens.push(t),
       onTool: (info) => tools.push(info),
       onUsage: (u) => { usage = u; },
-      onDone: (full) => { done = full; resolve({ name, tokens, tools, done, error, usage }); },
-      onError: (e) => { error = e; resolve({ name, tokens, tools, done, error, usage }); },
+      onDone: (full) => { done = full; terminalCalls++; setTimeout(() => resolve({ name, tokens, tools, done, error, usage, terminalCalls }), 30); },
+      onError: (e) => { error = e; terminalCalls++; setTimeout(() => resolve({ name, tokens, tools, done, error, usage, terminalCalls }), 30); },
     });
   });
 }
@@ -123,6 +171,52 @@ async function main() {
     c6.usage.prompt === 12 && c6.usage.completion === 5 && c6.usage.total === 17;
   console.log(`[usage]     usage=${JSON.stringify(c6.usage)} -> ${c6ok ? 'PASS' : 'FAIL'}`);
   pass = pass && c6ok;
+
+  // Case 7: an SSE record without a final blank line still contributes text.
+  const c7 = await runCase('trailing-record', { endpoint: `${base}/trailing`, model: 'mock', message: 'hi' });
+  const c7ok = c7.done === 'tail' && c7.terminalCalls === 1;
+  console.log(`[trailing]  done="${c7.done}" terminalCalls=${c7.terminalCalls} -> ${c7ok ? 'PASS' : 'FAIL'}`);
+  pass = pass && c7ok;
+
+  // Case 8: a dropped response resolves through exactly one terminal error.
+  const c8 = await runCase('aborted-response', { endpoint: `${base}/abort`, model: 'mock', message: 'hi', timeoutMs: 100 });
+  const c8ok = !!c8.error && c8.terminalCalls === 1 && !c8.done;
+  console.log(`[aborted]   error=${JSON.stringify(c8.error)} calls=${c8.terminalCalls} -> ${c8ok ? 'PASS' : 'FAIL'}`);
+  pass = pass && c8ok;
+
+  // Case 9: a response that never produces data is bounded by the response timeout.
+  const c9 = await runCase('stalled-response', { endpoint: `${base}/stall`, model: 'mock', message: 'hi', timeoutMs: 40, overallDeadlineMs: 120 });
+  const c9ok = !!c9.error && /timed out/i.test(c9.error) && c9.terminalCalls === 1;
+  console.log(`[stalled]   error=${JSON.stringify(c9.error)} calls=${c9.terminalCalls} -> ${c9ok ? 'PASS' : 'FAIL'}`);
+  pass = pass && c9ok;
+
+  // Cases 10-11: unbounded records and completions must be rejected before use.
+  const c10 = await runCase('large-record', { endpoint: `${base}/large-record`, model: 'mock', message: 'hi', maxSseRecordBytes: 128 });
+  const c10ok = !!c10.error && /SSE record/i.test(c10.error) && c10.terminalCalls === 1;
+  console.log(`[record-cap] error=${JSON.stringify(c10.error)} -> ${c10ok ? 'PASS' : 'FAIL'}`);
+  pass = pass && c10ok;
+
+  const c11 = await runCase('completion-cap', { endpoint: `${base}/long-completion`, model: 'mock', message: 'hi', maxCompletionChars: 32 });
+  const c11ok = !!c11.error && /completion/i.test(c11.error) && c11.terminalCalls === 1;
+  console.log(`[text-cap]   error=${JSON.stringify(c11.error)} -> ${c11ok ? 'PASS' : 'FAIL'}`);
+  pass = pass && c11ok;
+
+  // Case 12: credentials may cross HTTP only to a loopback endpoint.
+  const c12 = await runCase('remote-http-credentials', { endpoint: 'http://example.invalid/v1', model: 'mock', message: 'hi', apiKey: 'secret' });
+  const c12ok = !!c12.error && /HTTPS/i.test(c12.error) && c12.terminalCalls === 1;
+  console.log(`[https-guard] error=${JSON.stringify(c12.error)} -> ${c12ok ? 'PASS' : 'FAIL'}`);
+  pass = pass && c12ok;
+
+  // Cases 13-14: byte-dribbling cannot bypass the total deadline or response cap.
+  const c13 = await runCase('overall-deadline', { endpoint: `${base}/dribble`, model: 'mock', message: 'hi', timeoutMs: 80, overallDeadlineMs: 45 });
+  const c13ok = !!c13.error && /overall deadline/i.test(c13.error) && c13.terminalCalls === 1;
+  console.log(`[deadline]  error=${JSON.stringify(c13.error)} -> ${c13ok ? 'PASS' : 'FAIL'}`);
+  pass = pass && c13ok;
+
+  const c14 = await runCase('response-cap', { endpoint: `${base}/large-response`, model: 'mock', message: 'hi', maxResponseBytes: 128, maxSseRecordBytes: 8192 });
+  const c14ok = !!c14.error && /response exceeded/i.test(c14.error) && c14.terminalCalls === 1;
+  console.log(`[response-cap] error=${JSON.stringify(c14.error)} -> ${c14ok ? 'PASS' : 'FAIL'}`);
+  pass = pass && c14ok;
 
   server.close();
   console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);

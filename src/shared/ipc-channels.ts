@@ -16,6 +16,7 @@ export const IPC = {
 
   TTS_PLAY: 'tts:play',     // renderer -> main: request synthesis of text
   TTS_STOP: 'tts:stop',     // renderer -> main: cancel current synthesis
+  TTS_REPLY_DONE: 'tts:reply-done', // renderer -> main: no further requests for this reply
   TTS_AUDIO: 'tts:audio',   // main -> renderer: raw PCM chunk for playback
   TTS_STATE: 'tts:state',   // main -> renderer: chunk/done state events
 
@@ -25,7 +26,7 @@ export const IPC = {
   LLM_SEND: 'llm:send',
   LLM_CANCEL: 'llm:cancel',     // renderer -> main: abort the in-flight generation (barge-in)
   LLM_RESET: 'llm:reset',       // renderer -> main: clear conversation history (New session)
-  LLM_TOKEN: 'llm:token',
+  LLM_TOKEN: 'llm:token',  // all LLM pushes carry {turnId,generationId,...}
   LLM_TOOL: 'llm:tool',        // main -> renderer: a tool the harness invoked (shown above the reply)
   LLM_DONE: 'llm:done',
   LLM_ERROR: 'llm:error',

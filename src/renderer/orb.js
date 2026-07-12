@@ -477,11 +477,19 @@
   }
   // Background (visible but unfocused) throttle: ~5 FPS, nobody's watching.
   const BLUR_MIN_MS = 200;
-  // Focused floor: at least ~60 FPS so low-tier caps don't read as choppy while
-  // the user is actually looking at the orb.
-  const FOCUS_SMOOTH_MS = 16;
   let windowFocused = (typeof document === 'undefined') || document.hasFocus();
   let lastRenderAt = 0;
+
+  // Keep the configured medium/low cadence even while focused. A previous
+  // "smoothness floor" silently promoted both tiers to 60 FPS, defeating the
+  // profile's CPU/GPU budget exactly when the user was looking at the orb.
+  function frameIntervalFor(qualityName, stateName, focused, relieved, sttIsActive) {
+    const q = QUALITY[qualityName] || QUALITY.high;
+    const stateMs = q.stateMs[stateName] || STATE_MIN_MS[stateName] || 33;
+    const capMs = sttIsActive ? Math.max(stateMs, q.activeMs || stateMs, LISTENING_MS) : stateMs;
+    if (!focused && stateName !== 'speaking') return BLUR_MIN_MS;
+    return relieved ? Math.max(capMs, RELIEF_MS) : capMs;
+  }
 
   let fpsVisible = false, fpsCount = 0, fpsLast = 0, fpsValue = 0;
   let renderWarned = false;
@@ -494,15 +502,7 @@
     // Throttle to ~5 FPS in the background, EXCEPT while speaking — the voice
     // flare is the signature visual and speaking is short-lived.
     const blurred = !windowFocused && state !== 'speaking';
-    const q = QUALITY[quality];
-    const stateMs = (q && q.stateMs[state]) || STATE_MIN_MS[state] || 33;
-    const activeMs = (q && q.activeMs) || stateMs;
-    const capMs = sttActive ? Math.max(stateMs, activeMs, LISTENING_MS) : stateMs;
-    // Under backing relief, honour a real ~30 FPS cap (the focus floor below
-    // would otherwise force ~60 FPS and defeat the pressure backoff).
-    const minMs = blurred ? BLUR_MIN_MS
-      : backingRelief ? Math.max(capMs, RELIEF_MS)
-      : Math.min(capMs, FOCUS_SMOOTH_MS);
+    const minMs = frameIntervalFor(quality, state, windowFocused, backingRelief, sttActive);
     if (now - lastRenderAt >= minMs) {
       const dt = now - lastRenderAt; // actual interval since the last render
       lastRenderAt = now;
@@ -580,7 +580,7 @@
     for (let i = 0; i < frames; i++) { now += 16.67; try { render(now); } catch (e) {} }
   }
 
-  root.AriaOrb = { init, setLevel, setState, setQuality, setSttBackend, beginStt, endStt, beginSttCompute, endSttCompute, isComputeFrozen, isBackingRelieved, effectiveDpr, backingFor, measure, benchmark, refreshAccent, themeRampColor, toggleFps, pump, MAX_BACKING, pressureShouldEngage };
+  root.AriaOrb = { init, setLevel, setState, setQuality, setSttBackend, beginStt, endStt, beginSttCompute, endSttCompute, isComputeFrozen, isBackingRelieved, effectiveDpr, backingFor, measure, benchmark, refreshAccent, themeRampColor, toggleFps, pump, MAX_BACKING, pressureShouldEngage, frameIntervalFor };
   if (document.readyState !== 'loading') init();
   else document.addEventListener('DOMContentLoaded', init);
 })(typeof self !== 'undefined' ? self : this);

@@ -36,9 +36,8 @@ export interface SessionSummary {
   tokens: SessionTokens;
 }
 
-// ponytail: newest MAX_SESSIONS kept, whole array rewritten on every turn. n is
-// tiny and writes are turn-paced, so a naive full rewrite is fine; switch to an
-// append-only log only if history ever gets large enough to matter.
+// The newest unpinned MAX_SESSIONS are retained; pins are exempt. The whole
+// array is rewritten on every turn, which is fine at this small, turn-paced n.
 const MAX_SESSIONS = 50;
 const MAX_TURNS_PER_SESSION = 200;
 const TITLE_MAX = 60;
@@ -52,8 +51,26 @@ function all(): SessionRecord[] {
   const s = db().get('sessions');
   return Array.isArray(s) ? (s as SessionRecord[]) : [];
 }
+
+// Retention is activity-based, never insertion-order based. Pinned records are
+// intentionally exempt from the normal cap: dropping an old pin just because a
+// newer unpinned session arrived defeats the purpose of pinning it.
+export function retainSessions(list: SessionRecord[]): SessionRecord[] {
+  const ordered = [...list].sort((a, b) =>
+    (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0) ||
+    (Number(b.startedAt) || 0) - (Number(a.startedAt) || 0) ||
+    a.id.localeCompare(b.id),
+  );
+  let unpinnedRemaining = MAX_SESSIONS;
+  return ordered.filter((session) => {
+    if (session.pinned) return true;
+    if (unpinnedRemaining <= 0) return false;
+    unpinnedRemaining--;
+    return true;
+  });
+}
 function persist(list: SessionRecord[]): void {
-  db().set('sessions', list.slice(-MAX_SESSIONS));
+  db().set('sessions', retainSessions(list));
 }
 
 let currentId: string | null = null;

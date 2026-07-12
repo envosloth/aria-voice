@@ -97,6 +97,9 @@ export class SttTurnGate {
     if (!this.isCurrent(turnId)) return false;
     this.turnId = null;
     this.captureOpen = false;
+    this.started = false;
+    this.endRequested = false;
+    this.transcribeSent = false;
     this.pending = [];
     this.pendingBytes = 0;
     this.audioBytes = 0;

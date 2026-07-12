@@ -13,6 +13,7 @@
 import http from 'http';
 import https from 'https';
 import { URL } from 'url';
+import { credentialedEndpointSecurityError } from './endpoint-security';
 
 // Same wiring as llm-stream.ts: shared keep-alive agent pool so repeated
 // discovery probes across navigations in Settings don't handshake each time.
@@ -30,6 +31,7 @@ export function normalizeChatBaseUrl(rawEndpoint: string): URL | null {
   } catch {
     return null;
   }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
   const base = url.pathname.replace(/\/+$/, '');
   if (base === '') {
     url.pathname = '/v1/models';                       // host only
@@ -92,6 +94,10 @@ export function listModels(rawEndpoint: string, apiKey: string): Promise<Discove
   const isHttps = url.protocol === 'https:';
   const transport = isHttps ? https : http;
   const targetUrl = url.toString();
+  const transportSecurityError = credentialedEndpointSecurityError(url, !!apiKey);
+  if (transportSecurityError) {
+    return Promise.resolve({ ok: false, endpoint: targetUrl, models: [], error: transportSecurityError });
+  }
 
   return new Promise((resolve) => {
     let settled = false;
@@ -114,8 +120,30 @@ export function listModels(rawEndpoint: string, apiKey: string): Promise<Discove
         },
         (res) => {
           let body = '';
-          res.on('data', (c: Buffer) => { body += c.toString(); });
+          let ended = false;
+          let received = 0;
+          const MAX_MODEL_LIST_BYTES = 1024 * 1024;
+          res.setTimeout(8000, () => {
+            try { res.destroy(); } catch { /* ignore */ }
+            done({ ok: false, endpoint: targetUrl, models: [], error: 'Request timed out (8s)' });
+          });
+          res.on('aborted', () => done({ ok: false, endpoint: targetUrl, models: [], error: 'Model discovery response was aborted' }));
+          res.on('error', (err) => done({ ok: false, endpoint: targetUrl, models: [], error: `Model discovery response failed: ${err.message}` }));
+          res.on('close', () => {
+            if (!ended) done({ ok: false, endpoint: targetUrl, models: [], error: 'Model discovery response closed before completion' });
+          });
+          res.on('data', (c: Buffer) => {
+            received += c.length;
+            if (received > MAX_MODEL_LIST_BYTES) {
+              try { res.destroy(); } catch { /* ignore */ }
+              done({ ok: false, endpoint: targetUrl, models: [], error: 'Model discovery response exceeded 1048576-byte limit' });
+              return;
+            }
+            body += c.toString();
+          });
           res.on('end', () => {
+            ended = true;
+            if (settled) return;
             if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
               done({
                 ok: false, endpoint: targetUrl, models: [],

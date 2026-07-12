@@ -50,3 +50,30 @@ export function parseForwardPort(line: string): number | null {
   );
   return m ? parseInt(m[1], 10) : null;
 }
+
+/** Single-flight generation gate for asynchronous local-port allocation. */
+export class TunnelStartGate {
+  private generation = 0;
+  private pending: number | null = null;
+
+  begin(): number | null {
+    if (this.pending !== null) return null;
+    this.pending = ++this.generation;
+    return this.pending;
+  }
+
+  isCurrent(generation: number | null): boolean {
+    return generation !== null && this.pending === generation;
+  }
+
+  claim(generation: number | null): boolean {
+    if (!this.isCurrent(generation)) return false;
+    this.pending = null;
+    return true;
+  }
+
+  cancel(): void {
+    this.generation++;
+    this.pending = null;
+  }
+}

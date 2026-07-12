@@ -13,6 +13,7 @@ Stdlib-only (urllib) so it freezes into a small PyInstaller bundle.
 
 import json
 import os
+import queue
 import socket
 import subprocess
 import sys
@@ -95,7 +96,15 @@ class SttSidecar(BaseSidecar):
                 pcm = bytes(self._audio_buffer)
                 self._audio_buffer.clear()
             t0 = time.time()
-            text = self._transcribe(pcm) if pcm else ""
+            try:
+                text = self._transcribe(pcm) if pcm else ""
+            except Exception as exc:
+                self.emit({
+                    "type": "stt_failed",
+                    "utterance_id": utterance_id,
+                    "error": str(exc),
+                })
+                return
             ms = int((time.time() - t0) * 1000)
             audio_ms = int(len(pcm) / 2 / 16000 * 1000) if pcm else 0
             # Measured inference latency (prove the warm/GPU path is fast, and let
@@ -215,21 +224,28 @@ class SttSidecar(BaseSidecar):
             env=self._env(), text=True,
         )
 
-        # Read startup log to detect the GPU backend and wait for readiness. The
-        # "using Vulkan backend" line is printed during model load, BEFORE the HTTP
-        # "listening" line — but the two can interleave/buffer such that we'd break
-        # on "listening" first and miss it (the old bug that reported backend=cpu
-        # while the server was really on the GPU). So we keep reading briefly past
-        # readiness, and the drain thread below keeps detecting too.
-        deadline = time.time() + 30
+        # A dedicated reader owns stdout for the process lifetime. Startup must
+        # never call blocking readline(): a live server that emits no newline
+        # would otherwise make this deadline decorative.
+        startup_lines = queue.Queue(maxsize=128)
+        threading.Thread(
+            target=self._drain_server_log,
+            args=(startup_lines,),
+            daemon=True,
+        ).start()
+        start_timeout = max(0.05, float(os.environ.get("ARIA_STT_START_TIMEOUT", "30")))
+        deadline = time.monotonic() + start_timeout
         ready = False
         ready_grace = None
-        while time.time() < deadline:
+        while time.monotonic() < deadline:
             if self._server_proc.poll() is not None:
                 self._emit_status("warning", "whisper-server exited during startup; will use CLI fallback")
                 self._server_proc = None
                 return
-            line = self._server_proc.stdout.readline()
+            try:
+                line = startup_lines.get(timeout=min(0.05, max(0.0, deadline - time.monotonic())))
+            except queue.Empty:
+                line = ""
             if line:
                 # GPU detection happens during model load, before the HTTP socket
                 # is guaranteed to accept requests. Record it, but keep waiting
@@ -238,17 +254,20 @@ class SttSidecar(BaseSidecar):
                 low = line.lower()
                 if "listening" in low or "http server" in low or "server is listening" in low:
                     ready = True
-                    ready_grace = time.time() + 0.4  # keep reading a touch for the GPU line
+                    ready_grace = time.monotonic() + 0.4  # keep reading a touch for the GPU line
             if not ready and self._port_open(self._server_port):
                 ready = True
-                ready_grace = time.time() + 0.4
-            if ready and (self.using_vulkan or (ready_grace and time.time() >= ready_grace)):
+                ready_grace = time.monotonic() + 0.4
+            if ready and (self.using_vulkan or (ready_grace and time.monotonic() >= ready_grace)):
                 break
-            time.sleep(0.02)
 
-        # Drain server stdout in the background so it doesn't block — and keep
-        # detecting the GPU backend in case the line arrives after startup.
-        threading.Thread(target=self._drain_server_log, daemon=True).start()
+        if not ready:
+            self._emit_status("warning", "whisper-server readiness timed out; will use CLI fallback")
+            try:
+                self._server_proc.terminate()
+            except Exception:
+                pass
+            self._server_proc = None
 
     def _detect_gpu_line(self, line: str) -> bool:
         """Set using_vulkan when a server log line confirms the GPU backend.
@@ -266,14 +285,17 @@ class SttSidecar(BaseSidecar):
             return True
         return False
 
-    def _drain_server_log(self) -> None:
+    def _drain_server_log(self, startup_lines=None) -> None:
         proc = self._server_proc
         if not proc or not proc.stdout:
             return
         for line in proc.stdout:
-            if not self._running:
-                break
             self._detect_gpu_line(line)
+            if startup_lines is not None:
+                try:
+                    startup_lines.put_nowait(line)
+                except queue.Full:
+                    pass
 
     # ---- helpers ----
 

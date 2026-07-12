@@ -63,7 +63,8 @@ check('power-saver.piper', ps.ttsEngine === 'piper', ps.ttsEngine);
 check('power-saver.tiny', ps.sttModel === 'tiny.en', ps.sttModel);
 check('power-saver.orb-low', ps.orbQuality === 'low', ps.orbQuality);
 check('power-saver.cap-low', ps.gpuCapPct <= 35, String(ps.gpuCapPct));
-check('max.orb-high', mp.orbQuality === 'high', mp.orbQuality);
+const expectedMaxOrb = hw.tier === 'high' ? 'high' : 'medium';
+check('max.orb-tier-appropriate', mp.orbQuality === expectedMaxOrb, mp.orbQuality);
 check('max.cap-100', mp.gpuCapPct === 100, String(mp.gpuCapPct));
 check('presets-distinct', JSON.stringify(ps) !== JSON.stringify(mp) && JSON.stringify(ps) !== JSON.stringify(auto),
   'power-saver / max / auto must differ');

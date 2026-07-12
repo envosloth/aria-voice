@@ -120,6 +120,13 @@ const vadImmediate = new A.VadEndpointer({ frameMs: 20, hangMs: 100, minSpeechMs
 for (let i = 0; i < 12; i++) vadImmediate.pushRms(0.3);
 check('vad-followup-hears-immediate-speech', vadImmediate.hasSpeech());
 
+// A quiet but real speaker can sit at the old floor-capture ceiling. Those
+// frames must qualify as speech instead of training the floor upward until the
+// gate rejects the rest of the same follow-up.
+const vadQuietSpeech = new A.VadEndpointer({ frameMs: 20, hangMs: 100, minSpeechMs: 240, seedFloor: true });
+for (let i = 0; i < 12; i++) vadQuietSpeech.pushRms(0.08);
+check('vad-followup-quiet-speech-does-not-poison-floor', vadQuietSpeech.hasSpeech());
+
 // 9f. A silent first frame must not make constant background noise qualify
 //     before the adaptive floor has had time to rise.
 const vadDelayedNoise = new A.VadEndpointer({ frameMs: 20, hangMs: 100, minSpeechMs: 240, seedFloor: true });

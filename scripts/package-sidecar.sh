@@ -61,7 +61,7 @@ fi
   --hidden-import base_sidecar \
   --distpath "$OUT" \
   --workpath "$SIDECAR_DIR/build" \
-  --specpath "$SIDECAR_DIR" \
+  --specpath "$SIDECAR_DIR/build/spec" \
   --noconfirm \
   "${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"}" \
   "$SIDECAR_DIR/main.py"
@@ -71,3 +71,6 @@ echo
 BINEXT=""; [ -f "$OUT/$NAME/$NAME.exe" ] && BINEXT=".exe"
 echo "=== Built: $OUT/$NAME/$NAME$BINEXT ==="
 ls -la "$OUT/$NAME/$NAME$BINEXT"
+# PyInstaller specs embed build-machine paths and are not an input to future
+# freezes. Keep them only in disposable work space, never beside sidecar source.
+rm -rf "$SIDECAR_DIR/build"

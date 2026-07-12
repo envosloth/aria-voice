@@ -10,7 +10,7 @@
  * and asserted the argv contained `0:127.0.0.1:8080` — locking in the exact bug.
  * It now imports the REAL compiled helper so it tests what actually ships. Build
  * first (smoke:tunnel runs `npm run build` before this). */
-const { buildTunnelArgv, parseForwardPort } = require('../dist/main/tunnel-args.js');
+const { buildTunnelArgv, parseForwardPort, TunnelStartGate } = require('../dist/main/tunnel-args.js');
 
 let pass = true;
 function check(name, cond, detail) {
@@ -49,6 +49,21 @@ check('parse.colonForm', parseForwardPort('Local forwarding listening on 127.0.0
 check('parse.ipv6', parseForwardPort('listening on ::1 port 7000') === 7000);
 check('parse.noise', parseForwardPort('debug1: Authenticating to box:22 as user') === null);
 check('parse.empty', parseForwardPort('') === null);
+
+// Port allocation is asynchronous. Only one start may own that gap, and stop
+// must invalidate its continuation before it can spawn an orphaned SSH process.
+let gate;
+try { gate = new TunnelStartGate(); } catch {}
+check('startGate.exists', !!gate);
+if (gate) {
+  const first = gate.begin();
+  check('startGate.singleFlight', first !== null && gate.begin() === null);
+  gate.cancel();
+  check('startGate.stopInvalidatesPending', !gate.isCurrent(first));
+  const next = gate.begin();
+  check('startGate.newGenerationAfterStop', next !== null && next !== first);
+  check('startGate.claimCurrent', gate.claim(next) && !gate.isCurrent(next));
+}
 
 // Config default localPort stays 0 ("OS-assigned" intent) — the supervisor turns
 // that into a real free port; it must NOT reach ssh as a literal 0.

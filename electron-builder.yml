@@ -47,6 +47,10 @@ extraResources:
     to: whisper
     filter:
       - "**/*"
+  # Root-side helper for verified manual .deb updates. It lives outside the asar
+  # because pkexec executes it directly with fixed argv (see updater.ts).
+  - from: assets/deb-update-installer.sh
+    to: deb-update-installer.sh
 
 linux:
   icon: assets/icon.png
@@ -69,18 +73,14 @@ linux:
     (whisper.cpp/Vulkan), natural local text-to-speech (Kokoro-82M), and
     wake-word detection (openWakeWord), routing to a user-configured LLM or
     agent harness. Screen sharing lets the agent see your desktop.
-  desktop:
-    Name: ARIA
-    Comment: Voice assistant
-    Categories: Utility;
-
-# Fedora/openSUSE runtime deps (rpm package names differ from deb).
+# RPM runtime deps. The Vulkan loader SONAME is provided by Fedora's
+# vulkan-loader and openSUSE's libvulkan1, unlike either distro package name.
 rpm:
   depends:
     - libsecret
     - gnome-keyring
     - libnotify
-    - vulkan-loader
+    - "libvulkan.so.1()(64bit)"
 
 # macOS: unsigned dmg + zip (open-source; users self-sign or right-click-open).
 # whisper.cpp on macOS uses the Metal backend (staged into build/whisper by CI).
@@ -96,6 +96,9 @@ mac:
   gatekeeperAssess: false
 
 # Windows: NSIS installer + portable. whisper.cpp uses the Vulkan/CPU backend.
+# There is deliberately no publisherName/code-signing identity yet. updater.ts
+# therefore exposes releases manually; adding signing must set publisherName so
+# electron-updater verifies Authenticode before enabling automatic install.
 win:
   icon: assets/icon.png
   target:
@@ -116,6 +119,11 @@ nsis:
 deb:
   maintainer: ARIA Project <aria@localhost>
   afterInstall: assets/deb-after-install.sh
+  # electron-builder passes these FPM flags through to dpkg metadata. This avoids
+  # co-installing the old aria-voice.desktop package with current aria.desktop.
+  fpm:
+    - --replaces=aria-voice
+    - --conflicts=aria-voice
   depends:
     - libsecret-1-0
     - gnome-keyring

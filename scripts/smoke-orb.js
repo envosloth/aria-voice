@@ -46,6 +46,11 @@ Orb.setQuality('low');
 const low4k = dims(3840, 2160, 1);
 check('4K.low.capped', low4k.longEdge <= MAX.low + 1, JSON.stringify(low4k));
 check('low.harder.than.high', MAX.low < MAX.high);
+check('fpsCap.selector-exists', typeof Orb.frameIntervalFor === 'function');
+check('fpsCap.medium-focused-preserved', typeof Orb.frameIntervalFor === 'function'
+  && Orb.frameIntervalFor('medium', 'speaking', true, false, false) >= 28);
+check('fpsCap.low-focused-preserved', typeof Orb.frameIntervalFor === 'function'
+  && Orb.frameIntervalFor('low', 'idle', true, false, false) >= 66);
 // A small window is never upscaled (cap only ever scales DOWN).
 Orb.setQuality('high');
 check('tiny.never.upscaled', dims(400, 300, 1).longEdge === 400, JSON.stringify(dims(400, 300, 1)));
