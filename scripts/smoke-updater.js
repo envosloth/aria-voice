@@ -13,6 +13,8 @@ const {
   createPrivateDebDownload,
   privilegedDebInstallArgs,
   beginUpdateInstall,
+  tryBeginUpdateOperation,
+  endUpdateOperation,
 } = require('../dist/main/updater');
 
 let pass = true;
@@ -105,6 +107,14 @@ const helperSource = fs.readFileSync(path.join(__dirname, '..', 'assets', 'deb-u
 check('deb helper copies into root-owned staging', /mktemp -d[\s\S]*cp -- "\$deb_path" "\$root_deb"/.test(helperSource), true);
 check('deb helper hashes root-owned copy', /sha512sum -- "\$root_deb"/.test(helperSource), true);
 check('deb helper resolves dependencies with apt', /apt-get[\s\S]*install[\s\S]*"\$root_deb"/.test(helperSource), true);
+
+// Repeated install IPC requests must not start overlapping downloads or
+// quiesce/install lifecycles. A failed operation releases the slot for retry.
+check('first update operation acquires single-flight slot', tryBeginUpdateOperation(), true);
+check('concurrent update operation is rejected', tryBeginUpdateOperation(), false);
+endUpdateOperation();
+check('update operation can retry after release', tryBeginUpdateOperation(), true);
+endUpdateOperation();
 
 // A failed/cancelled update must restore sidecars once, while a partial quiesce
 // failure must also attempt restoration before surfacing the failure.

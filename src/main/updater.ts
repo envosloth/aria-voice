@@ -47,6 +47,7 @@ let beforeInstall: (() => Promise<void>) | null = null;
 let afterInstallFailure: (() => Promise<void>) | null = null;
 let restoreAfterFailedInstall: (() => Promise<void>) | null = null;
 let installing = false;
+let installOperationInProgress = false;
 let downloadedVersion: string | null = null;
 // The .deb to install on the next install() click (set when a check finds a newer
 // release on the .deb channel). Holds the direct asset URL + expected sha512.
@@ -328,7 +329,20 @@ async function recoverFailedInstall(message: string): Promise<void> {
   const restore = restoreAfterFailedInstall;
   restoreAfterFailedInstall = null;
   try { await restore?.(); } catch { /* the original install failure is primary */ }
+  endUpdateOperation();
   emit({ state: 'error', message });
+}
+
+/** Claim the one update-operation slot before any download or quiescing work. */
+export function tryBeginUpdateOperation(): boolean {
+  if (installOperationInProgress) return false;
+  installOperationInProgress = true;
+  return true;
+}
+
+/** Release the operation slot after failure/cancellation so a retry can start. */
+export function endUpdateOperation(): void {
+  installOperationInProgress = false;
 }
 
 /**
@@ -414,33 +428,46 @@ export async function checkForUpdates(): Promise<void> {
  * it with pkexec (a graphical password prompt) — so one click updates either way.
  */
 export async function installUpdate(): Promise<void> {
-  if (autoUpdater && downloadedVersion) {
-    if (!await prepareInstall()) return;
-    installing = true;
-    setImmediate(() => {
-      try { autoUpdater!.quitAndInstall(false, true); }
-      catch (e) { void recoverFailedInstall((e as Error).message); }
-    });
+  if (!tryBeginUpdateOperation()) {
+    emit({ state: 'error', message: 'An update operation is already in progress.' });
     return;
   }
-  if (pendingDeb) { await installDebUpdate(pendingDeb); return; }
-  emit({ state: 'error', message: 'No installable update is available.' });
+  let operationRetained = false;
+  try {
+    if (autoUpdater && downloadedVersion) {
+      if (!await prepareInstall()) return;
+      installing = true;
+      operationRetained = true;
+      setImmediate(() => {
+        try { autoUpdater!.quitAndInstall(false, true); }
+        catch (e) { void recoverFailedInstall((e as Error).message); }
+      });
+      return;
+    }
+    if (pendingDeb) {
+      operationRetained = await installDebUpdate(pendingDeb);
+      return;
+    }
+    emit({ state: 'error', message: 'No installable update is available.' });
+  } finally {
+    if (!operationRetained) endUpdateOperation();
+  }
 }
 
 // Download the new .deb (with progress + checksum), then install via pkexec and
 // relaunch. pkexec shows the desktop's polkit password dialog; if the user
 // cancels or it's unavailable, we surface an error and the app keeps running.
-async function installDebUpdate(deb: DebInfo): Promise<void> {
+async function installDebUpdate(deb: DebInfo): Promise<boolean> {
   if (!deb.sha512) {
     emit({ state: 'error', message: 'Update metadata has no SHA-512 checksum; use "View release" to update manually.' });
-    return;
+    return false;
   }
   let stage: DebDownload;
   try {
     stage = createPrivateDebDownload();
   } catch (e) {
     emit({ state: 'error', message: `Could not create secure update staging: ${(e as Error).message}` });
-    return;
+    return false;
   }
   const hash = crypto.createHash('sha512');
   let received = 0;
@@ -472,14 +499,14 @@ async function installDebUpdate(deb: DebInfo): Promise<void> {
     try { out.destroy(); } catch { /* ignore */ }
     removeDebDownload(stage);
     emit({ state: 'error', message: `Download failed: ${(e as Error).message}` });
-    return;
+    return false;
   }
   const actual = hash.digest();
   const expected = Buffer.from(deb.sha512, 'base64');
   if (expected.length !== actual.length || !crypto.timingSafeEqual(actual, expected)) {
     removeDebDownload(stage);
     emit({ state: 'error', message: 'Downloaded update failed its integrity check; not installing.' });
-    return;
+    return false;
   }
   emit({ state: 'downloaded', version: deb.version });
 
@@ -487,7 +514,7 @@ async function installDebUpdate(deb: DebInfo): Promise<void> {
   emit({ state: 'installing', version: deb.version });
   if (!await prepareInstall()) {
     removeDebDownload(stage);
-    return;
+    return false;
   }
   installing = true;
   let finished = false;
@@ -503,7 +530,7 @@ async function installDebUpdate(deb: DebInfo): Promise<void> {
     child = spawn(command.command, command.args, { stdio: 'ignore' });
   } catch (e) {
     await fail(`Couldn't launch the installer (${(e as Error).message}). Use "View release" to update manually.`);
-    return;
+    return false;
   }
   child.on('error', (e) => {
     void fail(`Couldn't launch the installer (${e.message}). Use "View release" to update manually.`);
@@ -521,6 +548,7 @@ async function installDebUpdate(deb: DebInfo): Promise<void> {
       void fail(`Update ${why}. You can try again or use "View release".`);
     }
   });
+  return true;
 }
 
 /** Open the latest-release page in the user's browser (notify path's CTA). */

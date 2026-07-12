@@ -9,35 +9,24 @@ set -euo pipefail
 # non-Linux paths cannot be verified from the Linux dev box — confirm via CI.
 
 WHISPER_VERSION="${WHISPER_VERSION:-v1.7.6}"
-BUILD_DIR="${BUILD_DIR:-${TMPDIR:-/tmp}/whisper-build}"
 INSTALL_PREFIX="${INSTALL_PREFIX:-$HOME/.local}"
 
-# `rm -rf "$BUILD_DIR"` is intentional for reproducible rebuilds, but it must
-# never accept a root/current/shallow temp directory supplied by the environment.
-# Resolve the existing parent first so lexical paths such as /tmp/foo/.. cannot
-# collapse to a dangerous cleanup target.
-case "$BUILD_DIR" in
-  ''|/|.|..|/tmp|/var/tmp)
-    echo "ERROR: unsafe BUILD_DIR: $BUILD_DIR" >&2
-    exit 2
-    ;;
-esac
-BUILD_PARENT="$(cd "$(dirname "$BUILD_DIR")" 2>/dev/null && pwd -P)" || {
-  echo "ERROR: unsafe BUILD_DIR (parent does not exist): $BUILD_DIR" >&2
+# Never recursively remove a caller-selected path. mktemp creates a directory
+# owned by this invocation; cleanup is therefore limited to something this
+# process demonstrably created, even when TMPDIR points outside /tmp.
+if [ -n "${BUILD_DIR:-}" ] || [ -n "${WHISPER_BUILD_ROOT:-}" ]; then
+  echo "ERROR: unsafe BUILD_DIR override; custom build paths are not supported" >&2
+  exit 2
+fi
+TMP_ROOT="${TMPDIR:-/tmp}"
+BUILD_DIR="$(mktemp -d "${TMP_ROOT%/}/aria-whisper-build.XXXXXX")" || {
+  echo "ERROR: could not create private whisper build directory" >&2
   exit 2
 }
-BUILD_BASE="$(basename "$BUILD_DIR")"
-BUILD_PARENT="${BUILD_PARENT%/}"
-[ -n "$BUILD_PARENT" ] || BUILD_PARENT=/
-BUILD_DIR="$BUILD_PARENT/$BUILD_BASE"
-WORK_DIR="$(pwd -P)"
-HOME_DIR="$(cd "$HOME" 2>/dev/null && pwd -P || true)"
-case "$BUILD_DIR" in
-  /|/tmp|/var/tmp|/home|"$WORK_DIR"|"$HOME_DIR"|*/.|*/..)
-    echo "ERROR: unsafe BUILD_DIR: $BUILD_DIR" >&2
-    exit 2
-    ;;
-esac
+cleanup() { rm -rf -- "$BUILD_DIR"; }
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
 
 OS="$(uname -s)"
 
@@ -95,8 +84,7 @@ if [ "$NEED_VULKAN_CHECK" -eq 1 ]; then
   vulkaninfo --summary 2>/dev/null | grep -E "(GPU|driver|apiVersion)" | head -5
 fi
 
-# Clone and build
-rm -rf -- "$BUILD_DIR"
+# Clone and build into the private empty directory.
 git clone --depth 1 --branch "$WHISPER_VERSION" https://github.com/ggerganov/whisper.cpp.git "$BUILD_DIR"
 
 cd "$BUILD_DIR"
@@ -110,4 +98,3 @@ cmake --install build
 
 echo
 echo "=== Installed whisper.cpp ($OS) to $INSTALL_PREFIX ==="
-rm -rf -- "$BUILD_DIR"

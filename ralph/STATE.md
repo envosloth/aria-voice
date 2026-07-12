@@ -35,6 +35,9 @@ Harness commands: `npm run perf:baseline`, `npm run perf:live [ttftMs]`, `npm ru
 
 ## History (append-only, newest first)
 
+### Run 2 Independent-review follow-up — 2026-07-12
+Closed the final review findings after commit `1da6e71`: whisper.cpp now builds in a private `mktemp` directory created by the current invocation and rejects caller-selected cleanup paths; update installation now claims a dedicated single-flight slot before download or quiescing and releases it on every retryable failure path. Added regressions for `/usr`, `/etc`, `/opt`, `/var`, concurrent update attempts, and retry after failure. Build, lint, typecheck, audit, updater/update-quiesce, release-packaging, boot, shell syntax, and diff checks pass.
+
 ### Run 2 Reliability and Security Hardening — 2026-07-12
 Corrected router/direct-LLM boundaries, concurrent turn correlation, settle-once and bounded HTTP/SSE handling, credential transport policy, model-download integrity, pinned-session retention, and secure-storage behavior. Reworked STT/TTS/microphone/VAD/orb and supervisor lifecycle handling, including correlated completion/failure events, cross-channel PCM framing, nonblocking STT readiness, restart cancellation, isolated Python environments, single-owner PCM sockets, and private per-user/per-process socket directories. Hardened unsigned updater behavior, moved `.deb` verification/installation into root-owned staging with dependency resolution, made failed update quiescing reversible, pinned and startup-verified model revisions/checksums, upgraded electron-builder to 26.15.3, removed generated machine-specific PyInstaller specs, and strengthened release gates.
 

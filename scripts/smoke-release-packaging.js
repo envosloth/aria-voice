@@ -59,7 +59,7 @@ check('PyInstaller work/spec directory is removed after freeze', /rm -rf "\$SIDE
 // BUILD_DIR must never allow cleanup of /, the current directory, or a shallow
 // top-level temporary path. Exercise the script's early guard before it needs
 // network/Vulkan tooling.
-for (const dangerous of ['/', '.', '/tmp', process.env.HOME, root]) {
+for (const dangerous of ['/', '.', '/tmp', '/usr', '/etc', '/opt', '/var', process.env.HOME, root]) {
   try {
     execFileSync('bash', [path.join(root, 'scripts', 'build-whispercpp.sh')], {
       env: { ...process.env, BUILD_DIR: dangerous },
@@ -70,7 +70,17 @@ for (const dangerous of ['/', '.', '/tmp', process.env.HOME, root]) {
     check(`whisper rejects dangerous BUILD_DIR ${dangerous}`, /unsafe BUILD_DIR/i.test(String(err.stderr || '')));
   }
 }
+try {
+  execFileSync('bash', [path.join(root, 'scripts', 'build-whispercpp.sh')], {
+    env: { ...process.env, WHISPER_BUILD_ROOT: '/usr/local', BUILD_DIR: '/usr/local/whisper-build-existing' },
+    stdio: 'pipe',
+  });
+  check('whisper rejects coordinated caller-controlled build root', false);
+} catch (err) {
+  check('whisper rejects coordinated caller-controlled build root', /unsafe BUILD_DIR/i.test(String(err.stderr || '')));
+}
 check('whisper cleanup contains build-dir guard', /unsafe BUILD_DIR/i.test(whisper));
+check('whisper build directory is created privately', /mktemp -d/.test(whisper));
 check('model script pins immutable revisions', !/\/resolve\/main/.test(modelDownloader));
 check('model script verifies sha256 before promotion', /sha256sum\s+-c/.test(modelDownloader));
 
