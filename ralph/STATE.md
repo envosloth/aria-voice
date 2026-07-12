@@ -4,12 +4,12 @@
 > Those files are now historical; this file is canonical going forward.
 
 ## Current Status (overwrite each iteration)
-Run #: 2 | Status: v3.0.4 reliability/security hardening complete | Verified?: software/static/package-dir gates yes; full native STT suite environment-blocked
+Run #: 2 | Status: v3.0.5 release candidate; reliability/security hardening complete | Verified?: software/static/package-dir gates yes; full native STT suite environment-blocked
 Architecture invariant: routing decides delegation before invocation; the direct conversational LLM receives no tools or handoff sentinel.
 Current limitation: this Fedora checkout lacks `cmake`, `glslc`, `whisper-server`, `whisper-cli`, and the optional Kokoro model files. `smoke:all` therefore stops at STT lifecycle startup and the Kokoro settings-live gate cannot exercise its voice switch; cleanup reports zero orphaned sidecars. Piper TTS and STT control/lifecycle tests pass. This is an environment/tooling/assets block, not a passing ship gate.
-Next target: run native Whisper/Vulkan STT, resilience, pdeathsig, e2e, frozen-sidecar, and installer smoke gates on the release environment before calling v3.0.4 shippable.
+Next target: publish v3.0.5 and require the native GitHub release matrix to build its Linux, Windows, and macOS artifacts successfully.
 
-## Current artifacts (v3.0.4 — local verification, NOT released)
+## Current artifacts (v3.0.5 — release candidate, NOT released)
 - `dist-installers/linux-unpacked/` produced successfully by electron-builder 26.15.3.
 - No new `.deb`, `.rpm`, `.AppImage`, Windows, or macOS installer was produced in this run.
 - NOT pushed, tagged, or released.
@@ -34,6 +34,9 @@ Harness commands: `npm run perf:baseline`, `npm run perf:live [ttftMs]`, `npm ru
 → ./ralph/BACKLOG.md
 
 ## History (append-only, newest first)
+
+### v3.0.5 Release Preparation — 2026-07-12
+Bumped package and lock metadata from v3.0.4 to v3.0.5 for the reviewed reliability/security hardening in commits `1da6e71` and `9f2c5cf`. Release publication uses the native GitHub Actions matrix; the release is not complete until its Linux, Windows, and both macOS jobs succeed and the resulting GitHub release assets are present.
 
 ### Run 2 Independent-review follow-up — 2026-07-12
 Closed the final review findings after commit `1da6e71`: whisper.cpp now builds in a private `mktemp` directory created by the current invocation and rejects caller-selected cleanup paths; update installation now claims a dedicated single-flight slot before download or quiescing and releases it on every retryable failure path. Added regressions for `/usr`, `/etc`, `/opt`, `/var`, concurrent update attempts, and retry after failure. Build, lint, typecheck, audit, updater/update-quiesce, release-packaging, boot, shell syntax, and diff checks pass.
