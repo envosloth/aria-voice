@@ -59,14 +59,30 @@ async function updateChatSub() {
 })();
 
 const conversationEl = document.getElementById('conversation');
+const setupConnectionButton = document.getElementById('setup-connection-btn');
 const partialEl = document.getElementById('partial');
 const textInput = document.getElementById('text-input');
+const sendBtn = document.getElementById('send-btn');
 const micBtn = document.getElementById('mic-btn');
 const errorBanner = document.getElementById('error-banner');
+const errorText = document.getElementById('error-text');
+const errorDismiss = document.getElementById('error-dismiss');
+const ariaStatus = document.getElementById('aria-status');
+const appShell = document.getElementById('app-shell');
+let settingsReturnFocus = null;
+let onboardingReturnFocus = null;
 const statusDots = {
   stt: document.getElementById('status-stt'),
   tts: document.getElementById('status-tts'),
   wakeword: document.getElementById('status-wakeword'),
+};
+const statusLabels = {
+  stt: document.getElementById('status-stt-label'),
+  tts: document.getElementById('status-tts-label'),
+  wakeword: document.getElementById('status-wakeword-label'),
+};
+const sidecarDisplayNames = {
+  stt: 'Speech to text', tts: 'Text to speech', wakeword: 'Wake word',
 };
 
 let listening = false;
@@ -132,10 +148,57 @@ function addMessage(role, text) {
   return div;
 }
 
+function setUiStatus(text) {
+  if (ariaStatus && ariaStatus.textContent !== text) ariaStatus.textContent = text;
+}
+
+function clearError() {
+  errorBanner.classList.remove('visible');
+  if (errorText) errorText.textContent = '';
+}
+
 function showError(msg) {
-  errorBanner.textContent = msg;
+  if (errorText) errorText.textContent = msg;
   errorBanner.classList.add('visible');
-  setTimeout(() => errorBanner.classList.remove('visible'), 8000);
+}
+if (errorDismiss) errorDismiss.addEventListener('click', clearError);
+
+function setAppShellInert(inert) {
+  if (appShell) appShell.inert = inert;
+}
+
+function setSetupNeeded(needed) {
+  document.body.dataset.setupNeeded = String(needed);
+  setupConnectionButton.hidden = !needed;
+}
+
+function modalFocusables(dialog) {
+  return Array.from(dialog.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'))
+    .filter((element) => !element.closest('[hidden]') && element.getClientRects().length > 0);
+}
+
+function trapModalFocus(event, dialog) {
+  if (event.key !== 'Tab') return;
+  const items = modalFocusables(dialog);
+  if (!items.length) { event.preventDefault(); return; }
+  const first = items[0];
+  const last = items[items.length - 1];
+  if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function focusTarget(element) {
+  return element && element !== document.body && typeof element.focus === 'function' ? element : null;
+}
+
+function restoreModalFocus(element) {
+  if (element && element.isConnected) element.focus();
+  else textInput.focus();
 }
 
 // Error boundary: surface uncaught renderer errors to the user rather than
@@ -267,13 +330,22 @@ function cancelThinkingHold() {
   thinkingTimer2 = null;
 }
 
+function updateSendButton() {
+  if (sendBtn) sendBtn.disabled = !textInput.value.trim();
+}
+function submitTextInput() {
+  const text = textInput.value.trim();
+  if (!text) return;
+  textInput.value = '';
+  updateSendButton();
+  submitUserMessage(text);
+}
+textInput.addEventListener('input', updateSendButton);
 textInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && textInput.value.trim()) {
-    const text = textInput.value.trim();
-    textInput.value = '';
-    submitUserMessage(text);
-  }
+  if (e.key === 'Enter') { e.preventDefault(); submitTextInput(); }
 });
+if (sendBtn) sendBtn.addEventListener('click', submitTextInput);
+updateSendButton();
 
 // --- Screen share: feed the live desktop to the agent as vision context ---
 let screenStream = null, screenTrack = null, screenGrabber = null, screenVideo = null;
@@ -319,7 +391,11 @@ async function startScreenShare() {
       stopScreenShare();
       assistantSay('Screen sharing stopped.');
     });
-    if (screenShareBtn) screenShareBtn.classList.add('active');
+    if (screenShareBtn) {
+      screenShareBtn.classList.add('active');
+      screenShareBtn.setAttribute('aria-pressed', 'true');
+      screenShareBtn.setAttribute('aria-label', 'Stop sharing your screen with ARIA');
+    }
     // Warm a frame now and keep it fresh in the background, off the send path.
     screenFrameCache = null;
     refreshScreenFrame();
@@ -338,7 +414,11 @@ function stopScreenShare() {
   screenFrameCache = null;
   if (screenStream) screenStream.getTracks().forEach((t) => t.stop());
   screenStream = null; screenTrack = null; screenGrabber = null; screenVideo = null;
-  if (screenShareBtn) screenShareBtn.classList.remove('active');
+  if (screenShareBtn) {
+    screenShareBtn.classList.remove('active');
+    screenShareBtn.setAttribute('aria-pressed', 'false');
+    screenShareBtn.setAttribute('aria-label', 'Share your screen with ARIA');
+  }
 }
 
 // Grab one desktop frame as a downscaled JPEG data URL (small + fast). Async:
@@ -533,7 +613,18 @@ function updateVad(samples) {
 // whether it's still "speaking" before flipping back to idle (so a barge-in that
 // already moved us to 'listening' is never clobbered by a late audio-end).
 let orbStateName = 'idle';
-function orbState(s) { orbStateName = s; document.body.dataset.state = s; if (window.AriaOrb) window.AriaOrb.setState(s); }
+function orbState(s) {
+  orbStateName = s;
+  document.body.dataset.state = s;
+  if (window.AriaOrb) window.AriaOrb.setState(s);
+  const description = {
+    idle: 'ARIA is idle and waiting for the wake word.',
+    listening: 'ARIA is listening.',
+    processing: 'ARIA is working on your request.',
+    speaking: 'ARIA is speaking.',
+  }[s];
+  if (description) setUiStatus(description);
+}
 
 // Barge-in: the user started talking to ARIA (wake word, global/in-window
 // shortcut, or push-to-talk) while it was still thinking or speaking. Stop the
@@ -574,6 +665,7 @@ function beginUtterance(opts) {
   perf.mark(turnId, 'audio_start');
   listening = true;
   micBtn.classList.add('listening');
+  micBtn.setAttribute('aria-pressed', 'true');
   orbState('listening');
   // Tell the orb an STT transcription is starting so the GPU-bound render can
   // swap in its throttled cap (the "high" tier native-refresh + Vulkan STT
@@ -624,6 +716,7 @@ function endUtterance(opts) {
   clearTimeout(vadSafetyTimer);
   clearTimeout(noSpeechTimer); noSpeechTimer = null;
   micBtn.classList.remove('listening');
+  micBtn.setAttribute('aria-pressed', 'false');
   perf.mark(currentVoiceTurnId, 'audio_end');
   // A silent follow-up: finalize STT to keep the sidecar clean but drop whatever
   // it returns, and go straight back to idle instead of flashing 'processing'.
@@ -661,6 +754,17 @@ function maybeStartFollowup() {
 micBtn.addEventListener('mousedown', beginUtterance);
 micBtn.addEventListener('mouseup', endUtterance);
 micBtn.addEventListener('mouseleave', endUtterance);
+micBtn.addEventListener('keydown', (e) => {
+  if (e.repeat || (e.key !== ' ' && e.key !== 'Enter')) return;
+  e.preventDefault();
+  beginUtterance();
+});
+micBtn.addEventListener('keyup', (e) => {
+  if (e.key !== ' ' && e.key !== 'Enter') return;
+  e.preventDefault();
+  endUtterance();
+});
+micBtn.addEventListener('blur', endUtterance);
 
 // Start capturing as soon as we have a user gesture (autoplay policy) or load.
 startMicCapture();
@@ -716,6 +820,7 @@ aria.stt.onState((event) => {
   clearTimeout(vadSafetyTimer);
   clearTimeout(noSpeechTimer); noSpeechTimer = null;
   micBtn.classList.remove('listening');
+  micBtn.setAttribute('aria-pressed', 'false');
   currentVoiceTurnId = null;
   partialEl.textContent = '';
   try { window.AriaOrb && window.AriaOrb.endStt && window.AriaOrb.endStt(); } catch (e) {}
@@ -1300,12 +1405,17 @@ const DOT_CLASS_FOR_STATUS = {
   error: 'error', 'circuit-open': 'error', exited: 'error',
   'memory-exceeded': 'error', 'heartbeat-timeout': 'error',
 };
-aria.sidecar.onStatus(({ name, status, detail }) => {
+aria.sidecar.onStatus(({ name, status }) => {
   const dot = statusDots[name];
+  const statusLabel = statusLabels[name];
   if (!dot) return;
   const cls = DOT_CLASS_FOR_STATUS[status];
   if (!cls) return; // 'log'/heartbeat/unknown — not a state change; keep the dot as-is
+  const state = cls === 'active' ? 'ready' : cls === 'loading' ? 'starting' : 'unavailable';
+  const message = `${sidecarDisplayNames[name] || name} is ${state}.`;
   dot.className = 'status-dot ' + cls;
+  dot.title = message;
+  if (statusLabel) statusLabel.textContent = message;
 });
 
 aria.sidecar.onError(({ name, status, detail }) => {
@@ -1324,7 +1434,9 @@ aria.sidecar.onError(({ name, status, detail }) => {
 
 // --- Settings panel ---
 const settingsOverlay = document.getElementById('settings-overlay');
+const settingsPanel = document.querySelector('.settings-panel');
 const settingsBtn = document.getElementById('settings-btn');
+const compactSettingsBtn = document.getElementById('compact-settings-btn');
 const settingsClose = document.getElementById('settings-close');
 const settingsSave = document.getElementById('settings-save');
 const savedMsg = document.getElementById('settings-saved-msg');
@@ -1996,40 +2108,53 @@ async function loadSettings() {
   }
 }
 
-function openSettings() {
+function openSettings(invoker) {
+  settingsReturnFocus = focusTarget(invoker) || focusTarget(document.activeElement);
   savedMsg.textContent = '';
   loadSettings();
   // The hardware readout was only rendered on preset *change*, so the panel
   // sat on "Detecting hardware…" forever — render it on every open.
   loadHardwareInfo().then((info) => renderHardware(info));
+  setAppShellInert(true);
   settingsOverlay.classList.add('visible');
+  requestAnimationFrame(() => settingsClose.focus());
 }
 async function closeSettings() {
   settingsOverlay.classList.remove('visible');
+  setAppShellInert(false);
+  restoreModalFocus(settingsReturnFocus);
+  settingsReturnFocus = null;
   // Revert any unsaved live theme preview to the persisted theme.
   applyTheme((await aria.config.get('ui.theme')) || 'midnight');
 }
 
-settingsBtn.addEventListener('click', openSettings);
+settingsBtn.addEventListener('click', () => openSettings(settingsBtn));
+if (compactSettingsBtn) compactSettingsBtn.addEventListener('click', () => openSettings(compactSettingsBtn));
+if (setupConnectionButton) setupConnectionButton.addEventListener('click', () => openSettings(setupConnectionButton));
 settingsClose.addEventListener('click', closeSettings);
 
 // New session: stop anything in flight, wipe the on-screen transcript AND the
 // main-side conversation history, and return to a clean idle state.
 const newSessionBtn = document.getElementById('new-session-btn');
-if (newSessionBtn) {
-  newSessionBtn.addEventListener('click', () => {
-    bargeIn();                          // cancel gen + stop audio + clear stream/tool state
-    try { aria.llm.reset(); } catch (e) {} // clear history on the main side
-    conversationEl.replaceChildren();   // empty transcript -> :empty placeholder returns
-    partialEl.textContent = '';
-    currentAssistantMsg = null;
-    lastTurnWasVoice = false;
-    orbState('idle');
-    renderSessionList(); // the prior conversation (if any) is now a past session
-  });
+const compactNewSessionBtn = document.getElementById('compact-new-session-btn');
+function startNewSession() {
+  bargeIn();                          // cancel gen + stop audio + clear stream/tool state
+  try { aria.llm.reset(); } catch (e) {} // clear history on the main side
+  conversationEl.replaceChildren();   // empty transcript -> :empty placeholder returns
+  partialEl.textContent = '';
+  currentAssistantMsg = null;
+  lastTurnWasVoice = false;
+  orbState('idle');
+  renderSessionList(); // the prior conversation (if any) is now a past session
 }
+if (newSessionBtn) newSessionBtn.addEventListener('click', startNewSession);
+if (compactNewSessionBtn) compactNewSessionBtn.addEventListener('click', startNewSession);
 settingsOverlay.addEventListener('click', (e) => {
   if (e.target === settingsOverlay) closeSettings();
+});
+settingsOverlay.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.preventDefault(); closeSettings(); return; }
+  if (settingsPanel) trapModalFocus(e, settingsPanel);
 });
 
 // --- Past conversations (inline sidebar list) -----------------------------
@@ -2074,7 +2199,7 @@ function relTime(ts) {
 // right next to the button. Only ever one menu open at a time.
 let openSessionMenu = null; // { menu, btn } currently shown on <body>, or null
 
-function closeSessionMenus() {
+function closeSessionMenus({ returnFocus = false } = {}) {
   if (!openSessionMenu) return;
   const { menu, btn } = openSessionMenu;
   openSessionMenu = null;
@@ -2082,6 +2207,7 @@ function closeSessionMenus() {
   menu.hidden = true;
   menu.remove(); // drop the body-parked node; reopening re-appends it
   if (btn) btn.setAttribute('aria-expanded', 'false');
+  if (returnFocus && btn && btn.isConnected) btn.focus();
 }
 
 function positionSessionMenu(menu, btn) {
@@ -2105,6 +2231,7 @@ function openSessionMenuFor(menu, btn) {
   btn.setAttribute('aria-expanded', 'true');
   positionSessionMenu(menu, btn);  // measure + place once it's laid out
   openSessionMenu = { menu, btn };
+  menu.querySelector('[role="menuitem"]').focus();
 }
 
 function resetConversationViewAfterSessionDelete() {
@@ -2159,9 +2286,11 @@ async function renderSessionList() {
     menuBtn.textContent = '⋮';
 
     const menu = document.createElement('div');
+    menu.id = `session-menu-${s.id}`;
     menu.className = 'session-menu';
     menu.hidden = true;
     menu.setAttribute('role', 'menu');
+    menuBtn.setAttribute('aria-controls', menu.id);
 
     const pin = document.createElement('button');
     pin.type = 'button';
@@ -2198,10 +2327,26 @@ async function renderSessionList() {
     });
 
     menu.append(pin, del);
+    menu.addEventListener('keydown', (e) => {
+      const items = Array.from(menu.querySelectorAll('[role="menuitem"]'));
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeSessionMenus({ returnFocus: true });
+        return;
+      }
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+      e.preventDefault();
+      const current = Math.max(0, items.indexOf(document.activeElement));
+      let next = current;
+      if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = items.length - 1;
+      else next = (current + (e.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length;
+      items[next].focus();
+    });
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       const wasOpen = !!openSessionMenu && openSessionMenu.menu === menu;
-      closeSessionMenus();
+      closeSessionMenus({ returnFocus: wasOpen });
       if (!wasOpen) openSessionMenuFor(menu, menuBtn);
     });
 
@@ -2248,13 +2393,36 @@ if (settingsNav) {
   const panels = document.querySelectorAll('.settings-content .tab-panel');
   const content = document.querySelector('.settings-content');
   function showTab(tab) {
-    navItems.forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
-    panels.forEach((p) => p.classList.toggle('active', p.dataset.panel === tab));
+    navItems.forEach((b) => {
+      const active = b.dataset.tab === tab;
+      b.classList.toggle('active', active);
+      b.setAttribute('aria-selected', String(active));
+      b.tabIndex = active ? 0 : -1;
+    });
+    panels.forEach((p) => {
+      const active = p.dataset.panel === tab;
+      p.classList.toggle('active', active);
+      p.hidden = !active;
+    });
     const active = settingsNav.querySelector('.snav-item.active');
     if (active && settingsTabTitle) settingsTabTitle.textContent = active.textContent.trim();
     if (content) content.scrollTop = 0;
   }
   navItems.forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
+  settingsNav.addEventListener('keydown', (e) => {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return;
+    e.preventDefault();
+    const items = Array.from(navItems);
+    const current = Math.max(0, items.indexOf(document.activeElement));
+    let next = current;
+    if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = items.length - 1;
+    else next = (current + (e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 1) + items.length) % items.length;
+    items[next].focus();
+    showTab(items[next].dataset.tab);
+  });
+  const initiallyActive = settingsNav.querySelector('.snav-item.active');
+  if (initiallyActive) showTab(initiallyActive.dataset.tab);
 }
 
 // "Discover model" buttons — probe the configured endpoint for its served
@@ -2324,6 +2492,9 @@ settingsSave.addEventListener('click', async () => {
     await aria.config.set('harness.id', cfg.harness.value);
     await aria.config.set('harness.endpoint', cfg.harnessEndpoint.value.trim());
     await aria.config.set('harness.model', cfg.harnessModel.value.trim());
+    const hasConnection = Boolean(cfg.llmEndpoint.value.trim() || cfg.harnessEndpoint.value.trim());
+    await aria.config.set('ui.setup-needed', !hasConnection);
+    setSetupNeeded(!hasConnection);
     await aria.config.set('stt.model', cfg.sttModel.value);
     await aria.config.set('stt.backend', cfg.sttBackend.value);
     applyOrbSttBackend(cfg.sttBackend.value);
@@ -2356,7 +2527,9 @@ settingsSave.addEventListener('click', async () => {
 // --- First-run onboarding walkthrough ---
 const onb = {
   overlay: document.getElementById('onboard-overlay'),
+  panel: document.querySelector('.onboard-panel'),
   dots: document.getElementById('onboard-dots'),
+  progress: document.getElementById('onb-progress'),
   steps: Array.from(document.querySelectorAll('.onboard-step')),
   back: document.getElementById('onb-back'),
   skip: document.getElementById('onb-skip'),
@@ -2464,9 +2637,30 @@ function onbRender() {
   Array.from(onb.dots.children).forEach((d, i) => {
     d.className = 'dot' + (i === onbStep ? ' active' : i < onbStep ? ' done' : '');
   });
+  const current = onb.steps.find((s) => Number(s.dataset.step) === onbStep);
+  const title = current && current.querySelector('h2');
+  if (onb.progress) onb.progress.textContent = `Step ${onbStep + 1} of ${ONB_LAST + 1}: ${title ? title.textContent.trim() : 'Setup'}`;
   onb.back.style.visibility = onbStep === 0 ? 'hidden' : 'visible';
   onb.next.textContent = onbStep === ONB_LAST ? 'Finish' : 'Next';
 }
+
+function openOnboarding() {
+  onboardingReturnFocus = focusTarget(document.activeElement) || textInput;
+  setAppShellInert(true);
+  onb.overlay.classList.add('visible');
+  requestAnimationFrame(() => onb.next.focus());
+}
+
+function closeOnboarding() {
+  onb.overlay.classList.remove('visible');
+  setAppShellInert(false);
+  restoreModalFocus(onboardingReturnFocus);
+  onboardingReturnFocus = null;
+}
+
+onb.overlay.addEventListener('keydown', (e) => {
+  if (onb.panel) trapModalFocus(e, onb.panel);
+});
 
 let onbAdvanceDir = 1;
 async function onbNext() {
@@ -2518,19 +2712,29 @@ async function onbFinish() {
     await aria.config.set('llm.model', onb.llmModel.value.trim());
     if (onb.llmKey.value.trim()) await aria.secure.set('llm-api-key', onb.llmKey.value.trim());
   }
+  const hasConnection = Boolean(harnessEp || llmEp);
+  await aria.config.set('ui.setup-needed', !hasConnection);
+  setSetupNeeded(!hasConnection);
   await aria.config.set('ui.onboarded', true);
-  onb.overlay.classList.remove('visible');
+  closeOnboarding();
 }
 
 onb.next.addEventListener('click', onbNext);
 onb.back.addEventListener('click', onbBack);
 onb.skip.addEventListener('click', async () => {
+  await aria.config.set('ui.setup-needed', true);
+  setSetupNeeded(true);
   await aria.config.set('ui.onboarded', true);
-  onb.overlay.classList.remove('visible');
+  closeOnboarding();
 });
 
 (async () => {
   const onboarded = await aria.config.get('ui.onboarded');
+  const configured = Boolean(
+    (await aria.config.get('harness.endpoint')) || (await aria.config.get('llm.endpoint')),
+  );
+  const setupNeeded = Boolean(await aria.config.get('ui.setup-needed')) || (onboarded && !configured);
+  setSetupNeeded(setupNeeded);
   const phrase = (await aria.config.get('wakeword.phrase')) || 'hey_jarvis';
   onb.wake.textContent = '"' + phrase.replace(/_/g, ' ') + '"';
   if (!onboarded) {
@@ -2540,7 +2744,7 @@ onb.skip.addEventListener('click', async () => {
     onb.llmProvider.value = 'custom';
     onbStep = 0;
     onbRender();
-    onb.overlay.classList.add('visible');
+    openOnboarding();
   }
 })();
 })();

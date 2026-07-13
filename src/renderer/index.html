@@ -89,6 +89,7 @@
     ::-webkit-scrollbar-thumb:hover { background: var(--accent-active); }
     ::selection { background: color-mix(in srgb, var(--accent-active) 30%, transparent); color: var(--text); }
     button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent-active); outline-offset: 2px; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
     /* ── Ambient background: orb canvas + glow blobs + grid ── */
     #orb-canvas {
@@ -197,6 +198,10 @@
     #settings-btn:active { transform: scale(.97); }
     #settings-btn .kbd { margin-left: auto; font: 400 9px var(--mono); color: var(--text-muted); }
     #settings-btn svg { flex: none; }
+    .compact-actions { display: none; align-items: center; gap: 6px; }
+    .compact-action { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border-radius: 9px; border: 1px solid var(--border); background: rgba(255,255,255,.06); color: var(--text); cursor: pointer; transition: background .18s ease, border-color .18s ease, transform .12s ease; }
+    .compact-action:hover { background: rgba(255,255,255,.12); border-color: color-mix(in srgb, var(--accent-active) 45%, transparent); }
+    .compact-action:active { transform: scale(.94); }
 
     /* ── Chat column ── */
     .chat { display: flex; flex-direction: column; }
@@ -209,7 +214,7 @@
     .chat-title { font-size: 13.5px; font-weight: 600; }
     .chat-sub { font: 400 9.5px var(--mono); color: var(--text-muted); }
 
-    main { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 16px 20px; overflow: hidden; }
+    main { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 16px 20px; overflow: hidden; position: relative; }
     #conversation {
       flex: 1; display: flex; flex-direction: column; gap: 14px;
       overflow-y: auto; padding-bottom: 12px; scroll-behavior: smooth; min-height: 0;
@@ -220,6 +225,13 @@
       background: var(--accent-active); box-shadow: 0 0 24px 6px var(--glow); animation: floaty 4s ease-in-out infinite;
     }
     #conversation:empty::after { content: 'How can I help you today?'; font-size: 15px; font-weight: 500; color: var(--text-muted); }
+    body[data-setup-needed="true"] #conversation:empty::after { content: 'Connect ARIA to begin.'; }
+    .setup-connection {
+      position: absolute; top: calc(50% + 36px); left: 50%; transform: translateX(-50%); z-index: 1;
+      padding: 9px 13px; border: 1px solid color-mix(in srgb, var(--accent-active) 55%, var(--border)); border-radius: 10px;
+      background: color-mix(in srgb, var(--accent-active) 14%, var(--surface)); color: var(--text); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
+    }
+    .setup-connection:hover { background: color-mix(in srgb, var(--accent-active) 24%, var(--surface)); }
     @keyframes floaty { 0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-8px) scale(1.15); } }
 
     /* Message bubbles (classes referenced by app.js) */
@@ -275,7 +287,7 @@
       color: var(--text); font-size: 13.5px; font-family: inherit; outline: none;
     }
     #text-input::placeholder { color: var(--text-muted); }
-    #mic-btn, #screen-btn {
+    #mic-btn, #screen-btn, #send-btn {
       width: 34px; height: 34px; border-radius: 11px; flex: none; cursor: pointer;
       display: flex; align-items: center; justify-content: center;
       transition: all .25s cubic-bezier(.4,0,.2,1);
@@ -283,11 +295,14 @@
     #screen-btn { background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.14); color: var(--text-muted); }
     #screen-btn:hover { color: var(--text); background: rgba(255,255,255,.14); }
     #screen-btn.active { background: color-mix(in srgb, var(--accent-active) 22%, transparent); color: var(--accent-active); border-color: var(--accent-active); animation: pulse 1.6s infinite; }
+    #send-btn { background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.16); color: var(--text); }
+    #send-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent-active) 24%, transparent); border-color: var(--accent-active); color: var(--accent-active); }
+    #send-btn:disabled { opacity: .38; cursor: default; }
     #mic-btn { background: linear-gradient(135deg, var(--accent-active), #2f6bd6); border: none; color: #06131c;
       box-shadow: 0 0 16px color-mix(in srgb, var(--accent-active) 40%, transparent), inset 0 1px 0 rgba(255,255,255,.4); }
     #mic-btn:hover { transform: scale(1.06); }
     #mic-btn.listening { animation: pulse 1s infinite; box-shadow: 0 0 22px color-mix(in srgb, var(--accent-active) 60%, transparent); }
-    #mic-btn:active, #screen-btn:active { transform: scale(.9); }
+    #mic-btn:active, #screen-btn:active, #send-btn:active { transform: scale(.9); }
 
     /* ── Ops column ── */
     /* No backdrop blur on the ops panel: the orb canvas sits behind it and
@@ -340,11 +355,14 @@
        falls back to viewport-center behind the chat glass — dim it to ambience
        so it doesn't flood the conversation. */
     @media (max-width: 1080px) { .shell { grid-template-columns: 232px 1fr; } .ops { display: none; } #orb-canvas { opacity: 0.3; } }
-    @media (max-width: 720px) { .shell { grid-template-columns: 1fr; } .sidebar { display: none; } }
+    @media (max-width: 720px) { .shell { grid-template-columns: 1fr; padding: 8px; gap: 8px; } .sidebar { display: none; } .chat-head { padding: 10px 12px; } .chat-sub { display: none; } .compact-actions { display: flex; } main { padding: 14px; } .input-area { margin: 10px; } }
 
     /* ── Error / update banners (app.js classes) ── */
-    .error-banner { padding: 10px 16px; background: color-mix(in srgb, var(--error) 12%, transparent); border: 1px solid color-mix(in srgb, var(--error) 40%, transparent); border-radius: 10px; color: var(--error); font-size: 13px; margin-bottom: 12px; display: none; }
-    .error-banner.visible { display: block; }
+    .error-banner { align-items: center; gap: 10px; padding: 10px 12px 10px 16px; background: color-mix(in srgb, var(--error) 12%, transparent); border: 1px solid color-mix(in srgb, var(--error) 40%, transparent); border-radius: 10px; color: var(--error); font-size: 13px; margin-bottom: 12px; display: none; }
+    .error-banner.visible { display: flex; }
+    .error-banner .error-text { flex: 1; min-width: 0; }
+    .error-banner .dismiss { flex: none; background: transparent; border: 1px solid color-mix(in srgb, var(--error) 45%, transparent); color: currentColor; border-radius: 7px; padding: 5px 8px; cursor: pointer; font-size: 11px; }
+    .error-banner .dismiss:hover { background: color-mix(in srgb, var(--error) 15%, transparent); }
     .update-banner { display: none; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 16px; margin-bottom: 12px; background: color-mix(in srgb, var(--success) 10%, transparent); border: 1px solid color-mix(in srgb, var(--success) 35%, transparent); border-radius: 10px; color: var(--text); font-size: 13px; }
     .update-banner.visible { display: flex; }
     .update-banner .grow { flex: 1; }
@@ -466,6 +484,7 @@
     .onboard-steps .dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,.12); transition: background .3s, width .3s; }
     .onboard-steps .dot.active { background: var(--accent-active); width: 24px; border-radius: 4px; }
     .onboard-steps .dot.done { background: var(--success); }
+    .onboard-progress { min-height: 1.3em; margin: -16px 0 20px; color: var(--text-muted); font: 500 10px var(--mono); text-align: center; }
     .onboard-step { text-align: center; min-height: 220px; }
     .onboard-step h2 { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 12px; }
     .onboard-step p { color: var(--text-muted); font-size: 14px; line-height: 1.6; margin-bottom: 18px; }
@@ -488,13 +507,14 @@
   </style>
 </head>
 <body data-state="idle">
+  <div id="aria-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true">ARIA is idle.</div>
   <canvas id="orb-canvas"></canvas>
   <div class="bg-layer">
     <div class="blob a"></div><div class="blob b"></div><div class="blob c"></div>
     <div class="bg-grid"></div>
   </div>
 
-  <div class="shell">
+  <div class="shell" id="app-shell">
     <!-- ── Sidebar ── -->
     <aside class="panel strong sidebar">
       <div class="brand">
@@ -504,17 +524,20 @@
 
       <div class="side-cap cap">ENDPOINTS</div>
       <div class="endpoint">
-        <span class="status-dot" id="status-stt"></span>
+        <span class="status-dot" id="status-stt" aria-hidden="true"></span>
+        <span class="sr-only" id="status-stt-label" role="status" aria-live="polite">Speech to text is starting.</span>
         <span class="name">Speech&nbsp;→&nbsp;Text</span>
         <span class="tag">STT</span>
       </div>
       <div class="endpoint">
-        <span class="status-dot" id="status-tts"></span>
+        <span class="status-dot" id="status-tts" aria-hidden="true"></span>
+        <span class="sr-only" id="status-tts-label" role="status" aria-live="polite">Text to speech is starting.</span>
         <span class="name">Text&nbsp;→&nbsp;Speech</span>
         <span class="tag">TTS</span>
       </div>
       <div class="endpoint">
-        <span class="status-dot" id="status-wakeword"></span>
+        <span class="status-dot" id="status-wakeword" aria-hidden="true"></span>
+        <span class="sr-only" id="status-wakeword-label" role="status" aria-live="polite">Wake word is starting.</span>
         <span class="name">Wake&nbsp;word</span>
         <span class="tag">WAKE</span>
       </div>
@@ -551,6 +574,14 @@
         <div class="chat-title">Current conversation</div>
         <div class="chat-sub" id="chat-sub">aria · voice</div>
         <div style="margin-left:auto" class="state-badge"></div>
+        <div class="compact-actions" aria-label="Conversation controls">
+          <button id="compact-new-session-btn" class="compact-action" title="Start a new conversation" aria-label="Start a new conversation">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          </button>
+          <button id="compact-settings-btn" class="compact-action" title="Open settings" aria-label="Open settings">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+        </div>
       </div>
       <main>
         <div class="update-banner" id="update-banner">
@@ -559,20 +590,27 @@
           <button class="dismiss" id="update-banner-dismiss" title="Dismiss">&times;</button>
           <progress class="update-progress" id="update-progress" max="100" style="display:none"></progress>
         </div>
-        <div class="error-banner" id="error-banner"></div>
+        <div class="error-banner" id="error-banner" role="alert" aria-atomic="true">
+          <span class="error-text" id="error-text"></span>
+          <button class="dismiss" id="error-dismiss" type="button">Dismiss</button>
+        </div>
         <div id="conversation"></div>
+        <button id="setup-connection-btn" class="setup-connection" type="button" hidden>Configure a connection</button>
         <div class="partial-text" id="partial"></div>
       </main>
       <div class="input-area">
-        <button id="screen-btn" title="Share your screen with the agent (or say &quot;share my screen&quot;)">
+        <button id="screen-btn" type="button" title="Share your screen with the agent (or say &quot;share my screen&quot;)" aria-label="Share your screen with ARIA" aria-pressed="false">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <rect x="2" y="3" width="20" height="14" rx="2"/>
             <line x1="8" y1="21" x2="16" y2="21"/>
             <line x1="12" y1="17" x2="12" y2="21"/>
           </svg>
         </button>
-        <input type="text" id="text-input" placeholder="Message ARIA…" autocomplete="off">
-        <button id="mic-btn" title="Hold to speak (or use global shortcut)">
+        <input type="text" id="text-input" placeholder="Ask ARIA… Press Enter to send" autocomplete="off" aria-label="Message ARIA">
+        <button id="send-btn" type="button" aria-label="Send message" title="Send message" disabled>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+        <button id="mic-btn" type="button" title="Hold to speak (or use global shortcut)" aria-label="Hold to speak" aria-pressed="false">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
             <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
@@ -599,15 +637,15 @@
 
   <!-- ── Settings overlay ── -->
   <div class="settings-overlay" id="settings-overlay">
-    <div class="settings-panel">
-      <nav class="settings-nav" id="settings-nav">
-        <div class="settings-title">Settings</div>
-        <button class="snav-item active" data-tab="connections">Connections</button>
-        <button class="snav-item" data-tab="voice">Voice</button>
-        <button class="snav-item" data-tab="appearance">Appearance</button>
-        <button class="snav-item" data-tab="performance">Performance</button>
-        <button class="snav-item" data-tab="remote">Remote</button>
-        <button class="snav-item" data-tab="updates">Updates</button>
+    <div class="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-dialog-title">
+      <nav class="settings-nav" id="settings-nav" role="tablist" aria-label="Settings sections">
+        <div class="settings-title" id="settings-dialog-title">Settings</div>
+        <button class="snav-item active" id="settings-tab-connections" data-tab="connections" role="tab" aria-controls="settings-connections" aria-selected="true">Connections</button>
+        <button class="snav-item" id="settings-tab-voice" data-tab="voice" role="tab" aria-controls="settings-voice" aria-selected="false" tabindex="-1">Voice</button>
+        <button class="snav-item" id="settings-tab-appearance" data-tab="appearance" role="tab" aria-controls="settings-appearance" aria-selected="false" tabindex="-1">Appearance</button>
+        <button class="snav-item" id="settings-tab-performance" data-tab="performance" role="tab" aria-controls="settings-performance" aria-selected="false" tabindex="-1">Performance</button>
+        <button class="snav-item" id="settings-tab-remote" data-tab="remote" role="tab" aria-controls="settings-remote" aria-selected="false" tabindex="-1">Remote</button>
+        <button class="snav-item" id="settings-tab-updates" data-tab="updates" role="tab" aria-controls="settings-updates" aria-selected="false" tabindex="-1">Updates</button>
         <div class="settings-nav-foot">ARIA</div>
       </nav>
 
@@ -619,7 +657,7 @@
 
       <div class="settings-content">
 
-      <div class="tab-panel active" data-panel="connections">
+      <div class="tab-panel active" id="settings-connections" data-panel="connections" role="tabpanel" aria-labelledby="settings-tab-connections">
       <div class="settings-warning" id="secure-warning"></div>
 
       <section>
@@ -680,7 +718,7 @@
       </section>
       </div><!-- /connections -->
 
-      <div class="tab-panel" data-panel="remote">
+      <div class="tab-panel" id="settings-remote" data-panel="remote" role="tabpanel" aria-labelledby="settings-tab-remote">
       <section>
         <h3>Remote harness <span class="hint">(over SSH)</span></h3>
         <p class="hint" style="margin:2px 0 10px;">Your agent harness runs on another machine (a dev box, a server)? ARIA tunnels to it over SSH so the voice pipeline stays local. For Hermes Agent, use the quick setup, paste the SSH target, then Connect.</p>
@@ -755,7 +793,7 @@
       </section>
       </div><!-- /remote -->
 
-      <div class="tab-panel" data-panel="voice">
+      <div class="tab-panel" id="settings-voice" data-panel="voice" role="tabpanel" aria-labelledby="settings-tab-voice">
       <section>
         <h3>Speech-to-Text</h3>
         <label>Model
@@ -824,7 +862,7 @@
       </section>
       </div><!-- /voice -->
 
-      <div class="tab-panel" data-panel="appearance">
+      <div class="tab-panel" id="settings-appearance" data-panel="appearance" role="tabpanel" aria-labelledby="settings-tab-appearance">
       <section>
         <h3>Appearance</h3>
         <label>Theme
@@ -840,7 +878,7 @@
       </section>
       </div><!-- /appearance -->
 
-      <div class="tab-panel" data-panel="performance">
+      <div class="tab-panel" id="settings-performance" data-panel="performance" role="tabpanel" aria-labelledby="settings-tab-performance">
       <section>
         <h3>Performance <span class="hint">(latency &amp; hardware)</span></h3>
         <div class="perf-latency" id="perf-latency">
@@ -868,7 +906,7 @@
       </section>
       </div><!-- /performance -->
 
-      <div class="tab-panel" data-panel="updates">
+      <div class="tab-panel" id="settings-updates" data-panel="updates" role="tabpanel" aria-labelledby="settings-tab-updates">
       <section>
         <h3>Updates</h3>
         <div class="update-row">
@@ -893,8 +931,9 @@
 
   <!-- First-run onboarding walkthrough -->
   <div class="onboard-overlay" id="onboard-overlay">
-    <div class="onboard-panel">
-      <div class="onboard-steps" id="onboard-dots"></div>
+    <div class="onboard-panel" role="dialog" aria-modal="true" aria-label="ARIA setup">
+      <div class="onboard-steps" id="onboard-dots" aria-hidden="true"></div>
+      <p class="onboard-progress" id="onb-progress" aria-live="polite"></p>
 
       <!-- Step 0: Welcome -->
       <div class="onboard-step" data-step="0">
