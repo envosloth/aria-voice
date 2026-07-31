@@ -79,8 +79,8 @@ check('explain', route('explain how photosynthesis works', both), 'llm');
 check('in-order-to', route('in order to learn, what should I read about history', both), 'llm');
 // No-tool asks a chat LLM answers natively — these were false-harness before the
 // keyword trim (translate/convert/how many/fix/test), costing latency for no
-// tool benefit. The LLM's ARIA_AGENT_HANDOFF safety net covers any that turn
-// out to need live data after all.
+// tool benefit. Requests that need live data must instead be selected for the
+// harness here, before either target is invoked.
 check('translate', route('translate good morning into Spanish', both), 'llm');
 check('convert', route('convert 10 miles to kilometers', both), 'llm');
 check('how-many-units', route('how many ounces are in a pound', both), 'llm');

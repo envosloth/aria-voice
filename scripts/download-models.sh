@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MODELS_DIR="${ARIA_MODELS_DIR:-$HOME/.local/share/aria/models}"
 mkdir -p "$MODELS_DIR" "$MODELS_DIR/wakeword"
 
@@ -33,6 +34,11 @@ KOKORO_MODEL_SHA256="7d5df8ecf7d4b1878015a32686053fd0eebe2bc377234608764cc0ef363
 KOKORO_VOICES_SHA256="bca610b8308e8d99f32e6fe4197e7ec01679264efed0cac9140fe9c29f1fbf7d"
 PIPER_MODEL_SHA256="0a309668932205e762801f1efc2736cd4b0120329622adf62be09e56339d3330"
 PIPER_CONFIG_SHA256="c0f0d124e5895c00e7c03b35dcc8287f319a6998a365b182deb5c8e752ee8c1e"
+OPENWAKEWORD_BASE="https://github.com/dscripka/openWakeWord/releases/download/v0.5.1"
+OWW_EMBEDDING_SHA256="70d164290c1d095d1d4ee149bc5e00543250a7316b59f31d056cff7bd3075c1f"
+OWW_MELSPEC_SHA256="ba2b0e0f8b7b875369a2c89cb13360ff53bac436f2895cced9f479fa65eb176f"
+OWW_VAD_SHA256="a35ebf52fd3ce5f1469b2a36158dba761bc47b973ea3382b3186ca15b1f5af28"
+OWW_JARVIS_SHA256="94a13cfe60075b132f6a472e7e462e8123ee70861bc3fb58434a73712ee0d2cb"
 
 download_with_resume() {
   local url="$1" dest="$2" sha256="$3"
@@ -61,6 +67,8 @@ echo
 # Default matches the app's DEFAULT_STT_MODEL (src/shared/constants.ts) so a
 # no-arg run pre-fetches exactly what a fresh install uses — no wasted download.
 STT_MODEL="${1:-base.en}"
+WAKEWORD_ONLY="${ARIA_WAKEWORD_ONLY:-0}"
+if [ "$WAKEWORD_ONLY" != "1" ]; then
 echo "[1/3] STT: whisper.cpp model '$STT_MODEL'"
 if [ -z "${WHISPER_MODELS[$STT_MODEL]+x}" ]; then
   echo "  Unknown model: $STT_MODEL (available: ${!WHISPER_MODELS[*]})"
@@ -79,10 +87,35 @@ if [ "${ARIA_WITH_PIPER:-0}" = "1" ]; then
   download_with_resume "$PIPER_BASE/$PIPER_VOICE.onnx" "$MODELS_DIR/$PIPER_VOICE.onnx" "$PIPER_MODEL_SHA256"
   download_with_resume "$PIPER_BASE/$PIPER_VOICE.onnx.json" "$MODELS_DIR/$PIPER_VOICE.onnx.json" "$PIPER_CONFIG_SHA256"
 fi
+fi
 
 echo
 echo "[3/3] Wake word: openWakeWord default models"
-echo "  (openWakeWord downloads built-in models automatically on first run)"
+WAKEWORD_PY=""
+for candidate in \
+  "$ROOT/sidecars/wakeword/venv/bin/python" \
+  "$ROOT/sidecars/wakeword/venv/Scripts/python.exe" \
+  "$ROOT/sidecars/wakeword/venv/Scripts/python"; do
+  if [ -x "$candidate" ] || [ -f "$candidate" ]; then
+    WAKEWORD_PY="$candidate"
+    break
+  fi
+done
+if [ -z "$WAKEWORD_PY" ]; then
+  echo "  Wake-word venv missing under: $ROOT/sidecars/wakeword/venv"
+  echo "  Install sidecars/wakeword/requirements.txt before downloading models."
+  exit 1
+fi
+WAKEWORD_MODELS_DIR="$(
+  env -u PYTHONPATH -u PYTHONHOME -u VIRTUAL_ENV -u __PYVENV_LAUNCHER__ \
+    PYTHONNOUSERSITE=1 "$WAKEWORD_PY" -c \
+    'import openwakeword, os; print(os.path.join(os.path.dirname(openwakeword.__file__), "resources", "models"))'
+)"
+mkdir -p "$WAKEWORD_MODELS_DIR"
+download_with_resume "$OPENWAKEWORD_BASE/embedding_model.onnx" "$WAKEWORD_MODELS_DIR/embedding_model.onnx" "$OWW_EMBEDDING_SHA256"
+download_with_resume "$OPENWAKEWORD_BASE/melspectrogram.onnx" "$WAKEWORD_MODELS_DIR/melspectrogram.onnx" "$OWW_MELSPEC_SHA256"
+download_with_resume "$OPENWAKEWORD_BASE/silero_vad.onnx" "$WAKEWORD_MODELS_DIR/silero_vad.onnx" "$OWW_VAD_SHA256"
+download_with_resume "$OPENWAKEWORD_BASE/hey_jarvis_v0.1.onnx" "$WAKEWORD_MODELS_DIR/hey_jarvis_v0.1.onnx" "$OWW_JARVIS_SHA256"
 
 echo
 echo "=== Done ==="

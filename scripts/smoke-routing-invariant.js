@@ -104,6 +104,12 @@ function check(checks, name, condition) {
 
 async function main() {
   const checks = [];
+  const gotchas = fs.readFileSync(path.join(__dirname, '..', 'collaboration', 'gotchas.md'), 'utf8');
+  const routingDocs = (gotchas.split('## LLM / coordinator')[1] || '').split('\n## ')[0] || '';
+  check(checks, 'routing documentation matches executable invariant',
+    /router\.ts[^\n]*chooses|router-time dispatch|before invocation/i.test(routingDocs)
+      && /direct (?:conversational )?LLM[^\n]*(?:no tools|receives no tools)/i.test(routingDocs)
+      && !/delegate_to_agent|ARIA_AGENT_HANDOFF/i.test(routingDocs));
 
   const live = await drive('what is the weather in austin', 'auto');
   check(checks, 'auto live-data request bypasses conversational LLM', live.rec.llmRequests.length === 0);

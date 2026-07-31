@@ -1,3 +1,4 @@
+import './smoke-user-data';
 import { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, nativeImage } from 'electron';
 import path from 'path';
 import fs from 'fs';
@@ -76,8 +77,8 @@ process.on('unhandledRejection', (reason) => {
 });
 
 // A GPU/utility child process crashing must not take ARIA down. Chromium
-// recovers the GPU process on its own and the orb's continuous rAF loop
-// repaints the canvas on the next frame, so we just log it loudly.
+// recovers the GPU process and repaints the native orb video, so log it loudly
+// and let the renderer continue.
 app.on('child-process-gone', (_e, details) => {
   console.error(`[ARIA] child-process-gone: type=${details.type} reason=${details.reason}`);
 });
@@ -985,12 +986,23 @@ app.whenReady().then(async () => {
     }
 
     setTimeout(async () => {
-      // Orb render benchmark (throttle-independent — times N renders).
+      let smokeFailed = false;
+      // Native video diagnostics; Chromium owns frame scheduling for the orb.
       if (process.env.ARIA_FPS && mainWindow) {
         try {
-          const r = await mainWindow.webContents.executeJavaScript('AriaOrb.benchmark(400)');
-          console.log(`[ARIA_FPS] orb render ${r.avgMs}ms/frame -> sustains ${r.maxFps} FPS (n=${r.n})`);
-        } catch (e) { console.log('[ARIA_FPS] benchmark failed:', (e as Error).message); }
+          const r = await mainWindow.webContents.executeJavaScript(`(() => {
+            const video = document.getElementById('orb-animation');
+            if (!(video instanceof HTMLVideoElement)) throw new Error('orb video unavailable');
+            const quality = typeof video.getVideoPlaybackQuality === 'function'
+              ? video.getVideoPlaybackQuality() : {};
+            return {
+              decoded: quality.totalVideoFrames || 0,
+              dropped: quality.droppedVideoFrames || 0,
+              readyState: video.readyState,
+            };
+          })()`);
+          console.log(`[ARIA_FPS] native video decoded=${r.decoded} dropped=${r.dropped} readyState=${r.readyState}`);
+        } catch (e) { console.log('[ARIA_FPS] video diagnostics failed:', (e as Error).message); }
       }
       // Offscreen screenshot for UI verification (no visible window).
       if (process.env.ARIA_SMOKE_SHOT && mainWindow) {
@@ -1001,17 +1013,89 @@ app.whenReady().then(async () => {
           }
           if (process.env.ARIA_ORB_STATE) {
             const s = process.env.ARIA_ORB_STATE;
+            if (!['idle', 'listening', 'processing', 'speaking'].includes(s)) {
+              throw new Error(`invalid ARIA_ORB_STATE: ${s}`);
+            }
             // Dismiss onboarding/settings overlays so the orb is unobstructed.
             await mainWindow.webContents.executeJavaScript(
-              `document.querySelectorAll('.overlay,#onboard-overlay,#settings-overlay').forEach(e=>e.classList.remove('visible')); true;`,
+              `document.querySelectorAll('.overlay,#onboard-overlay,#settings-overlay').forEach(e=>{e.classList.remove('visible');e.hidden=true;e.style.display='none';}); true;`,
             );
-            // pump() runs synchronous frames so colour easing/motion settle even
-            // though rAF is throttled while the window is hidden.
-            const js = s === 'speaking'
-              ? `AriaOrb.setState('speaking'); for(let i=0;i<80;i++){AriaOrb.setLevel(0.7); AriaOrb.pump(2);} true;`
-              : `AriaOrb.setState('${s}'); AriaOrb.pump(100); true;`;
-            await mainWindow.webContents.executeJavaScript(js);
+            const frame = s === 'processing' || s === 'speaking' ? 4.4 : 0;
+            await mainWindow.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+              const state = ${JSON.stringify(s)};
+              const video = document.getElementById('orb-animation');
+              if (!(video instanceof HTMLVideoElement)) {
+                reject(new Error('orb video unavailable'));
+                return;
+              }
+              if (typeof orbState === 'function') orbState(state);
+              else AriaOrb.setState(state);
+              if (state === 'speaking') AriaOrb.setLevel(0.7);
+              video.pause();
+              const target = ${frame};
+              if (Math.abs(video.currentTime - target) < 0.01) {
+                resolve(true);
+                return;
+              }
+              const timer = setTimeout(() => reject(new Error('orb snapshot seek timed out')), 1500);
+              video.addEventListener('seeked', () => {
+                clearTimeout(timer);
+                video.pause();
+                resolve(true);
+              }, { once: true });
+              video.currentTime = target;
+            })`);
             await new Promise((r) => setTimeout(r, 300));
+            await mainWindow.webContents.executeJavaScript(`(() => {
+              document.querySelectorAll('.overlay,#onboard-overlay,#settings-overlay')
+                .forEach((element) => element.remove());
+              return true;
+            })()`);
+            await new Promise((r) => setTimeout(r, 250));
+            const rendered = await mainWindow.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+              const expectedState = ${JSON.stringify(s)};
+              const expectedPhase = expectedState === 'processing' ? 'thinking'
+                : expectedState === 'speaking' ? 'speaking' : 'consolidated';
+              const expectedTime = ${frame};
+              const video = document.getElementById('orb-animation');
+              if (!(video instanceof HTMLVideoElement)) {
+                reject(new Error('orb video unavailable for final state assertion'));
+                return;
+              }
+              if (typeof orbState === 'function') orbState(expectedState);
+              else AriaOrb.setState(expectedState);
+              if (expectedState === 'speaking') AriaOrb.setLevel(0.7);
+              video.pause();
+              const verify = () => requestAnimationFrame(() => requestAnimationFrame(() => {
+                video.pause();
+                const actual = {
+                  adapterState: AriaOrb.getState(),
+                  bodyState: document.body.dataset.state,
+                  videoState: video.dataset.state,
+                  phase: video.dataset.phase,
+                  paused: video.paused,
+                  currentTime: video.currentTime,
+                };
+                if (actual.adapterState !== expectedState || actual.bodyState !== expectedState
+                  || actual.videoState !== expectedState || actual.phase !== expectedPhase
+                  || !actual.paused || Math.abs(actual.currentTime - expectedTime) > 0.05) {
+                  reject(new Error('orb snapshot state mismatch: ' + JSON.stringify(actual)));
+                  return;
+                }
+                resolve(actual);
+              }));
+              if (Math.abs(video.currentTime - expectedTime) < 0.01) {
+                verify();
+                return;
+              }
+              const timer = setTimeout(() => reject(new Error('final orb snapshot seek timed out')), 1500);
+              video.addEventListener('seeked', () => {
+                clearTimeout(timer);
+                verify();
+              }, { once: true });
+              video.currentTime = expectedTime;
+            })`);
+            console.log(`[ARIA_SMOKE] orb state verified: ${s} phase=${rendered.phase} paused=${rendered.paused}`);
           }
           if (process.env.ARIA_CHAT_DEMO) {
             // Drive a fake harness turn through the REAL IPC path (route + tool
@@ -1044,12 +1128,15 @@ app.whenReady().then(async () => {
           const img = await mainWindow.webContents.capturePage();
           require('fs').writeFileSync(process.env.ARIA_SMOKE_SHOT, img.toPNG());
           console.log('[ARIA_SMOKE] screenshot saved:', process.env.ARIA_SMOKE_SHOT);
-        } catch (e) { console.log('[ARIA_SMOKE] screenshot failed:', (e as Error).message); }
+        } catch (e) {
+          console.log('[ARIA_SMOKE] screenshot failed:', (e as Error).message);
+          smokeFailed = true;
+        }
       }
       console.log('[ARIA_SMOKE] shutting down');
       await supervisor.stopAll();
-      console.log('[ARIA_SMOKE] OK');
-      app.exit(0);
+      console.log(smokeFailed ? '[ARIA_SMOKE] FAIL' : '[ARIA_SMOKE] OK');
+      app.exit(smokeFailed ? 1 : 0);
     }, 4000);
   }
 });

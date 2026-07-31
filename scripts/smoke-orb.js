@@ -1,293 +1,329 @@
 #!/usr/bin/env node
-/* Unit test for the orb's backing-store resolution cap (src/renderer/orb.js
- * effectiveDpr) — the P3 fullscreen-shake fix. A fullscreen / hi-DPI canvas must
- * be rendered at a bounded resolution (per quality) so per-frame fill cost stays
- * flat and frames arrive evenly; otherwise the time-based motion "shakes".
+/* Renderer contract for ARIA's state-controlled particle orb.
  *
- * Loads orb.js with a minimal window/document stub (init() bails because there's
- * no #orb-canvas, so no rAF/ResizeObserver runs). */
-global.window = { devicePixelRatio: 1, addEventListener: () => {} };
-global.self = global.window;
-global.document = {
-  readyState: 'complete', hidden: false,
-  documentElement: { getAttribute: () => 'midnight' },
-  getElementById: () => null, addEventListener: () => {}, hasFocus: () => true,
-};
-require('../src/renderer/orb.js');
-const Orb = global.self.AriaOrb;
+ * The user-supplied GIF is retained as the source reference, but Chromium cannot
+ * pause or seek an <img>-hosted GIF. The renderer therefore plays a transparent
+ * WebM derived from the same frames: compact while idle/listening, expanding and
+ * rippling only while processing, audio-reactive while speaking, then visibly
+ * consolidating when speech ends.
+ */
+const fs = require('fs');
+const path = require('path');
+
+const root = path.join(__dirname, '..');
+const html = fs.readFileSync(path.join(root, 'src', 'renderer', 'index.html'), 'utf8');
+const app = fs.readFileSync(path.join(root, 'src', 'renderer', 'app.js'), 'utf8');
+const orb = fs.readFileSync(path.join(root, 'src', 'renderer', 'orb.js'), 'utf8');
+const main = fs.readFileSync(path.join(root, 'src', 'main', 'index.ts'), 'utf8');
+const copier = fs.readFileSync(path.join(root, 'scripts', 'copy-renderer.js'), 'utf8');
+const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const smokeProfilePath = path.join(root, 'src', 'main', 'smoke-user-data.ts');
+const smokeLauncherPath = path.join(root, 'scripts', 'smoke-electron.js');
+const smokeProfile = fs.existsSync(smokeProfilePath) ? fs.readFileSync(smokeProfilePath, 'utf8') : '';
+const smokeLauncher = fs.existsSync(smokeLauncherPath) ? fs.readFileSync(smokeLauncherPath, 'utf8') : '';
+const assetsDir = path.join(root, 'src', 'renderer', 'assets');
+const gifPath = path.join(assetsDir, 'aria-orb.gif');
+const videoPath = path.join(assetsDir, 'aria-orb.webm');
+const posterPath = path.join(assetsDir, 'aria-orb-compact.png');
 
 let pass = true;
-function check(name, cond, detail) {
-  if (!cond) pass = false;
-  console.log(`[${name}] ${cond ? 'PASS' : 'FAIL' + (detail ? ' -> ' + detail : '')}`);
+function check(name, condition, detail = '') {
+  if (!condition) pass = false;
+  console.log(`[${name}] ${condition ? 'PASS' : `FAIL${detail ? ` -> ${detail}` : ''}`}`);
 }
 
-check('orb.loaded', !!Orb && typeof Orb.effectiveDpr === 'function');
-const MAX = Orb.MAX_BACKING;
-check('caps.ordered', MAX.low < MAX.medium && MAX.medium <= MAX.high, JSON.stringify(MAX));
-
-// backing dims for a (cw,ch,rawDpr) at the current quality
-function dims(cw, ch, rawDpr) {
-  const d = Orb.effectiveDpr(cw, ch, rawDpr);
-  return { w: Math.round(cw * d), h: Math.round(ch * d), longEdge: Math.round(Math.max(cw, ch) * d) };
-}
-
-// Default quality is 'high'.
-check('windowed.untouched', dims(800, 600, 1).longEdge === 800, JSON.stringify(dims(800, 600, 1)));
-check('fullHD.high.bounded', dims(1920, 1080, 1).longEdge <= MAX.high + 1, JSON.stringify(dims(1920, 1080, 1)));
-check('1440p.high.capped', dims(2560, 1440, 1).longEdge <= MAX.high + 1, JSON.stringify(dims(2560, 1440, 1)));
-check('4K.high.capped', dims(3840, 2160, 1).longEdge <= MAX.high + 1, JSON.stringify(dims(3840, 2160, 1)));
-check('hiDPI.high.capped', dims(1920, 1080, 2).longEdge <= MAX.high + 1, JSON.stringify(dims(1920, 1080, 2)));
-
-// Lower quality caps harder — and a quality change re-applies the cap.
-Orb.setQuality('medium');
-check('1440p.medium.capped', dims(2560, 1440, 1).longEdge <= MAX.medium + 1, JSON.stringify(dims(2560, 1440, 1)));
-Orb.setQuality('low');
-const low4k = dims(3840, 2160, 1);
-check('4K.low.capped', low4k.longEdge <= MAX.low + 1, JSON.stringify(low4k));
-check('low.harder.than.high', MAX.low < MAX.high);
-check('fpsCap.selector-exists', typeof Orb.frameIntervalFor === 'function');
-check('fpsCap.medium-focused-preserved', typeof Orb.frameIntervalFor === 'function'
-  && Orb.frameIntervalFor('medium', 'speaking', true, false, false) >= 28);
-check('fpsCap.low-focused-preserved', typeof Orb.frameIntervalFor === 'function'
-  && Orb.frameIntervalFor('low', 'idle', true, false, false) >= 66);
-// A small window is never upscaled (cap only ever scales DOWN).
-Orb.setQuality('high');
-check('tiny.never.upscaled', dims(400, 300, 1).longEdge === 400, JSON.stringify(dims(400, 300, 1)));
-
-// --- Resolution: fullscreen/native windows should not make the orb look blurry.
-// High preserves native 4K; medium preserves 1440p+ so balanced/auto profiles do
-// not fall all the way back to a 1080p-looking backing store. ---
-check('high.cap.raised', MAX.high >= 4096, JSON.stringify(MAX));
-check('medium.cap.crispFullscreen', MAX.medium >= 3072, JSON.stringify(MAX));
-check('1440p.high.native', dims(2560, 1440, 1).longEdge === 2560, JSON.stringify(dims(2560, 1440, 1)));
-check('1080p@2x.high.crisper', dims(1920, 1080, 2).longEdge >= 2560, JSON.stringify(dims(1920, 1080, 2)));
-check('4K.high.native', dims(3840, 2160, 1).longEdge === 3840, JSON.stringify(dims(3840, 2160, 1)));
-
-// --- Light theme contrast: pale orb highlights over white glass used to become
-// effectively invisible. The theme ramp should darken highlights and boost alpha
-// only in light mode, while leaving dark-mode colours untouched. ---
-check('themeRamp.exists', typeof Orb.themeRampColor === 'function');
-const highlight = [70, 120, 235, 225, 240, 255];
-const darkRamp = Orb.themeRampColor(highlight, 1, 0.4, false);
-const lightRamp = Orb.themeRampColor(highlight, 1, 0.4, true);
-check('themeRamp.darkUnchanged', darkRamp.r === 225 && darkRamp.g === 240 && darkRamp.b === 255 && Math.abs(darkRamp.a - 0.4) < 1e-9, JSON.stringify(darkRamp));
-check('themeRamp.lightVisible', (lightRamp.r + lightRamp.g + lightRamp.b) / 3 < 150 && lightRamp.a >= 0.9, JSON.stringify(lightRamp));
-
-// --- Fullscreen edge jitter (item 5): backingFor must map the drawing space onto
-// the integer backing store with NO fractional overhang on the right/bottom edge
-// (drawing x=cw must land exactly on bw), and be integer + deterministic. ---
-check('backingFor.exists', typeof Orb.backingFor === 'function');
-function edgeExact(cw, ch, rawDpr) {
-  const b = Orb.backingFor(cw, ch, rawDpr);
-  const integers = Number.isInteger(b.bw) && Number.isInteger(b.bh);
-  const rightExact = Math.abs(b.sx * cw - b.bw) < 1e-9;   // x=cw -> bw exactly
-  const bottomExact = Math.abs(b.sy * ch - b.bh) < 1e-9;  // y=ch -> bh exactly
-  return { b, integers, rightExact, bottomExact };
-}
-// Fractional-DPR fullscreen cases (1.25 / 1.5 scaling) are where the old rounding
-// left a sub-pixel strip on the right; assert the exact mapping for several.
-for (const [cw, ch, dpr] of [[1707, 1067, 1.5], [1536, 864, 1.25], [2560, 1440, 1], [1920, 1080, 2], [3840, 2160, 1.5]]) {
-  const r = edgeExact(cw, ch, dpr);
-  check(`edge.exact.${cw}x${ch}@${dpr}`, r.integers && r.rightExact && r.bottomExact, JSON.stringify(r));
-}
-// Deterministic: same input -> identical backing (no per-frame wobble from resize).
-const a1 = Orb.backingFor(1707, 1067, 1.5), a2 = Orb.backingFor(1707, 1067, 1.5);
-check('backingFor.deterministic', a1.bw === a2.bw && a1.bh === a2.bh && a1.sx === a2.sx);
-
-// --- STT-active throttle (crash-on-balanced+ fix). The orb exposes beginStt/
-// endStt so the renderer can mark an STT transcription as "GPU contention is
-// happening" — the high-quality frame cap then drops to the throttled cap so
-// the GPU isn't pegged by 240 Hz + Vulkan STT in parallel. ---
-check('sttThrottle.beginEndExists', typeof Orb.beginStt === 'function' && typeof Orb.endStt === 'function');
-check('sttThrottle.beginEndBalanced', (() => {
-  // Relief is a boolean + watchdog (not a refcount): only one STT runs at a time,
-  // and a refcount could LEAK on a barge-in-abandoned transcription. Repeated
-  // begin/end must run without throwing and clear the watchdog timer so nothing
-  // dangles.
-  try { Orb.beginStt(); Orb.beginStt(); Orb.endStt(); Orb.endStt(); } catch (e) { return false; }
-  return true;
-})());
-check('sttThrottle.listeningKeepsCrispBacking', (() => {
-  Orb.setQuality('high');
-  const before = dims(3840, 2160, 1).longEdge;
-  try { Orb.beginStt(); } catch (e) { return false; }
-  const during = dims(3840, 2160, 1).longEdge;
-  try { Orb.endStt(); } catch (e) { return false; }
-  return before === 3840 && during === before && (!Orb.isBackingRelieved || Orb.isBackingRelieved() === false);
-})());
-
-// --- Hard GPU freeze for the STT COMPUTE window (the auto/balanced GPU-reset
-// crash fix). During whisper's Vulkan compute the orb submits ZERO frames so its
-// graphics queue can't contend with the compute queue. The 30fps throttle above
-// only REDUCED overlap; power-saver was stable only because it has no Vulkan STT.
-// Contract: the freeze flag tracks begin/end, and a NEW listen (beginStt) clears
-// a stuck freeze so the orb can never stay frozen into the next turn (barge-in
-// mid-compute). ---
-check('freeze.api', typeof Orb.beginSttCompute === 'function' && typeof Orb.endSttCompute === 'function' && typeof Orb.isComputeFrozen === 'function');
-check('freeze.idleFalse', Orb.isComputeFrozen() === false);
-check('freeze.cpuBackendDoesNotPauseStages', (() => {
-  if (typeof Orb.setSttBackend !== 'function') return false;
-  Orb.setSttBackend('cpu');
-  Orb.beginSttCompute();
-  const frozen = Orb.isComputeFrozen();
-  Orb.endSttCompute();
-  Orb.setSttBackend('vulkan');
-  return frozen === false;
-})());
-Orb.beginSttCompute();
-check('freeze.engaged', Orb.isComputeFrozen() === true);
-Orb.endSttCompute();
-check('freeze.cleared', Orb.isComputeFrozen() === false);
-Orb.beginSttCompute();
-Orb.beginStt();
-check('freeze.clearedByListen', Orb.isComputeFrozen() === false);
-Orb.endStt();
-
-// --- Adaptive GPU-pressure detector: relief engages only on a SLOW frame once
-// the slow-frame run is long enough; a healthy frame never engages, and a slow
-// frame with a short run doesn't either (hysteresis stops the mode from flapping). ---
-check('pressure.exists', typeof Orb.pressureShouldEngage === 'function');
-check('pressure.healthy-never', Orb.pressureShouldEngage(false, 1e6) === false);
-check('pressure.slow-short-no', Orb.pressureShouldEngage(true, 0) === false);
-check('pressure.slow-long-yes', Orb.pressureShouldEngage(true, 1e6) === true);
-
-// --- Deformation diversity (item 5). The new wobble formula uses 5 sine
-// components + a position-hash jitter term, and clamps the magnitude so a
-// vertex can never exceed ±0.35 of the wobble (cap on the visual breakage the
-// user reported). This is a contract test: the formula's expected output
-// range + a numeric check that the formula DOES produce spatial variation
-// (i.e. neighbouring vertices don't all see the same wobble value at the same
-// time, which was the "deforms in one spot" symptom). ---
-check('deform.peakBounded', (() => {
-  // The new clamp is Math.max(-0.35, Math.min(0.35, wob)) before scaling by
-  // dAmp * 0.55. With dAmp <= 1.0 and 0.55 multiplier, the max radial
-  // deviation is 0.35 * 0.55 = 0.1925 (~19% of base radius). The old version
-  // had no clamp and could spike to 1+ at vertices where the waves
-  // constructively interfered.
-  const maxDeviation = 0.35 * 0.55; // matches the formula in orb.js
-  return maxDeviation < 0.25; // well below the 1.0+ spikes the old version produced
-})());
-
-// Re-derive the wobble formula here (mirrors the one in orb.js) and verify the
-// SMOOTH-NATURAL property. The new formula uses 3 slow low-frequency
-// components with NO per-vertex jitter — every vertex with the same
-// (phi, theta) gets the same wobble value, so neighbours move together and
-// the surface reads as a smooth bulge (one part of it bigger) rather
-// than a cellular/rippled texture.
-function wobble(phi, theta, t) {
-  const sp = Math.sin(phi);
-  const raw =
-      Math.sin(theta + t * 0.55) * sp * 0.8
-    + Math.cos(phi * 2 + t * 0.35) * 0.4
-    + Math.sin(t * 0.9) * 0.3;
-  // tanh saturation: smooth compresses extremes, preserves sign.
-  return Math.tanh(raw) * 0.45;
-}
-check('deform.spatialVariation', (() => {
-  const t = 1.7;
-  // 16 points spread across the surface. The formula must produce a
-  // RANGE of wobble values (not all the same — would be a static sphere)
-  // but each value should be a smooth function of position (no jitter).
-  // We require >= 4 distinct values to confirm the formula is actually
-  // animating the surface, and <= 16 (a hard upper bound) so the
-  // formula can't be pathologically noisy. The natural-look requirement
-  // is checked separately by the "smoothness" test below.
-  const vals = new Set();
-  for (let i = 0; i < 16; i++) {
-    const phi = ((i % 8) / 7) * Math.PI;
-    const theta = (i * 1.3) % (Math.PI * 2);
-    vals.add(Math.round(wobble(phi, theta, t) * 1000));
-  }
-  return vals.size >= 4 && vals.size <= 16;
-})());
-check('deform.temporalVariation', (() => {
-  // Across time, a single point should see varied wobble values (the
-  // bulges drift, not just amplitudes). The 3-component formula with
-  // 3 different time multipliers (0.35, 0.55, 0.9) means the pattern
-  // is quasi-non-repeating. A natural-looking deformation needs at
-  // least 4 distinct values across a few seconds.
-  const vals = new Set();
-  for (let s = 0; s < 50; s++) {
-    const t = s * 0.4;
-    vals.add(Math.round(wobble(Math.PI / 3, 1.2, t) * 1000));
-  }
-  return vals.size >= 4;
-})());
-check('deform.peakClamp', (() => {
-  // Sweep extreme phi/theta/t; the tanh saturation must hold output
-  // to < 0.45. This is the "doesn't break" guarantee.
-  for (let i = 0; i < 50; i++) {
-    const w = wobble(i * 0.7, i * 1.1, i * 0.3);
-    if (w < -0.45 - 1e-9 || w > 0.45 + 1e-9) return false;
-  }
-  return true;
-})());
-check('deform.componentCount', (() => {
-  // The natural-look formula has exactly 3 TIME-VARYING sin/cos
-  // components (the ones with `t` in the argument). The other
-  // `Math.sin(phi)` call is the polar-damping factor (sin(phi)),
-  // not a wave component — it's a static spatial multiplier. A
-  // future "add a high-freq ripple" pass that re-introduces the
-  // cellular look should fail this and force the dev to also
-  // bump the natural-look claim.
-  const formula = wobble.toString();
-  // Count only trig calls whose argument includes the time variable
-  // (rough heuristic: contains a multiplication or addition with t).
-  const timeTrig = (formula.match(/Math\.(sin|cos)\([^)]*[t][^)]*\)/g) || []).length;
-  return timeTrig === 3;
-})());
-check('deform.fullGridBounded', (() => {
-  // Exhaustive grid sweep: 60 phi × 64 theta × 30 t = 115,200
-  // combinations. The tanh saturation must hold the output to < 0.45
-  // everywhere — this is the "doesn't break" guarantee.
-  let maxAbs = 0;
-  for (let s = 0; s < 30; s++) {
-    const t = s * 0.5;
-    for (let i = 0; i < 60; i++) {
-      const phi = (i / 59) * Math.PI;
-      for (let j = 0; j < 64; j++) {
-        const theta = (j / 63) * Math.PI * 2;
-        const w = Math.abs(wobble(phi, theta, t));
-        if (w > maxAbs) maxAbs = w;
-      }
+check('asset.sourceGif.exists', fs.existsSync(gifPath), 'retain the supplied GIF as the animation source');
+if (fs.existsSync(gifPath)) {
+  const bytes = fs.readFileSync(gifPath);
+  const header = bytes.subarray(0, 6).toString('ascii');
+  let frameControls = 0;
+  let allUseTransparentPaletteZero = true;
+  for (let i = 0; i + 7 < bytes.length; i++) {
+    if (bytes[i] === 0x21 && bytes[i + 1] === 0xf9 && bytes[i + 2] === 0x04) {
+      frameControls++;
+      if ((bytes[i + 3] & 1) !== 1 || bytes[i + 6] !== 0) allUseTransparentPaletteZero = false;
     }
   }
-  return maxAbs < 0.45;
-})());
-check('deform.usesTanh', (() => {
-  // Structural test: the formula must use tanh, not a hard clamp. tanh
-  // is what keeps the surface smooth at the extremes of the bulges.
-  return /Math\.tanh\(/.test(wobble.toString());
-})());
-check('deform.noPerVertexJitter', (() => {
-  // The "natural look" property: the formula's arguments must depend
-  // ONLY on (phi, theta, t) — NOT on a per-vertex index. A formula that
-  // accepts an (i, j) index and uses it to add per-vertex phase offsets
-  // would produce a cellular/rippled surface (the old v2.10.3 look).
-  // This is a structural test on the function signature.
-  return wobble.length === 3;
-})());
-check('deform.smoothness', (() => {
-  // Sample 8 evenly-spaced points along the equator (phi = PI/2, theta
-  // varying). Adjacent points should have similar wobble values — the
-  // DIFFERENCE between neighbours should be small. If the formula were
-  // jittered (per-vertex phase), the differences would be large.
-  // For the natural formula, the equatorial wobble is sin(theta + t) * 0.8
-  // at most, so the derivative is bounded by 0.8 — neighbours at theta
-  // spacing of 2*PI/8 = 0.785 should differ by at most 0.5.
-  const t = 1.0;
-  const N = 8;
-  let maxDiff = 0;
-  for (let i = 0; i < N; i++) {
-    const phi = Math.PI / 2;
-    const t1 = (i / N) * 2 * Math.PI;
-    const t2 = ((i + 1) / N) * 2 * Math.PI;
-    const diff = Math.abs(wobble(phi, t1, t) - wobble(phi, t2, t));
-    if (diff > maxDiff) maxDiff = diff;
-  }
-  return maxDiff < 0.6; // a hard clamp would give 0 (jittered would give 1.5+)
-})());
+  check('asset.sourceGif.valid', header === 'GIF87a' || header === 'GIF89a', `unexpected header ${header}`);
+  check('asset.sourceGif.transparent', frameControls === 450 && allUseTransparentPaletteZero,
+    'every supplied animation frame must retain transparency');
+}
+check('asset.video.exists', fs.existsSync(videoPath), 'a seekable transparent video is required for state control');
+if (fs.existsSync(videoPath)) {
+  const bytes = fs.readFileSync(videoPath);
+  const isWebm = bytes.length > 4
+    && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3;
+  check('asset.video.webm', isWebm, 'the controllable animation must be a WebM container');
+  const alphaIndex = bytes.indexOf(Buffer.from('ALPHA_MODE'));
+  const alphaValue = Buffer.from([0x44, 0x87, 0x81, 0x31]); // EBML TagString "1"
+  check('asset.video.alphaMetadata',
+    alphaIndex >= 0 && bytes.subarray(alphaIndex, alphaIndex + 24).includes(alphaValue),
+    'the WebM must advertise its encoded alpha plane');
+  const durationIndex = bytes.indexOf(Buffer.from('DURATION'));
+  check('asset.video.durationMetadata',
+    durationIndex >= 0 && bytes.subarray(durationIndex, durationIndex + 40).includes(Buffer.from('00:00:09.')),
+    'the controlled segment timings require the original nine-second duration');
+  check('asset.video.nontrivial', bytes.length > 1_000_000 && bytes.length < 8_000_000,
+    'the video was replaced with a thumbnail or an unnecessarily large transcode');
+}
+check('asset.poster.exists', fs.existsSync(posterPath), 'the compact idle frame must be available before video metadata loads');
+if (fs.existsSync(posterPath)) {
+  const bytes = fs.readFileSync(posterPath);
+  const png = bytes.length > 8 && bytes.subarray(1, 4).toString('ascii') === 'PNG';
+  check('asset.poster.png', png, 'the compact poster must be a PNG');
+}
+
+check('markup.controlledVideo',
+  /<video id="orb-animation"[^>]*poster="assets\/aria-orb-compact\.png"[^>]*muted[^>]*playsinline[^>]*aria-hidden="true"/.test(html)
+    && /<source src="assets\/aria-orb\.webm" type="video\/webm">/.test(html),
+  'the visible orb must use the seekable rendering of the supplied animation');
+check('markup.noUncontrolledPlayback',
+  !/<video id="orb-animation"[^>]*\b(?:autoplay|loop)\b/.test(html),
+  'idle/listening must not run the full animation loop');
+check('markup.noCanvasOrb', !/id="orb-canvas"/.test(html), 'the retired canvas must not remain in the UI');
+check('renderer.noObsoleteFpsDiagnostics',
+  !/Ctrl\+Shift\+F toggles the live FPS counter/.test(app)
+    && !/function (?:benchmark|measure|pump|toggleFps)\(/.test(orb)
+    && !/AriaOrb\.(?:benchmark|measure|pump|toggleFps)\(/.test(main),
+  'the video adapter must not advertise retired canvas FPS diagnostics');
+check('styles.stateFeedback',
+  /body\[data-state="listening"\]\s+#orb-animation/.test(html)
+    && /body\[data-state="processing"\]\s+#orb-animation/.test(html)
+    && /body\[data-state="speaking"\]\s+#orb-animation/.test(html),
+  'voice states must continue to have distinct visible feedback');
+check('styles.audioReactive',
+  /--orb-brightness/.test(html) && /--orb-shadow-blur/.test(html) && !/orb-speaking-pulse/.test(html),
+  'speaking motion must come from the live TTS envelope rather than a fixed pulse');
+check('styles.lightTheme', /html\[data-theme="light"\]\s+#orb-animation/.test(html),
+  'the transparent asset needs a high-contrast light-theme treatment too');
+check('styles.transparentRendering', /#orb-animation\s*\{[^}]*mix-blend-mode:\s*normal/.test(html),
+  'the transparent animation must render normally rather than rely on a black-background blend hack');
+check('renderer.noCanvasLoop',
+  !/getContext\(['"]2d/.test(orb) && !/requestAnimationFrame/.test(orb) && !/setInterval/.test(orb),
+  'the replacement must not recreate an always-on GPU render loop');
+check('renderer.phaseControl',
+  /THINK_LOOP_START_SECONDS/.test(orb)
+    && /THINK_LOOP_END_SECONDS/.test(orb)
+    && /CONSOLIDATE_START_SECONDS/.test(orb)
+    && /addEventListener\(['"]timeupdate/.test(orb)
+    && /addEventListener\(['"]ended/.test(orb),
+  'the adapter must control thinking and consolidation segments explicitly');
+check('renderer.stateAdapter',
+  /function setState\(next\)/.test(orb)
+    && /function setLevel\(value\)/.test(orb)
+    && /root\.AriaOrb\s*=/.test(orb),
+  'app.js must retain its state and audio-level bridge');
+check('renderer.sttSafe',
+  /function beginSttCompute\(\)/.test(orb)
+    && /function endSttCompute\(\)/.test(orb)
+    && /function setSttBackend\(backend\)/.test(orb),
+  'the existing Vulkan STT quiesce lifecycle must remain intact');
+check('capture.isolatesUserDataBeforeConfig',
+  /^import ['"]\.\/smoke-user-data['"];/.test(main)
+    && /app\.setPath\(['"]userData['"]/.test(smokeProfile)
+    && main.indexOf("import './smoke-user-data';") < main.indexOf("import { config } from './config';"),
+  'smoke userData must be selected before persistent stores are imported');
+check('capture.launcherUsesDisposableProfile',
+  /mkdtempSync/.test(smokeLauncher)
+    && /ARIA_SMOKE_USER_DATA/.test(smokeLauncher)
+    && /rmSync\([^\n]*recursive:\s*true/.test(smokeLauncher)
+    && packageJson.scripts['smoke:boot'] === 'npm run build && node scripts/smoke-electron.js',
+  'the official Electron smoke launcher must create and remove a disposable profile');
+check('capture.doesNotPersistOnboarding',
+  !/config\.set\(['"]ui\.onboarded['"],\s*true\)/.test(main),
+  'visual setup must dismiss overlays in the DOM without changing persisted onboarding');
+check('capture.verifiesRequestedState',
+  /AriaOrb\.getState\(\)[\s\S]*document\.body\.dataset\.state[\s\S]*video\.dataset\.phase/.test(main)
+    && /orb state verified/.test(main),
+  'a PNG alone must not count as proof that the requested state rendered');
+check('capture.failClosed',
+  /screenshot failed:[^\n]*[\s\S]*smokeFailed\s*=\s*true/.test(main)
+    && /app\.exit\(smokeFailed\s*\?\s*1\s*:\s*0\)/.test(main),
+  'invalid state, seek, or capture failures must return a non-zero exit');
+check('build.copiesRuntimeAssets',
+  /const assets = \[[\s\S]*aria-orb\.webm[\s\S]*aria-orb-compact\.png/.test(copier)
+    && /fs\.rmSync\([^\n]*outAssetsDir/.test(copier),
+  'the build must copy only runtime orb media and remove stale packaged source assets');
+
+// Exercise the real state adapter with a minimal video-shaped DOM. This checks
+// behavior rather than merely confirming that method names exist in source.
+const properties = new Map();
+const listeners = new Map();
+let playCalls = 0;
+let pauseCalls = 0;
+const playRejections = [];
+const video = {
+  dataset: {},
+  hidden: false,
+  style: { setProperty: (name, value) => properties.set(name, value) },
+  currentTime: 0,
+  playbackRate: 1,
+  duration: 9,
+  readyState: 4,
+  paused: true,
+  play() {
+    playCalls++;
+    this.paused = false;
+    return { catch(callback) { playRejections.push(callback); } };
+  },
+  pause() { pauseCalls++; this.paused = true; },
+  setAttribute: () => {},
+  addEventListener(name, callback) {
+    if (!listeners.has(name)) listeners.set(name, []);
+    listeners.get(name).push(callback);
+  },
+};
+function emit(name) {
+  for (const callback of listeners.get(name) || []) callback();
+}
+
+const realSetTimeout = global.setTimeout;
+const realClearTimeout = global.clearTimeout;
+let nextTimerId = 0;
+const scheduledTimers = new Map();
+global.setTimeout = (callback, delay) => {
+  const id = ++nextTimerId;
+  scheduledTimers.set(id, { callback, delay });
+  return id;
+};
+global.clearTimeout = (id) => scheduledTimers.delete(id);
+global.window = {};
+global.self = global.window;
+global.document = {
+  readyState: 'complete',
+  body: { dataset: {} },
+  getElementById: (id) => (id === 'orb-animation' ? video : null),
+  addEventListener: () => {},
+};
+require(path.join(root, 'src', 'renderer', 'orb.js'));
+const Orb = global.window.AriaOrb;
+
+check('adapter.initializesCompact',
+  !!Orb && Orb.getState() === 'idle' && video.dataset.state === 'idle'
+    && video.dataset.phase === 'consolidated' && video.paused && video.currentTime === 0,
+  'startup must show a paused, consolidated orb');
+
+const playsBeforeThinking = playCalls;
+Orb.setState('processing');
+check('adapter.thinkingExpands',
+  video.dataset.state === 'processing' && video.dataset.phase === 'thinking'
+    && !video.paused && playCalls > playsBeforeThinking,
+  'processing must play the expansion/ripple segment');
+video.currentTime = 6.2;
+emit('timeupdate');
+check('adapter.thinkingLoopsRipple',
+  video.currentTime >= 2.5 && video.currentTime <= 3.5 && !video.paused,
+  'long thinking must loop the expanded ripple segment without consolidating');
+
+video.currentTime = 4.4;
+const playsBeforeSpeaking = playCalls;
+const pausesBeforeSpeaking = pauseCalls;
+Orb.setState('speaking');
+const speakingBaseScale = Number(properties.get('--orb-scale-x'));
+check('adapter.speakingHoldsParticles',
+  video.dataset.phase === 'speaking' && video.paused && video.currentTime === 4.4
+    && playCalls === playsBeforeSpeaking && pauseCalls > pausesBeforeSpeaking,
+  'speaking must hold the reached dispersed frame');
+Orb.setLevel(0.7);
+check('adapter.speakingLevel',
+  Orb.getLevel() === 0.7
+    && properties.get('--orb-energy') === '0.700'
+    && Number(properties.get('--orb-scale-x')) > speakingBaseScale
+    && Number(properties.get('--orb-brightness')) > 1
+    && video.paused,
+  'the live TTS envelope must drive scale, light, and glow without restarting video playback');
+const heldSpeakingFrame = video.currentTime;
+video.currentTime = heldSpeakingFrame;
+emit('timeupdate');
+check('adapter.speakingFrameStaysHeld',
+  video.currentTime === heldSpeakingFrame && video.paused && playCalls === playsBeforeSpeaking,
+  'speaking time updates must not seek or resume the held frame');
+
+const playsBeforeSpeakingToProcessing = playCalls;
+Orb.setState('processing');
+check('adapter.speakingToProcessingConsolidates',
+  Orb.getState() === 'processing' && Orb.getPhase() === 'consolidating'
+    && video.currentTime >= 5.5 && !video.paused && playCalls > playsBeforeSpeakingToProcessing,
+  'a new turn submitted during speech must visibly consolidate before thinking');
+emit('ended');
+check('adapter.speakingToProcessingStartsThinking',
+  Orb.getState() === 'processing' && Orb.getPhase() === 'thinking'
+    && video.currentTime === 0 && !video.paused,
+  'processing must begin only after the interrupted speech shape finishes returning');
+
+video.currentTime = 4.4;
+Orb.setState('speaking');
+
+const playsBeforeConsolidation = playCalls;
+Orb.setState('idle');
+check('adapter.speechEndConsolidates',
+  video.dataset.state === 'idle' && video.dataset.phase === 'consolidating'
+    && video.currentTime >= 5.5 && !video.paused && playCalls > playsBeforeConsolidation,
+  'leaving speech must play the return/consolidation segment');
+emit('ended');
+check('adapter.consolidationCompletes',
+  video.dataset.phase === 'consolidated' && video.paused && video.currentTime === 0,
+  'the orb must finish compact and still after consolidation');
+
+// Conversation mode and barge-in can move directly from speaking to listening.
+// That transition must preserve the user-requested return animation, then remain
+// compact for the rest of listening; a duplicate listening update must not cancel it.
+Orb.setState('speaking');
+Orb.setState('listening');
+check('adapter.speakingToListeningConsolidates',
+  Orb.getState() === 'listening' && Orb.getPhase() === 'consolidating' && !video.paused,
+  'follow-up listening must allow the just-finished speech shape to consolidate');
+Orb.setState('listening');
+check('adapter.listeningKeepsActiveTail',
+  Orb.getState() === 'listening' && Orb.getPhase() === 'consolidating' && !video.paused,
+  'a repeated listening update must not interrupt an active return segment');
+emit('ended');
+check('adapter.listeningFinishesCompact',
+  Orb.getState() === 'listening' && Orb.getPhase() === 'consolidated'
+    && video.paused && video.currentTime === 0,
+  'after the brief post-speech tail, listening must remain paused and compact');
+
+Orb.setState('processing');
+Orb.setState('listening');
+check('adapter.processingToListeningConsolidates',
+  Orb.getState() === 'listening' && Orb.getPhase() === 'consolidating' && !video.paused,
+  'cancelled or failed thinking must return the expanded particles before listening');
+emit('ended');
+check('adapter.processingToListeningFinishesCompact',
+  Orb.getState() === 'listening' && Orb.getPhase() === 'consolidated'
+    && video.paused && video.currentTime === 0,
+  'processing-to-listening must also finish paused and compact');
+
+Orb.setState('processing');
+Orb.setSttBackend('cpu');
+Orb.beginSttCompute();
+check('adapter.compute.cpuUnfrozen', Orb.isComputeFrozen() === false && video.hidden === false,
+  'CPU STT must not hide the orb');
+Orb.setSttBackend('vulkan');
+Orb.beginSttCompute();
+const computeTimer = [...scheduledTimers.values()].find((timer) => timer.delay === 6000);
+const interruptedPlayReject = playRejections[playRejections.length - 1];
+if (interruptedPlayReject) interruptedPlayReject(new Error('play interrupted by intentional compute pause'));
+check('adapter.compute.interruptedPlayKeepsPhase', Orb.getPhase() === 'thinking',
+  'an intentional compute pause must not be mistaken for a playback failure');
+check('adapter.compute.quiescesVisual',
+  Orb.isComputeFrozen() === true && video.hidden === true && video.paused,
+  'Vulkan STT must pause and remove the video from the compositor during compute');
+check('adapter.compute.failsafeScheduled', !!computeTimer,
+  'a lost STT result must not leave the orb quiesced indefinitely');
+if (computeTimer) computeTimer.callback();
+check('adapter.compute.failsafeRecovers',
+  Orb.isComputeFrozen() === false && video.hidden === false && !video.paused,
+  'the compute failsafe must restore active thinking playback');
+Orb.beginSttCompute();
+Orb.beginStt();
+check('adapter.compute.newListenClearsStaleFreeze',
+  Orb.isComputeFrozen() === false && video.hidden === false,
+  'a subsequent listen must clear a stale compute freeze immediately');
+Orb.endStt();
+
+global.setTimeout = realSetTimeout;
+global.clearTimeout = realClearTimeout;
 
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

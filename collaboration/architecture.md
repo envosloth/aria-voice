@@ -49,7 +49,7 @@ The orb's state machine (`idle → listening → processing → speaking`) is dr
 | File | Owns |
 |------|------|
 | `app.js` | The orchestrator (~2.3k lines): mic capture, VAD, utterance lifecycle, barge-in, TTS streaming/playback, orb state, sessions sidebar + overflow menu, settings, onboarding, screen share, token meter. |
-| `orb.js` | The Glass Observatory canvas orb: seeded particles, per-state palette/motion, FPS caps, **GPU relief** during STT, adaptive pressure detector, backing-store caps. |
+| `orb.js` | State adapter for the user-supplied particle animation: a seekable transparent video plays expansion/ripples only while processing, holds an RMS-reactive frame while speaking, consolidates afterward, and pauses/hides during Vulkan STT without a custom graphics loop. |
 | `audio-utils.js` | Pure helpers: 16 kHz downsample, float→int16, RMS, `VadEndpointer`, `sanitizeForSpeech`. Loadable in Node → unit-tested. |
 | `mic-worklet.js` | The AudioWorklet that emits mic frames. |
 | `perf.js` | Renderer-side latency marks mirrored to main. |

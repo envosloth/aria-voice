@@ -65,10 +65,13 @@ jobs:
         if: matrix.platform == 'linux'
         run: sudo apt-get update && sudo apt-get install -y rpm vulkan-tools libvulkan-dev mesa-vulkan-drivers glslang-tools glslc
 
-      - name: Install JS deps
+      - name: Install Node dependencies
         run: npm ci
 
-      - name: Validate tagged release version
+      - name: Audit packaged runtime dependencies
+        run: npm run audit:runtime
+
+      - name: Validate release version
         if: startsWith(github.ref, 'refs/tags/v')
         run: node scripts/validate-release-version.js "$GITHUB_REF_NAME"
 
@@ -95,10 +98,16 @@ jobs:
             "$BIN/pip" install -r "sidecars/$s/requirements.txt"
           done
 
+      - name: Provision verified wake-word models
+        run: ARIA_WAKEWORD_ONLY=1 bash scripts/download-models.sh
+
       # Freeze the three Python sidecars (STT, TTS/Kokoro, wake word) into
       # onedir bundles for THIS OS. PyInstaller runs natively per platform.
       - name: Freeze sidecars
         run: npm run package:sidecars
+
+      - name: Smoke frozen wake-word sidecar
+        run: ARIA_SIDECAR_DIR="$GITHUB_WORKSPACE/build/sidecars" node scripts/smoke-supervisor.js wakeword
 
       # Build whisper.cpp for this OS (Vulkan where available, CPU fallback).
       # See scripts/build-whispercpp.sh; Windows uses the CMake + VS toolchain.

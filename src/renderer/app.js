@@ -667,9 +667,8 @@ function beginUtterance(opts) {
   micBtn.classList.add('listening');
   micBtn.setAttribute('aria-pressed', 'true');
   orbState('listening');
-  // Tell the orb an STT transcription is starting so the GPU-bound render can
-  // swap in its throttled cap (the "high" tier native-refresh + Vulkan STT
-  // combo was the crash path on 'balanced' and above).
+  // Tell the orb capture has started. This also clears any stale bounded compute
+  // pause left by an abandoned prior transcription.
   try { window.AriaOrb && window.AriaOrb.beginStt && window.AriaOrb.beginStt(); } catch (e) {}
   aria.stt.start(turnId);
   // VAD endpointing only for hands-free (wake-word) turns; push-to-talk ends on
@@ -727,10 +726,9 @@ function endUtterance(opts) {
     orbState('processing'); // STT + LLM working
   }
   aria.stt.end(currentVoiceTurnId || '');
-  // The transcribe (whisper Vulkan compute) starts now. Freeze the orb's GPU work
-  // until the result arrives so the compute queue never contends with the orb's
-  // graphics queue — the amdgpu/RDNA4 GPU-reset crash on auto/balanced. Fires for
-  // the discard path too (the server still transcribes to stay clean).
+  // Whisper's Vulkan compute starts now. Pause video decode and remove the orb
+  // from compositing until the result arrives so it cannot recreate the historic
+  // graphics/compute contention crash. This also runs for discarded silence.
   try { window.AriaOrb && window.AriaOrb.beginSttCompute && window.AriaOrb.beginSttCompute(); } catch (e) {}
   // Let the main process flip sttListening=false before the WebAudio tone starts,
   // so the confirmation chime is not captured into the utterance being
@@ -776,11 +774,9 @@ aria.stt.onResult((result) => {
   // duplicate result after this turn has already been consumed.
   if (!currentVoiceTurnId || (resultTurnId && resultTurnId !== currentVoiceTurnId)) return;
   let text = textResult;
-  // STT transcription is done; lift the orb's GPU throttling. The orb flips
-  // back to its per-state cap (full refresh on the high tier). Wrapped in a
-  // try/catch in case the orb isn't ready yet (tests, headless boot).
+  // STT transcription is done; clear capture state and restore any paused/hidden
+  // orb phase. Wrapped for tests/headless boot where the adapter may be absent.
   try { window.AriaOrb && window.AriaOrb.endStt && window.AriaOrb.endStt(); } catch (e) {}
-  // Transcribe compute finished — lift the hard GPU freeze so the orb repaints.
   try { window.AriaOrb && window.AriaOrb.endSttCompute && window.AriaOrb.endSttCompute(); } catch (e) {}
   // A silent follow-up window was closed: drop this result (it's silence, and
   // whisper may have hallucinated a phantom phrase) and stay idle.
@@ -829,11 +825,7 @@ aria.stt.onState((event) => {
   showError(`Speech recognition unavailable: ${event.error || 'startup timed out'}. Use text input instead.`);
 });
 
-// Ctrl+Shift+F toggles the live FPS counter on the orb.
 window.addEventListener('keydown', (e) => {
-  if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'f' && window.AriaOrb) {
-    window.AriaOrb.toggleFps();
-  }
   // Cmd/Ctrl+, opens Settings (the sidebar shows this hint, and the gear is
   // hidden on narrow windows — this keeps Settings reachable at any width).
   if ((e.metaKey || e.ctrlKey) && e.key === ',') {

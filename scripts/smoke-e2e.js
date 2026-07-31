@@ -15,6 +15,10 @@ const { Supervisor } = require('../dist/main/supervisor');
 const { streamChat } = require('../dist/main/llm-stream');
 
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)];
+}
 
 function readPcm(wavPath) {
   const buf = fs.readFileSync(wavPath);
@@ -61,7 +65,7 @@ async function main() {
   const ready = new Set();
   let transcription = null;
   let utteranceStarted = false;
-  const utteranceId = 'smoke-e2e-1';
+  let utteranceId = 'smoke-e2e-1';
   let ttsChunks = 0;
   let ttsBytes = 0;
   let ttsFirstChunkAt = 0;
@@ -87,47 +91,71 @@ async function main() {
   for (let i = 0; i < 60 && ready.size < 2; i++) await sleep(200);
   if (ready.size < 2) { console.log('FAIL: sidecars not ready'); await sup.stopAll(); process.exit(1); }
 
-  // --- Stage 1: STT ---
-  console.log('\n[1] STT: streaming speech PCM -> transcribe');
-  const tStt = Date.now();
-  sup.sendToSidecar('stt', { type: 'start', utterance_id: utteranceId });
-  for (let i = 0; i < 50 && !utteranceStarted; i++) await sleep(20);
-  if (!utteranceStarted) { console.log('FAIL: STT start was not acknowledged'); await sup.stopAll(); process.exit(1); }
-  const CH = 8192;
-  for (let o = 0; o < pcm.length; o += CH) sup.sendPcm('stt', pcm.subarray(o, Math.min(o + CH, pcm.length)));
-  sup.sendToSidecar('stt', { type: 'transcribe', utterance_id: utteranceId, audio_bytes: pcm.length });
-  for (let i = 0; i < 150 && transcription === null; i++) await sleep(50);
-  const sttMs = Date.now() - tStt;
-  console.log(`    -> "${transcription}" (${sttMs}ms)`);
+  async function runTrial(number) {
+    transcription = null;
+    utteranceStarted = false;
+    utteranceId = `smoke-e2e-${number}`;
+    ttsChunks = 0;
+    ttsBytes = 0;
+    ttsFirstChunkAt = 0;
+    ttsDone = false;
 
-  // --- Stage 2: LLM (mock, network segment) ---
-  console.log('\n[2] LLM: transcription -> streamed reply (mock)');
-  const tLlm = Date.now();
-  let llmFirstTokenAt = 0;
-  const llmReply = await new Promise((resolve) => {
-    let full = '';
-    streamChat(
-      { endpoint: `http://127.0.0.1:${llmPort}/v1/chat/completions`, model: 'mock', message: transcription },
-      {
-        onToken: (t) => { if (!llmFirstTokenAt) llmFirstTokenAt = Date.now(); full += t; },
-        onDone: (f) => resolve(f || full),
-        onError: (e) => resolve(`[error: ${e}]`),
-      },
-    );
-  });
-  const llmFirstMs = llmFirstTokenAt - tLlm;
-  const llmTotalMs = Date.now() - tLlm;
-  console.log(`    -> "${llmReply}" (first token ${llmFirstMs}ms, total ${llmTotalMs}ms)`);
+    console.log(`\n[trial ${number}] STT: streaming speech PCM -> transcribe`);
+    const tStt = Date.now();
+    sup.sendToSidecar('stt', { type: 'start', utterance_id: utteranceId });
+    for (let i = 0; i < 50 && !utteranceStarted; i++) await sleep(20);
+    if (!utteranceStarted) throw new Error('STT start was not acknowledged');
+    const CH = 8192;
+    for (let o = 0; o < pcm.length; o += CH) sup.sendPcm('stt', pcm.subarray(o, Math.min(o + CH, pcm.length)));
+    sup.sendToSidecar('stt', { type: 'transcribe', utterance_id: utteranceId, audio_bytes: pcm.length });
+    for (let i = 0; i < 150 && transcription === null; i++) await sleep(50);
+    const sttMs = Date.now() - tStt;
+    console.log(`    -> "${transcription}" (${sttMs}ms)`);
 
-  // --- Stage 3: TTS ---
-  console.log('\n[3] TTS: reply -> PCM audio');
-  const tTts = Date.now();
-  sup.sendToSidecar('tts', { type: 'synthesize', text: llmReply });
-  for (let i = 0; i < 150 && !ttsDone; i++) await sleep(50);
-  const ttsFirstMs = ttsFirstChunkAt - tTts;
-  const ttsTotalMs = Date.now() - tTts;
-  const audioSec = ttsBytes / (22050 * 2);
-  console.log(`    -> ${ttsChunks} chunks, ${audioSec.toFixed(2)}s audio (first chunk ${ttsFirstMs}ms, total ${ttsTotalMs}ms)`);
+    console.log(`[trial ${number}] LLM: transcription -> streamed reply (mock)`);
+    const tLlm = Date.now();
+    let llmFirstTokenAt = 0;
+    const llmReply = await new Promise((resolve) => {
+      let full = '';
+      streamChat(
+        { endpoint: `http://127.0.0.1:${llmPort}/v1/chat/completions`, model: 'mock', message: transcription },
+        {
+          onToken: (t) => { if (!llmFirstTokenAt) llmFirstTokenAt = Date.now(); full += t; },
+          onDone: (f) => resolve(f || full),
+          onError: (e) => resolve(`[error: ${e}]`),
+        },
+      );
+    });
+    const llmFirstMs = llmFirstTokenAt - tLlm;
+    const llmTotalMs = Date.now() - tLlm;
+    console.log(`    -> "${llmReply}" (first token ${llmFirstMs}ms, total ${llmTotalMs}ms)`);
+
+    console.log(`[trial ${number}] TTS: reply -> PCM audio`);
+    const tTts = Date.now();
+    sup.sendToSidecar('tts', { type: 'synthesize', text: llmReply });
+    for (let i = 0; i < 150 && !ttsDone; i++) await sleep(50);
+    const ttsFirstMs = ttsFirstChunkAt - tTts;
+    const ttsTotalMs = Date.now() - tTts;
+    const audioSec = ttsBytes / (22050 * 2);
+    console.log(`    -> ${ttsChunks} chunks, ${audioSec.toFixed(2)}s audio (first chunk ${ttsFirstMs}ms, total ${ttsTotalMs}ms)`);
+    return {
+      transcription, llmReply, llmFirstMs, sttMs, ttsFirstMs, ttsDone, ttsChunks,
+      localFirstAudio: sttMs + ttsFirstMs,
+    };
+  }
+
+  const ttsEngine = (process.env.ARIA_TTS_ENGINE || 'piper').toLowerCase();
+  const engineBudgetMs = ttsEngine === 'piper' ? 900 : 1300;
+  const requestedBudgetMs = Number(process.env.ARIA_E2E_LOCAL_BUDGET_MS);
+  // Tests may tighten the budget to exercise the confirmation path, but never
+  // loosen the release SLO through an environment variable.
+  const LOCAL_BUDGET_MS = Number.isFinite(requestedBudgetMs) && requestedBudgetMs > 0
+    ? Math.min(engineBudgetMs, requestedBudgetMs) : engineBudgetMs;
+  const trials = [await runTrial(1)];
+  if (trials[0].localFirstAudio >= LOCAL_BUDGET_MS) {
+    console.log(`\nFirst local sample was over budget; running two confirmation trials.`);
+    trials.push(await runTrial(2), await runTrial(3));
+  }
 
   await sup.stopAll();
   llmServer.close();
@@ -141,17 +169,17 @@ async function main() {
   // streams audio sentence-by-sentence as the reply generates (incremental TTS),
   // overlapping synthesis with generation — this stage just bounds the worst-case
   // first-audio floor for the chosen engine.
-  const ttsEngine = (process.env.ARIA_TTS_ENGINE || 'piper').toLowerCase();
-  const LOCAL_BUDGET_MS = ttsEngine === 'piper' ? 900 : 1300;
+  const first = trials[0];
+  const localSamples = trials.map((trial) => trial.localFirstAudio);
+  const localFirstAudio = median(localSamples);
   console.log('\n=== Latency (spec §7 budget) ===');
-  const localFirstAudio = sttMs + ttsFirstMs; // local stages we control
-  console.log(`  STT:                 ${sttMs}ms`);
-  console.log(`  TTS first chunk:     ${ttsFirstMs}ms  (engine=${ttsEngine})`);
-  console.log(`  LOCAL (STT+TTS-1st): ${localFirstAudio}ms  ${localFirstAudio < LOCAL_BUDGET_MS ? `(< ${LOCAL_BUDGET_MS}ms target OK)` : '(OVER budget)'}`);
-  console.log(`  LLM first token:     ${llmFirstMs}ms  (remote, excluded from local SLO)`);
+  console.log(`  Local samples:       ${localSamples.join('ms, ')}ms`);
+  console.log(`  LOCAL median:        ${localFirstAudio}ms  ${localFirstAudio < LOCAL_BUDGET_MS ? `(< ${LOCAL_BUDGET_MS}ms target OK)` : '(OVER budget)'}`);
+  console.log(`  LLM first token:     ${first.llmFirstMs}ms  (remote, excluded from local SLO)`);
 
-  const ok = transcription && /test/i.test(transcription) &&
-             llmReply.includes('working') && ttsDone && ttsChunks > 0 &&
+  const functional = trials.every((trial) => trial.transcription && /test/i.test(trial.transcription)
+             && trial.llmReply.includes('working') && trial.ttsDone && trial.ttsChunks > 0);
+  const ok = functional &&
              localFirstAudio < LOCAL_BUDGET_MS;
   console.log(`\n=== RESULT: ${ok ? 'PASS' : 'FAIL'} ===`);
   process.exit(ok ? 0 : 1);

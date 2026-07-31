@@ -13,6 +13,8 @@ const builder = fs.readFileSync(path.join(root, 'electron-builder.yml'), 'utf8')
 const whisper = fs.readFileSync(path.join(root, 'scripts', 'build-whispercpp.sh'), 'utf8');
 const sidecarPackager = fs.readFileSync(path.join(root, 'scripts', 'package-sidecar.sh'), 'utf8');
 const modelDownloader = fs.readFileSync(path.join(root, 'scripts', 'download-models.sh'), 'utf8');
+const settingsMarkup = fs.readFileSync(path.join(root, 'src', 'renderer', 'index.html'), 'utf8');
+const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 
 let pass = true;
 function check(name, condition, detail) {
@@ -47,6 +49,22 @@ check('release runs build', /npm run build/.test(workflow));
 check('release runs lint', /npm run lint/.test(workflow));
 check('release runs typecheck', /npm run typecheck/.test(workflow));
 check('release runs packaging guard', /npm run smoke:release-packaging/.test(workflow));
+check('release blocks runtime dependency vulnerabilities', /npm run audit:runtime/.test(workflow)
+  && packageJson.scripts['audit:runtime'] === 'npm audit --omit=dev --audit-level=high');
+const provisionIndex = workflow.indexOf('ARIA_WAKEWORD_ONLY=1 bash scripts/download-models.sh');
+const freezeIndex = workflow.indexOf('npm run package:sidecars');
+check('release provisions wake-word ONNX assets', provisionIndex >= 0);
+check('release provisions wake-word assets before freezing', provisionIndex >= 0 && provisionIndex < freezeIndex);
+check('release boots the frozen wake-word sidecar', /ARIA_SIDECAR_DIR=.*build\/sidecars[\s\S]*smoke-supervisor\.js wakeword/.test(workflow));
+check('model script supports Windows venv interpreters', /venv\/Scripts\/python(?:\.exe)?/.test(modelDownloader));
+check('model script supports wake-word-only release provisioning', /ARIA_WAKEWORD_ONLY/.test(modelDownloader));
+const advertisedWakewords = [...settingsMarkup.matchAll(/<option value="([^"]+)">[^<]+<\/option>/g)]
+  .map((match) => match[1])
+  .filter((value) => ['hey_jarvis', 'alexa', 'hey_mycroft', 'hey_marvin'].includes(value));
+check('every advertised built-in wake word is provisioned', advertisedWakewords.every((name) => {
+  const filename = `${name}_v0.1.onnx`;
+  return modelDownloader.includes(filename);
+}), `advertised=${advertisedWakewords.join(',')}`);
 
 // electron-builder sends arbitrary FPM flags through deb.fpm, which is the
 // supported way to encode dpkg Replaces/Conflicts for the legacy package.
@@ -83,6 +101,22 @@ check('whisper cleanup contains build-dir guard', /unsafe BUILD_DIR/i.test(whisp
 check('whisper build directory is created privately', /mktemp -d/.test(whisper));
 check('model script pins immutable revisions', !/\/resolve\/main/.test(modelDownloader));
 check('model script verifies sha256 before promotion', /sha256sum\s+-c/.test(modelDownloader));
+
+const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aria-audio-fixture-'));
+const explicitMissingVoice = path.join(fixtureDir, 'requested-voice.onnx');
+try {
+  fs.writeFileSync(path.join(fixtureDir, 'en_GB-alan-medium.onnx'), 'fallback must not be used');
+  execFileSync('bash', [path.join(root, 'scripts', 'gen-test-audio.sh')], {
+    env: { ...process.env, ARIA_MODELS_DIR: fixtureDir, ARIA_TEST_VOICE: explicitMissingVoice },
+    stdio: 'pipe',
+  });
+  check('explicit missing test voice fails without fallback', false);
+} catch (err) {
+  const output = `${err.stdout || ''}${err.stderr || ''}`;
+  check('explicit missing test voice fails without fallback', output.includes(`Voice model missing: ${explicitMissingVoice}`));
+} finally {
+  fs.rmSync(fixtureDir, { recursive: true, force: true });
+}
 
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

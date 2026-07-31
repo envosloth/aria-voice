@@ -91,12 +91,7 @@
     button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent-active); outline-offset: 2px; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
-    /* ── Ambient background: orb canvas + glow blobs + grid ── */
-    #orb-canvas {
-      position: fixed; inset: 0; width: 100%; height: 100%;
-      z-index: 0; pointer-events: none; image-rendering: auto;
-    }
-    html[data-theme="light"] #orb-canvas { opacity: 1; }
+    /* ── Ambient background: glow blobs + grid ── */
     .bg-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
     .bg-grid {
       position: absolute; inset: 0;
@@ -305,18 +300,40 @@
     #mic-btn:active, #screen-btn:active, #send-btn:active { transform: scale(.9); }
 
     /* ── Ops column ── */
-    /* No backdrop blur on the ops panel: the orb canvas sits behind it and
-       must show through crisp, not as a 40px-blurred smudge. */
+    /* Keep the in-panel particle video crisp; blur belongs to its surrounding
+       glow, not the rail that contains it. */
     .ops { padding: 20px 18px; display: flex; flex-direction: column; align-items: center; gap: 14px;
       backdrop-filter: none; -webkit-backdrop-filter: none; }
     html[data-theme="light"] .ops {
-      /* Light glass was nearly opaque white, so the behind-panel canvas orb
-         disappeared. Keep the rail readable while letting the orb show through. */
+      /* Translucent light glass preserves contrast for the inverted particle video. */
       background: linear-gradient(165deg, rgba(255,255,255,.64), rgba(255,255,255,.42));
       border-color: color-mix(in srgb, var(--accent-active) 18%, transparent);
       box-shadow: 0 18px 44px rgba(20,30,60,.14);
     }
-    .orb-slot { width: 100%; height: 260px; position: relative; margin-top: 6px; }
+    /* The supplied particle loop is transparently encoded as a seekable video so
+       thinking, speech, and consolidation can use distinct parts of its motion. */
+    .orb-slot { width: 100%; height: 260px; position: relative; margin-top: 6px; display: grid; place-items: center; --orb-glow: rgba(122,162,255,.22); }
+    .orb-slot::before { content: ''; position: absolute; inset: 10%; border-radius: 50%; background: radial-gradient(circle, var(--orb-glow), transparent 67%); filter: blur(16px); opacity: .82; pointer-events: none; transition: background .35s ease, opacity .25s ease; }
+    #orb-animation {
+      position: relative; z-index: 1; width: 100%; height: 100%; object-fit: contain;
+      mix-blend-mode: normal; opacity: .72; pointer-events: none; user-select: none;
+      transform: scale(var(--orb-scale-x, .96), var(--orb-scale-y, .96)); transform-origin: center;
+      filter: brightness(var(--orb-brightness, 1)) contrast(1.08)
+        drop-shadow(0 0 var(--orb-shadow-blur, 8px) rgba(90,210,255,var(--orb-glow-opacity, .64)));
+      transition: transform 80ms linear, filter 80ms linear, opacity .25s ease;
+    }
+    #orb-animation[data-phase="consolidated"] { transition-duration: 220ms, 220ms, 250ms; }
+    body[data-state="idle"] #orb-animation { opacity: .72; }
+    body[data-state="listening"] .orb-slot { --orb-glow: rgba(255,171,77,.32); }
+    body[data-state="listening"] #orb-animation { opacity: .97; }
+    body[data-state="processing"] .orb-slot { --orb-glow: rgba(185,139,255,.31); }
+    body[data-state="processing"] #orb-animation { opacity: .9; }
+    body[data-state="speaking"] .orb-slot { --orb-glow: rgba(63,200,232,.38); }
+    body[data-state="speaking"] #orb-animation { opacity: 1; will-change: transform, filter; }
+    html[data-theme="light"] #orb-animation {
+      filter: invert(1) brightness(var(--orb-brightness, 1)) contrast(1.16)
+        drop-shadow(0 0 var(--orb-shadow-blur, 8px) rgba(28,72,138,.32));
+    }
 
     .state-badge {
       display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 999px;
@@ -351,10 +368,9 @@
       display: flex; align-items: center; gap: 8px; font: 400 10px var(--mono); color: var(--text-muted); }
     .ops-foot .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); box-shadow: 0 0 6px var(--success); }
 
-    /* Responsive: drop rails on narrow windows. Without the ops rail the orb
-       falls back to viewport-center behind the chat glass — dim it to ambience
-       so it doesn't flood the conversation. */
-    @media (max-width: 1080px) { .shell { grid-template-columns: 232px 1fr; } .ops { display: none; } #orb-canvas { opacity: 0.3; } }
+    /* Responsive: the decorative orb lives in the ops rail, which drops cleanly
+       on narrow windows to leave the conversation unobstructed. */
+    @media (max-width: 1080px) { .shell { grid-template-columns: 232px 1fr; } .ops { display: none; } }
     @media (max-width: 720px) { .shell { grid-template-columns: 1fr; padding: 8px; gap: 8px; } .sidebar { display: none; } .chat-head { padding: 10px 12px; } .chat-sub { display: none; } .compact-actions { display: flex; } main { padding: 14px; } .input-area { margin: 10px; } }
 
     /* ── Error / update banners (app.js classes) ── */
@@ -508,7 +524,6 @@
 </head>
 <body data-state="idle">
   <div id="aria-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true">ARIA is idle.</div>
-  <canvas id="orb-canvas"></canvas>
   <div class="bg-layer">
     <div class="blob a"></div><div class="blob b"></div><div class="blob c"></div>
     <div class="bg-grid"></div>
@@ -623,7 +638,11 @@
 
     <!-- ── Ops column ── -->
     <aside class="panel strong ops">
-      <div class="orb-slot" id="orb-anchor"></div>
+      <div class="orb-slot" id="orb-anchor">
+        <video id="orb-animation" poster="assets/aria-orb-compact.png" muted playsinline preload="auto" aria-hidden="true" tabindex="-1">
+          <source src="assets/aria-orb.webm" type="video/webm">
+        </video>
+      </div>
       <div class="state-badge"></div>
       <div class="ops-sub"></div>
       <div class="ops-tokens" id="ops-tokens" title="Tokens spent in this conversation">
@@ -841,13 +860,10 @@
         <label>Phrase
           <select id="cfg-ww-phrase">
             <option value="hey_jarvis">Hey Jarvis</option>
-            <option value="alexa">Alexa</option>
-            <option value="hey_mycroft">Hey Mycroft</option>
-            <option value="hey_marvin">Hey Marvin</option>
           </select>
-          <span class="hint">Pick a built-in wake word — each has a trained model bundled, so it
-          activates reliably. A custom phrase (e.g. "aria") needs a separately trained openWakeWord
-          .onnx model dropped into your models/wakeword folder.</span>
+          <span class="hint">Hey Jarvis is bundled and verified. A custom phrase needs a separately
+          trained openWakeWord .onnx model dropped into your models/wakeword folder and selected
+          through configuration.</span>
         </label>
       </section>
 

@@ -47,3 +47,16 @@ ARIA's sensitive surfaces:
 - Vulnerabilities in the remote LLM/agent you configure (that's your endpoint).
 - Issues requiring a already-compromised local machine or physical access.
 - The documented dev-only `--no-sandbox` flag used in `npm run dev` / smoke tests.
+
+## Dependency-audit policy
+
+Release CI runs `npm run audit:runtime` and fails on high-severity findings in
+dependencies that can ship with ARIA. The current runtime graph audits clean.
+
+The full development graph may still report `brace-expansion` denial-of-service
+advisories through ESLint and electron-builder's globbing stack. Those packages
+are build-time only, are excluded from the packaged application, and process only
+repository-controlled patterns in CI. We keep their compatible patch releases
+current and will remove this exception when upstream publishes non-breaking fixed
+dependency chains; forcing incompatible transitive majors into the packager is
+not an acceptable substitute for a working release build.

@@ -4,10 +4,10 @@
 Listens to 16kHz mono PCM audio over UDS, emits wake-word detection events over
 stdio JSON. openWakeWord expects raw int16 PCM in 80ms (1280-sample) frames.
 
-The pretrained ONNX models (alexa, hey_mycroft, hey_jarvis, plus the shared
-melspectrogram/embedding feature models and silero_vad) ship bundled with the
-openwakeword wheel — no separate download is required. A custom "hey aria"
-model would need to be trained separately and dropped into the models dir.
+The setup script downloads the pretrained Hey Jarvis ONNX model plus the shared
+melspectrogram/embedding feature models and Silero VAD into openWakeWord's model
+directory before packaging. A custom "hey aria" model must be trained separately
+and dropped into the models directory.
 """
 
 import json
@@ -81,17 +81,14 @@ class WakewordSidecar(BaseSidecar):
 
         self._np = np
         model_paths = self._resolve_model_paths(openwakeword)
-        # NOTE (Windows wake word): we deliberately do NOT pass inference_framework
-        # here — this openWakeWord version forwards it to AudioFeatures, which
-        # rejects it. The bundled models are .onnx and onnxruntime is the only
-        # runtime we ship (cross-platform, has Windows wheels), so the onnx path is
-        # selected identically on every OS. If wake word still fails on Windows,
-        # capture the sidecar's stderr from a real Windows run — the failure is not
-        # reproducible/identifiable from Linux.
+        # Use ONNX explicitly. openWakeWord also installs a TFLite runtime whose
+        # current wheels are built against NumPy 1.x and fail under NumPy 2, while
+        # ONNX Runtime is already ARIA's supported cross-platform dependency.
         self.model = Model(
-            wakeword_model_paths=model_paths,
+            wakeword_models=model_paths,
             enable_speex_noise_suppression=False,
             vad_threshold=self.vad_threshold,
+            inference_framework="onnx",
         )
         names = ", ".join(os.path.basename(p) for p in model_paths)
         self._emit_status("initialized", f"threshold={self.threshold} models=[{names}]")
@@ -152,6 +149,12 @@ class WakewordSidecar(BaseSidecar):
           5. a safe default + a 'warning' status naming the built-in options.
         """
         req = self._normalize(DEFAULT_MODEL)
+        models = getattr(openwakeword, "MODELS", None) or getattr(openwakeword, "models", {})
+        if not models:
+            raise RuntimeError("openWakeWord did not expose a pretrained model registry")
+        def bundled_path(key: str) -> str:
+            path = models[key]["model_path"]
+            return path.replace(".tflite", ".onnx")
         custom_dirs = []
         models_dir = os.environ.get("ARIA_MODELS_DIR")
         if models_dir:
@@ -165,15 +168,15 @@ class WakewordSidecar(BaseSidecar):
         for d in custom_dirs:
             if os.path.isdir(d):
                 for f in sorted(os.listdir(d)):
-                    if f.endswith((".onnx", ".tflite")) and "melspec" not in f and "embedding" not in f:
+                    if f.endswith(".onnx") and "melspec" not in f and "embedding" not in f:
                         path = os.path.join(d, f)
                         custom.append(path)
                         if self._normalize(os.path.splitext(f)[0]) == req:
                             return [path]  # 1) named custom model
 
-        for key in openwakeword.models:  # 2) named bundled model (exact)
+        for key in models:  # 2) named bundled model (exact)
             if self._normalize(key) == req:
-                return [openwakeword.models[key]["model_path"]]
+                return [bundled_path(key)]
 
         # 3) Sub-phrase match: every token of the typed phrase appears in a
         # bundled model's phrase (so "jarvis" picks "hey_jarvis"). Only accept a
@@ -182,7 +185,7 @@ class WakewordSidecar(BaseSidecar):
         # full phrase, so trigger on the lowered partial threshold.
         req_tokens = [t for t in req.split("_") if t]
         partial = sorted({
-            key for key in openwakeword.models
+            key for key in models
             if req_tokens
             and self._normalize(key).split("_") != req_tokens
             and all(t in self._normalize(key).split("_") for t in req_tokens)
@@ -199,21 +202,21 @@ class WakewordSidecar(BaseSidecar):
                 f"it. For a clean '{DEFAULT_MODEL}'-only wake word, train an "
                 f"openWakeWord model and drop the .onnx in models/wakeword/.",
             )
-            return [openwakeword.models[key]["model_path"]]
+            return [bundled_path(key)]
 
         if custom:  # 4) custom models present, but none matched the typed name
             return custom
 
         # 5) Unknown phrase with no model — use a safe default and tell the user.
-        fallback = "hey_jarvis" if "hey_jarvis" in openwakeword.models else next(iter(openwakeword.models))
-        options = ", ".join(sorted(openwakeword.models))
+        fallback = "hey_jarvis" if "hey_jarvis" in models else next(iter(models))
+        options = ", ".join(sorted(models))
         self._emit_status(
             "warning",
             f"No wake-word model for '{DEFAULT_MODEL}'; using '{fallback}'. "
             f"Built-in phrases: {options}. For a custom phrase, train an "
             f"openWakeWord model and drop the .onnx in models/wakeword/.",
         )
-        return [openwakeword.models[fallback]["model_path"]]
+        return [bundled_path(fallback)]
 
     def cleanup(self) -> None:
         self.model = None
@@ -228,6 +231,9 @@ if __name__ == "__main__":
         assert _debounce_step(1, False, 2) == (0, False)  # a gap resets the run
         assert _debounce_step(0, False, 2) == (0, False)
         assert _debounce_step(0, True, 1) == (0, True)  # min_frames=1 fires at once
+        class ModernOpenWakeWord:
+            MODELS = {"hey_jarvis": {"model_path": "/tmp/hey_jarvis.onnx"}}
+        assert WakewordSidecar()._resolve_model_paths(ModernOpenWakeWord) == ["/tmp/hey_jarvis.onnx"]
         print("wakeword debounce self-test OK")
         sys.exit(0)
     WakewordSidecar().run()

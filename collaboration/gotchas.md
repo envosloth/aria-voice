@@ -17,23 +17,29 @@ code and fix this file.
 
 ## The GPU-contention crash (orb + Vulkan STT)
 
-The single nastiest crash class. The canvas orb rendering at native refresh **while a
-Vulkan STT transcription runs** saturated the GPU and took the renderer down on
-`balanced`+ profiles. Mitigations live in `orb.js` and must not be casually removed:
+The single nastiest historical crash class. The former canvas orb rendered at native
+refresh while Vulkan transcription ran, saturated the GPU, and could take the renderer
+down on `balanced`+ profiles. The canvas path has been removed, but the safeguards in
+`orb.js` remain load-bearing:
 
-- **GPU relief** during real pressure: `beginStt()`/`endStt()` cap the orb frame
-  cadence while the mic is open, but they **do not** drop backing-store resolution
-  (listening must stay crisp). The hard backing-store drop (`RELIEF_BACKING = 1024`
-  device-px long edge) is reserved for the adaptive pressure detector; Vulkan STT
-  compute uses the short zero-frame freeze instead.
-- Relief is a **boolean + 12 s watchdog**, not a refcount. A refcount leaked when a
-  barge-in abandoned a transcription whose `endStt` never fired, pinning the orb in
-  its listening throttle until restart. If you touch this, keep it leak-proof.
-- An **adaptive pressure detector** engages relief when frames land far late, then
-  probes for recovery. The **renderer crash circuit breaker** (`index.ts`,
-  `render-process-gone`) reloads into a stepped-down GPU profile for a cooldown.
-- Raising `RELIEF_BACKING` or removing the FPS cap risks reintroducing the crash on
-  the target hardware, which is not validated under load. Change with care + a device.
+- The supplied GIF is retained as a source reference; runtime uses a transparent,
+  seekable WebM so idle/listening remain paused and compact after any required return,
+  rather than decoding an uncontrolled loop. A direct speaking/processing→listening
+  transition may briefly finish consolidation; repeated listening updates must not
+  cancel that tail, and its `ended` path must pause at frame zero. Only processing
+  plays the expansion/ripple segment. Speaking pauses on the reached shape and uses
+  the bounded TTS RMS poll for live CSS feedback. Keep packet keyframes at the
+  controlled boundaries (0, 2.75, and 6.0 seconds) so repeated loop/return seeks do
+  not decode from the start of a distant GOP.
+- `beginSttCompute()` pauses video decode **and** hides the element during Vulkan
+  compute; `endSttCompute()` restores the phase, with a 6 s failsafe and next-listen
+  recovery. Hiding alone is insufficient because a hidden playing video may decode.
+- Chromium rejects a pending `video.play()` promise when an intentional pause wins the
+  race. Playback requests are generation-tagged so that expected rejection cannot
+  collapse the orb or prevent post-compute recovery.
+- Do not add `autoplay`/`loop`, reintroduce an always-on canvas/rAF loop, or remove the
+  compute pause/hide path without target-hardware stress testing. The build packages
+  only the runtime WebM and compact poster; the larger source GIF stays out of installers.
 
 ## Audio pipeline
 
@@ -92,14 +98,12 @@ Vulkan STT transcription runs** saturated the GPU and took the renderer down on
 
 ## LLM / coordinator
 
-- Routing contract ("one brain", user decision 2026-07-09 — supersedes the old
-  zero-tools invariant): `router.ts` is only a latency **fast-path** for
-  unmistakable tool asks; otherwise the **direct LLM is the front brain** and is
-  offered exactly ONE tool, `delegate_to_agent`, to hand a turn to the harness.
-  The `ARIA_AGENT_HANDOFF` prose sentinel is the fallback for models without
-  function calling; a server that 400s on `tools` is retried once without them.
-  Don't offer the direct LLM any other tools, and don't remove the delegate tool
-  "to restore the invariant" — `smoke:routing-invariant` encodes the new contract.
+- Routing contract: `router.ts` chooses the target before invocation. Unmistakable
+  agentic, real-time, or action requests go to the harness up front; ordinary chat
+  goes to the direct conversational LLM. The direct LLM receives no tools and no
+  prose handoff escape hatch. Forced `llm` mode is a deliberate direct-only user
+  override, not an implicit harness route. `smoke:routing-invariant` executes this
+  boundary and must remain aligned with `ralph/STATE.md`.
 - Harness replies get an `[agent tools used: …]` note appended in the **live
   history only** (not the persisted/spoken transcript) so the fast chat mode can
   see what the agent did. Anything scanning history text (e.g. the

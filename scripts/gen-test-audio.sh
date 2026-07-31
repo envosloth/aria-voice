@@ -4,9 +4,15 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VOICE="$HOME/.local/share/aria/models/en_US-lessac-medium.onnx"
+MODELS_DIR="${ARIA_MODELS_DIR:-$HOME/.local/share/aria/models}"
+VOICE="${ARIA_TEST_VOICE:-$MODELS_DIR/en_US-lessac-medium.onnx}"
 PIPER_PY="$ROOT/sidecars/tts/venv/bin/python"
 
+# Fresh setup downloads ARIA's default British voice, while older development
+# machines may still have the historical US fixture voice.
+if [ -z "${ARIA_TEST_VOICE:-}" ] && [ ! -f "$VOICE" ] && [ -f "$MODELS_DIR/en_GB-alan-medium.onnx" ]; then
+  VOICE="$MODELS_DIR/en_GB-alan-medium.onnx"
+fi
 if [ ! -f "$VOICE" ]; then echo "Voice model missing: $VOICE"; exit 1; fi
 if [ ! -x "$PIPER_PY" ]; then echo "TTS venv missing: $PIPER_PY"; exit 1; fi
 
