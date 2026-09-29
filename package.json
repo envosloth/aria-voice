@@ -12,7 +12,7 @@
   },
   "homepage": "https://github.com/envosloth/aria-voice#readme",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   },
   "scripts": {
     "build": "tsc && npm run build:preload && node scripts/copy-renderer.js",
@@ -21,7 +21,7 @@
     "dev": "npm run build && electron --no-sandbox --inspect dist/main/index.js",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "audit:runtime": "npm audit --omit=dev --audit-level=high",
+    "audit:runtime": "npm audit --audit-level=high",
     "smoke": "npm run build && node scripts/smoke-supervisor.js wakeword tts stt",
     "smoke:tts": "npm run build && node scripts/smoke-tts.js",
     "smoke:stt": "npm run build && bash scripts/gen-test-audio.sh && node scripts/smoke-stt.js",
@@ -46,7 +46,7 @@
     "smoke:ux": "node scripts/smoke-ux.js",
     "smoke:status-dots": "node scripts/smoke-status-dots.js",
     "smoke:update-progress": "node scripts/smoke-update-progress.js",
-    "smoke:all": "npm run smoke && npm run smoke:tts && npm run smoke:stt && npm run smoke:stt-turn && npm run smoke:release-whisper && npm run smoke:resilience && npm run smoke:pdeathsig && npm run smoke:memory && npm run smoke:llm && npm run smoke:llm-models && npm run smoke:router && npm run smoke:local-intents && npm run smoke:tunnel && npm run smoke:session-features && npm run smoke:hardware && npm run smoke:updater && npm run smoke:orb && npm run smoke:ui-stability && npm run smoke:ux && npm run smoke:status-dots && npm run smoke:update-progress && npm run smoke:models && npm run smoke:audio && npm run smoke:main-hardening && npm run smoke:supervisor-hardening && npm run smoke:sidecar-scripts && npm run smoke:ipc-hardening && npm run smoke:e2e",
+    "smoke:all": "npm run smoke && npm run smoke:tts && npm run smoke:stt && npm run smoke:stt-turn && npm run smoke:release-whisper && npm run smoke:resilience && npm run smoke:pdeathsig && npm run smoke:memory && npm run smoke:llm && npm run smoke:llm-models && npm run smoke:router && npm run smoke:local-intents && npm run smoke:tunnel && npm run smoke:session-features && npm run smoke:hardware && npm run smoke:updater && npm run smoke:orb && npm run smoke:ui-stability && npm run smoke:ux && npm run smoke:status-dots && npm run smoke:update-progress && npm run smoke:models && npm run smoke:audio && npm run smoke:main-hardening && npm run smoke:supervisor-hardening && npm run smoke:sidecar-scripts && npm run smoke:ipc-hardening && npm run smoke:turn-isolation && npm run smoke:model-startup && npm run smoke:e2e",
     "package:sidecars": "bash scripts/package-sidecars.sh",
     "package:whisper": "bash scripts/stage-whisper.sh",
     "dist": "npm run build && npm run package:sidecars && npm run package:whisper && electron-builder --config electron-builder.yml",
@@ -67,13 +67,15 @@
     "smoke:main-hardening": "npm run build && node scripts/smoke-main-hardening.js",
     "smoke:supervisor-hardening": "npm run build && node scripts/smoke-supervisor-hardening.js",
     "smoke:sidecar-scripts": "node scripts/smoke-sidecar-scripts.js",
-    "smoke:ipc-hardening": "npm run build && node scripts/smoke-ipc-hardening.js"
+    "smoke:ipc-hardening": "npm run build && node scripts/smoke-ipc-hardening.js",
+    "smoke:turn-isolation": "node scripts/smoke-turn-isolation.js",
+    "smoke:model-startup": "node scripts/smoke-model-startup.js"
   },
   "author": "ARIA Project <aria@localhost>",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "electron": "^40.0.0",
+    "electron": "42.11.8",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.1",
     "eslint": "^9.0.0",

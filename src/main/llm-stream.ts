@@ -244,13 +244,23 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
             .map((line) => line.slice(5).trimStart())
             .join('\n')
             .trim();
-          if (!payload || payload === '[DONE]') return;
+          if (!payload) return;
+          if (payload === '[DONE]') {
+            finishDone(fullText, usage);
+            destroyTransport();
+            return;
+          }
           if (Buffer.byteLength(payload) > maxSseRecordBytes) {
             finishError(`LLM SSE record exceeded the ${maxSseRecordBytes}-byte limit.`);
             return;
           }
           try {
             const parsed = JSON.parse(payload) as Record<string, any>;
+            if (parsed?.error) {
+              const message = typeof parsed.error === 'string' ? parsed.error : parsed.error.message;
+              finishError(`LLM stream failed: ${typeof message === 'string' ? message.slice(0, 200) : 'Provider reported an error.'}`);
+              return;
+            }
             for (const tool of extractTools(parsed)) {
               if (!seenTools.has(tool.key)) {
                 seenTools.add(tool.key);

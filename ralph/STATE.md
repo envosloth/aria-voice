@@ -4,7 +4,7 @@
 > Those files are now historical; this file is canonical going forward.
 
 ## Current Status (overwrite each iteration)
-Run #: 5 | Status: state-controlled particle orb and application-open STT/TTS/wake-word runtime implemented and committed on the v3.0.6 checkout; no release created | Verified?: build, lint, typecheck, focused orb/routing/packaging smokes, real TTS synthesis, real STT transcription, wake-word recognition, simultaneous sidecar lifecycle, and a live Electron application passed
+Run #: 6 | Status: local, uncommitted audit repairs on v3.0.6: turn/session/mic isolation, TTS provisioning, SSE/model-discovery correctness, Electron 42.11.8, single-writer release publication | Verified?: build/lint/typecheck/audit/boot and focused regressions passed; smoke:all reached final latency test (916 ms versus <900 ms), standalone rerun passed at 870 ms. Package-directory build passed with missing staged Whisper warning; no installer or release claim. Evidence and limitations: `AUDIT-2026-09-28.md`.
 Architecture invariant: routing decides delegation before invocation; the direct conversational LLM receives no tools or handoff sentinel.
 Current limitation: this Fedora checkout still lacks system `cmake`/`glslc` for the canonical Vulkan build script. A locally built whisper.cpp CPU fallback is installed and selected by the live power-saver preset; release packaging on the target Vulkan build hosts remains the ship gate.
 Next target: install/smoke the published packages on representative Linux, Windows, and macOS hosts.

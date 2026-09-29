@@ -81,6 +81,11 @@ const statusLabels = {
   tts: document.getElementById('status-tts-label'),
   wakeword: document.getElementById('status-wakeword-label'),
 };
+const statusTexts = {
+  stt: document.getElementById('status-stt-text'),
+  tts: document.getElementById('status-tts-text'),
+  wakeword: document.getElementById('status-wakeword-text'),
+};
 const sidecarDisplayNames = {
   stt: 'Speech to text', tts: 'Text to speech', wakeword: 'Wake word',
 };
@@ -161,12 +166,14 @@ function setUiStatus(text) {
 }
 
 function clearError() {
-  errorBanner.classList.remove('visible');
+  errorBanner.classList.remove('visible', 'warn');
   if (errorText) errorText.textContent = '';
 }
 
-function showError(msg) {
+function showError(msg, level) {
   if (errorText) errorText.textContent = msg;
+  errorBanner.classList.toggle('warn', level === 'warn');
+  errorBanner.setAttribute('role', level === 'warn' ? 'status' : 'alert');
   errorBanner.classList.add('visible');
 }
 if (errorDismiss) errorDismiss.addEventListener('click', clearError);
@@ -178,6 +185,12 @@ function setAppShellInert(inert) {
 function setSetupNeeded(needed) {
   document.body.dataset.setupNeeded = String(needed);
   setupConnectionButton.hidden = !needed;
+  const t = document.getElementById('empty-title'), s = document.getElementById('empty-sub');
+  if (t) t.textContent = needed ? 'Connect ARIA to an AI' : 'How can I help?';
+  if (s) s.textContent = needed
+    ? 'Speech runs on this computer. ARIA still needs an AI service to think with.'
+    : 'Talk or type — ARIA answers out loud and here.';
+  refreshActivity();
 }
 
 function modalFocusables(dialog) {
@@ -235,6 +248,7 @@ function speakOnly(text) {
 async function submitUserMessage(rawText, existingTurnId) {
   const text = (rawText || '').trim();
   if (!text) return;
+  bargeIn(); // every new submission supersedes prior text, speech and capture
   // A voice turn passes its existing id so STT->LLM->TTS stay one timeline; a
   // typed turn starts a fresh one.
   const turnId = existingTurnId || perf.newTurn('text');
@@ -529,6 +543,7 @@ async function handleScreenCommand(text) {
 // wake-word sidecar (and to STT while an utterance is active). Push-to-talk and
 // wake-word detection both open an STT utterance.
 let micStarted = false;
+let utteranceStartGeneration = 0;
 const micLifecycle = new window.AriaMicLifecycle.MicStartupGate();
 
 async function createMicGraph() {
@@ -637,14 +652,112 @@ function orbState(s) {
     speaking: 'ARIA is speaking.',
   }[s];
   if (description) setUiStatus(description);
+  refreshActivity();
 }
+
+// ---- Plain-language activity strip --------------------------------------
+// One place that says, in words, what ARIA is doing right now and what the user
+// can do about it. Derived from: orb phase, route target, tool use, sidecar
+// health, and setup state — no new state machine.
+const activityStrip = document.getElementById('activity-strip');
+const activityTitle = document.getElementById('activity-title');
+const activityDetail = document.getElementById('activity-detail');
+const activityStop = document.getElementById('activity-stop');
+const sidecarState = { stt: 'starting', tts: 'starting', wakeword: 'starting' };
+let activityRoute = null;   // { target, name } of the current turn
+let activityTool = null;    // last tool name used this turn
+let activityWakeEnabled = true;
+let activityWakePhrase = 'hey jarvis';
+async function loadWakeConfig() {
+  try {
+    activityWakeEnabled = !!(await aria.config.get('wakeword.enabled'));
+    const p = await aria.config.get('wakeword.phrase');
+    activityWakePhrase = String(p || 'hey_jarvis').replace(/_/g, ' ');
+    const hint = document.getElementById('empty-hint-wake');
+    if (hint) hint.textContent = activityWakeEnabled ? 'Say “' + activityWakePhrase + '”' : 'Wake word is off';
+    const desc = hint && hint.nextElementSibling;
+    if (desc) desc.textContent = activityWakeEnabled ? 'Hands-free. ARIA starts listening.' : 'Turn it on in Settings → Voice.';
+  } catch (e) {}
+  refreshActivity();
+}
+function wakePhraseText() { return activityWakePhrase; }
+function computeActivity() {
+  const setupNeeded = document.body.dataset.setupNeeded === 'true';
+  const who = activityRoute ? (activityRoute.target === 'harness' ? 'your agent' : 'the AI') : 'the AI';
+  switch (orbStateName) {
+    case 'listening':
+      return { phase: 'listening', title: 'Listening…', detail: pttActive ? 'Release the mic button when you are done.' : 'Just talk. I will stop when you pause.', busy: true };
+    case 'processing': {
+      const detail = activityTool ? `Using ${activityTool}…` : `Waiting for ${who} to answer.`;
+      return { phase: 'thinking', title: 'Thinking…', detail, busy: true };
+    }
+    case 'speaking':
+      return { phase: 'speaking', title: 'Speaking', detail: 'Say “' + wakePhraseText() + '” or press Esc to interrupt.', busy: true };
+    default: break;
+  }
+  if (setupNeeded) return { phase: 'idle', tone: 'warn', title: 'Not connected yet', detail: 'Add an AI connection to start chatting.' };
+  if (sidecarState.stt === 'unavailable' || sidecarState.tts === 'unavailable') {
+    const which = sidecarState.stt === 'unavailable' ? 'Speech recognition' : 'The voice';
+    return { phase: 'idle', tone: 'bad', title: which + ' is offline', detail: 'Typing still works. ARIA is restarting it.' };
+  }
+  if (sidecarState.stt === 'starting' || sidecarState.tts === 'starting') {
+    return { phase: 'idle', tone: 'warn', title: 'Getting ready…', detail: 'Loading voice models. You can already type.' };
+  }
+  if (activityWakeEnabled && sidecarState.wakeword === 'ready') {
+    return { phase: 'idle', title: 'Ready', detail: 'Say “' + wakePhraseText() + '”, hold the mic, or type.' };
+  }
+  return { phase: 'idle', title: 'Ready', detail: 'Hold the mic to talk, or type.' };
+}
+function refreshActivity() {
+  if (!activityStrip) return;
+  if (orbStateName === 'idle') { activityRoute = activityRoute && currentAssistantMsg ? activityRoute : null; activityTool = null; }
+  const a = computeActivity();
+  activityStrip.dataset.phase = a.phase;
+  activityStrip.dataset.tone = a.tone || 'ok';
+  if (activityTitle.textContent !== a.title) activityTitle.textContent = a.title;
+  if (activityDetail.textContent !== a.detail) activityDetail.textContent = a.detail;
+  activityStop.hidden = !a.busy || a.phase === 'listening';
+}
+function stopEverything() {
+  bargeIn();
+  orbState('idle');
+  try { window.AriaOrb?.endStt?.(); } catch (e) {}
+}
+if (activityStop) activityStop.addEventListener('click', stopEverything);
+loadWakeConfig();
+refreshActivity();
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
+  if (settingsOverlay.classList.contains('visible') || document.getElementById('onboard-overlay')?.classList.contains('visible')) return;
+  if (orbStateName === 'idle') return;
+  e.preventDefault();
+  stopEverything();
+});
 
 // Barge-in: the user started talking to ARIA (wake word, global/in-window
 // shortcut, or push-to-talk) while it was still thinking or speaking. Stop the
 // voice, abort the in-flight reply on the main side, and discard any
 // half-streamed text so the correction starts a clean turn. This is what lets
 // you cut ARIA off mid-answer with "hey jarvis…" to redirect it.
+function abandonVoiceTurn() {
+  utteranceStartGeneration++;
+  const turnId = currentVoiceTurnId;
+  currentVoiceTurnId = null; // reject callbacks before asking main to end capture
+  if (listening && turnId) aria.stt.end(turnId);
+  listening = false;
+  pttActive = false;
+  vadActive = false;
+  vad = null;
+  clearTimeout(vadSafetyTimer);
+  clearTimeout(noSpeechTimer); noSpeechTimer = null;
+  micBtn.classList.remove('listening');
+  micBtn.setAttribute('aria-pressed', 'false');
+  partialEl.textContent = '';
+  try { window.AriaOrb?.endStt?.(); window.AriaOrb?.endSttCompute?.(); } catch (e) {}
+}
+
 function bargeIn() {
+  abandonVoiceTurn();
   cancelThinkingHold();
   try { aria.llm.cancel(currentTurnId || '', currentGenerationId); } catch (e) {}   // stop generating server-side
   // Invalidate a submit that is still awaiting a screen frame as well as any
@@ -665,11 +778,16 @@ function bargeIn() {
   pendingRoute = null;
 }
 
-function beginUtterance(opts) {
+async function beginUtterance(opts) {
   // Duplicate wake detections while the mic is already open must not reset the
   // live buffer or create overlapping STT turns.
   if (listening) return;
   bargeIn(); // interrupt whatever ARIA is currently saying/generating
+  const startupGeneration = utteranceStartGeneration;
+  if (opts && opts.ptt) pttActive = true;
+  if (!micStarted) await startMicCapture();
+  if (startupGeneration !== utteranceStartGeneration) return;
+  if (!micStarted) { pttActive = false; orbState('idle'); return; }
   const turnId = perf.newTurn('voice');
   currentTurnId = turnId;
   currentVoiceTurnId = turnId;
@@ -768,12 +886,12 @@ function maybeStartFollowup() {
 let pttActive = false;
 function startPushToTalk() {
   if (listening) return; // a hands-free turn is already open; leave it to VAD
-  beginUtterance();
-  if (listening) pttActive = true;
+  return beginUtterance({ ptt: true });
 }
 function endPushToTalk() {
   if (!pttActive) return;
   pttActive = false;
+  utteranceStartGeneration++; // release also cancels a pending permission prompt
   endUtterance();
 }
 micBtn.addEventListener('mousedown', startPushToTalk);
@@ -871,6 +989,8 @@ let pendingRoute = null;
 aria.llm.onRoute((info) => {
   if (!info || info.turnId !== currentTurnId || info.generationId !== currentGenerationId) return;
   pendingRoute = info;
+  activityRoute = info;
+  refreshActivity();
   // Only the agent harness runs tools long enough to need a spoken "hold on".
   // Arm the filler for it; the fast LLM path cancels the hold so it stays quiet
   // until it actually replies. (onRoute always arrives after armThinkingHold ran
@@ -1057,6 +1177,7 @@ function resetTtsStream() { ttsStreamBuf = ''; ttsTurnSpeaking = false; }
 aria.llm.onTool((info) => {
   if (!info || info.turnId !== currentTurnId || info.generationId !== currentGenerationId) return;
   try { addToolChip(info); } catch (e) {}
+  if (info.name) { activityTool = String(info.name).slice(0, 40); refreshActivity(); }
 });
 
 aria.llm.onToken((info) => {
@@ -1437,6 +1558,10 @@ aria.sidecar.onStatus(({ name, status }) => {
   dot.className = 'status-dot ' + cls;
   dot.title = message;
   if (statusLabel) statusLabel.textContent = message;
+  sidecarState[name] = state;
+  const statusText = statusTexts[name];
+  if (statusText) statusText.textContent = { ready: 'Ready', starting: 'Starting…', unavailable: 'Offline' }[state];
+  refreshActivity();
 });
 
 aria.sidecar.onError(({ name, status, detail }) => {
@@ -1447,8 +1572,8 @@ aria.sidecar.onError(({ name, status, detail }) => {
   const { backend, safe } = await aria.secure.getBackend();
   if (!safe) {
     showError(
-      `Security warning: secret storage backend is "${backend}". ` +
-      'API keys will not be securely stored. Install gnome-keyring for secure storage.'
+      'Heads up: this computer has no secure keychain, so API keys are saved unencrypted. ' +
+      'Install gnome-keyring to protect them.', 'warn'
     );
   }
 })();
@@ -2524,6 +2649,7 @@ settingsSave.addEventListener('click', async () => {
     await aria.config.set('tts.voice', ttsVoice);
     await aria.config.set('wakeword.enabled', cfg.wwEnabled.checked);
     await aria.config.set('wakeword.phrase', cfg.wwPhrase.value.trim());
+    loadWakeConfig();
     if (cfg.conversationEnabled) {
       conversationMode = cfg.conversationEnabled.checked;
       await aria.config.set('conversation.enabled', conversationMode);
@@ -2572,12 +2698,29 @@ const onb = {
   llmKey: document.getElementById('onb-llm-key'),
   llmTest: document.getElementById('onb-llm-test'),
   llmTestResult: document.getElementById('onb-llm-test-result'),
-  mic: document.getElementById('onb-mic'),
-  micResult: document.getElementById('onb-mic-result'),
+  llmKeyNote: document.getElementById('onb-llm-key-note'),
+  llmDetails: document.getElementById('onb-llm-details'),
+  harnessDetails: document.getElementById('onb-harness-details'),
+  status: document.getElementById('onb-status'),
   wake: document.getElementById('onb-wake'),
 };
 let onbStep = 0;
-const ONB_LAST = 5;
+const ONB_LAST = 0; // single screen: provider + key, everything else optional
+const isLoopbackEndpoint = (u) => /^https?:\/\/(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:|\/|$)/i.test(u || '');
+let setupToastTimer = null;
+function showSetupToast(text) {
+  const el = document.getElementById('setup-toast');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.add('visible');
+  clearTimeout(setupToastTimer);
+  setupToastTimer = setTimeout(() => el.classList.remove('visible'), 7000);
+}
+function onbSetStatus(msg, cls) {
+  if (!onb.status) return;
+  onb.status.textContent = msg || '';
+  onb.status.className = 'onb-status' + (cls ? ' ' + cls : '');
+}
 
 // Build step dots + provider dropdown
 onb.steps.forEach(() => {
@@ -2593,6 +2736,11 @@ for (const h of window.AriaHarnesses.HARNESSES) {
 
 // Direct conversational-LLM provider step: same preset list as Settings. Picking
 // a provider pre-fills its endpoint + default model (both stay editable).
+{
+  const ph = document.createElement('option');
+  ph.value = ''; ph.textContent = 'Choose a provider…';
+  onb.llmProvider.appendChild(ph);
+}
 for (const p of window.AriaHarnesses.PROVIDERS) {
   const o = document.createElement('option');
   o.value = p.id; o.textContent = p.name;
@@ -2600,11 +2748,15 @@ for (const p of window.AriaHarnesses.PROVIDERS) {
 }
 function onbApplyLlmProvider() {
   const p = window.AriaHarnesses.providerById(onb.llmProvider.value);
-  if (!p) return;
+  if (!p) { onb.llmEndpoint.value = ''; onb.llmModel.value = ''; return; }
   // Local servers (Ollama/LM Studio/vLLM) ignore the key — say so explicitly.
   onb.llmKey.placeholder = p.local ? 'not required for local servers' : (p.keyHint || 'optional');
+  if (onb.llmKeyNote) onb.llmKeyNote.textContent = p.local ? '(not needed for local servers)' : '';
   onb.llmEndpoint.value = p.endpoint || '';
   onb.llmModel.value = p.defaultModel || '';
+  // Custom has no preset URL to fall back on, so surface the field.
+  if (onb.llmDetails && p.id === 'custom') onb.llmDetails.open = true;
+  onbSetStatus('');
 }
 onb.llmProvider.addEventListener('change', onbApplyLlmProvider);
 
@@ -2616,8 +2768,8 @@ onb.llmTest.addEventListener('click', async () => {
   onb.llmTest.disabled = true;
   onb.llmTestResult.textContent = 'Testing…';
   onb.llmTestResult.className = '';
-  if (onb.llmKey.value.trim()) await aria.secure.set('llm-api-key', onb.llmKey.value.trim());
-  const apiKey = await aria.secure.get('llm-api-key');
+  // Test with the key as typed — nothing is stored until the user presses Start.
+  const apiKey = onb.llmKey.value.trim() || await aria.secure.get('llm-api-key');
   const r = await aria.llm.test({ endpoint, model: onb.llmModel.value.trim(), apiKey });
   if (r.ok) { onb.llmTestResult.textContent = '✓ Connected'; onb.llmTestResult.className = 'ok-msg'; }
   else { onb.llmTestResult.textContent = '✕ ' + (r.error || 'failed'); onb.llmTestResult.className = 'err-msg'; }
@@ -2658,11 +2810,10 @@ function onbRender() {
   Array.from(onb.dots.children).forEach((d, i) => {
     d.className = 'dot' + (i === onbStep ? ' active' : i < onbStep ? ' done' : '');
   });
-  const current = onb.steps.find((s) => Number(s.dataset.step) === onbStep);
-  const title = current && current.querySelector('h2');
-  if (onb.progress) onb.progress.textContent = `Step ${onbStep + 1} of ${ONB_LAST + 1}: ${title ? title.textContent.trim() : 'Setup'}`;
-  onb.back.style.visibility = onbStep === 0 ? 'hidden' : 'visible';
-  onb.next.textContent = onbStep === ONB_LAST ? 'Finish' : 'Next';
+  // One screen needs no "Step 1 of 1"; keep the live region for multi-step reuse.
+  if (onb.progress) onb.progress.textContent = ONB_LAST > 0 ? `Step ${onbStep + 1} of ${ONB_LAST + 1}` : '';
+  onb.back.hidden = onbStep === 0;
+  onb.next.textContent = onbStep === ONB_LAST ? 'Start' : 'Next';
 }
 
 function openOnboarding() {
@@ -2700,54 +2851,89 @@ onb.test.addEventListener('click', async () => {
   onb.test.disabled = true;
   onb.testResult.textContent = 'Testing…';
   onb.testResult.className = '';
-  if (onb.key.value.trim()) await aria.secure.set('harness-api-key', onb.key.value.trim());
-  const apiKey = await aria.secure.get('harness-api-key');
+  const apiKey = onb.key.value.trim() || await aria.secure.get('harness-api-key');
   const r = await aria.llm.test({ endpoint: onbResolveEndpoint(), model: onb.model.value.trim(), apiKey });
   if (r.ok) { onb.testResult.textContent = '✓ Connected'; onb.testResult.className = 'ok-msg'; }
   else { onb.testResult.textContent = '✕ ' + (r.error || 'failed'); onb.testResult.className = 'err-msg'; }
   onb.test.disabled = false;
 });
 
-onb.mic.addEventListener('click', async () => {
-  onb.mic.disabled = true;
-  await startMicCapture();
-  if (micStarted) { onb.micResult.textContent = '✓ Microphone enabled'; onb.micResult.className = 'ok-msg'; }
-  else { onb.micResult.textContent = '✕ Not granted — you can type instead'; onb.micResult.className = 'err-msg'; }
-  onb.mic.disabled = false;
-});
-
-async function onbFinish() {
-  // Onboarding configures the agent harness (tool-using tasks) and/or a direct
-  // conversational LLM provider — either or both. Only persist a target whose
-  // endpoint was actually filled in, so skipping one doesn't overwrite the other.
-  const harnessEp = onbResolveEndpoint();
-  if (harnessEp) {
-    await aria.config.set('harness.id', onb.harness.value);
-    await aria.config.set('harness.endpoint', harnessEp);
-    await aria.config.set('harness.model', onb.model.value.trim());
-    if (onb.key.value.trim()) await aria.secure.set('harness-api-key', onb.key.value.trim());
-  }
-  const llmEp = onb.llmEndpoint.value.trim();
-  if (llmEp) {
-    await aria.config.set('llm.endpoint', llmEp);
-    await aria.config.set('llm.model', onb.llmModel.value.trim());
-    if (onb.llmKey.value.trim()) await aria.secure.set('llm-api-key', onb.llmKey.value.trim());
-  }
-  const hasConnection = Boolean(harnessEp || llmEp);
+let onbFinishing = false;
+async function persistHarnessConnection(id, endpoint, model, apiKey) {
+  await aria.config.set('harness.id', id);
+  await aria.config.set('harness.endpoint', endpoint);
+  await aria.config.set('harness.model', model || '');
+  if (apiKey) await aria.secure.set('harness-api-key', apiKey);
+}
+async function completeOnboarding(hasConnection) {
   await aria.config.set('ui.setup-needed', !hasConnection);
   setSetupNeeded(!hasConnection);
   await aria.config.set('ui.onboarded', true);
   closeOnboarding();
 }
 
+async function onbFinish() {
+  if (onbFinishing) return;
+  onbFinishing = true;
+  onb.next.disabled = true;
+  try {
+    // A harness only counts when the user opened its section (or auto-detect
+    // filled it); its preset endpoint is otherwise just a dropdown default.
+    const harnessEp = onb.harnessDetails.open ? onbResolveEndpoint() : '';
+    const llmEp = onb.llmEndpoint.value.trim();
+    const llmKey = onb.llmKey.value.trim();
+    if (!llmEp && !harnessEp) {
+      onbSetStatus('Pick a language model above, or choose "Skip for now".', 'err-msg');
+      return;
+    }
+    if (llmEp && !harnessEp && !isLoopbackEndpoint(llmEp) && !llmKey && !(await aria.secure.get('llm-api-key'))) {
+      onbSetStatus('Paste your API key to continue — or pick a local provider like Ollama.', 'err-msg');
+      onb.llmKey.focus();
+      return;
+    }
+    if (harnessEp) await persistHarnessConnection(onb.harness.value, harnessEp, onb.model.value.trim(), onb.key.value.trim());
+    if (llmEp) {
+      await aria.config.set('llm.endpoint', llmEp);
+      await aria.config.set('llm.model', onb.llmModel.value.trim());
+      if (llmKey) await aria.secure.set('llm-api-key', llmKey);
+    }
+    await completeOnboarding(true);
+  } catch (e) {
+    const msg = String((e && e.message) || e);
+    onbSetStatus(/safeStorage|keyring/i.test(msg)
+      ? "Your system keyring is locked or not running, so the key can't be stored securely. Unlock it and press Start again."
+      : 'Could not save: ' + msg, 'err-msg');
+  } finally {
+    onbFinishing = false;
+    onb.next.disabled = false;
+  }
+}
+
 onb.next.addEventListener('click', onbNext);
 onb.back.addEventListener('click', onbBack);
 onb.skip.addEventListener('click', async () => {
-  await aria.config.set('ui.setup-needed', true);
-  setSetupNeeded(true);
-  await aria.config.set('ui.onboarded', true);
-  closeOnboarding();
+  await completeOnboarding(false);
 });
+// Enter in a field starts ARIA instead of doing nothing.
+for (const el of [onb.llmKey, onb.llmEndpoint, onb.llmModel, onb.key, onb.endpoint, onb.model]) {
+  if (el) el.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); onbNext(); } });
+}
+
+// If a local harness (Hermes, OpenClaw) already wrote its gateway URL + key,
+// connect to it with zero questions.
+async function onbAutoConnect() {
+  for (const id of ['hermes', 'openclaw']) {
+    const h = window.AriaHarnesses.byId(id);
+    if (!h || !h.detect) continue;
+    let r;
+    try { r = await aria.llm.detectHarness(id); } catch { continue; }
+    if (r && r.found && r.endpoint && r.apiKey) {
+      await persistHarnessConnection(id, r.endpoint, r.model || h.defaultModel || '', r.apiKey);
+      return h;
+    }
+  }
+  return null;
+}
 
 (async () => {
   const onboarded = await aria.config.get('ui.onboarded');
@@ -2759,10 +2945,21 @@ onb.skip.addEventListener('click', async () => {
   const phrase = (await aria.config.get('wakeword.phrase')) || 'hey_jarvis';
   onb.wake.textContent = '"' + phrase.replace(/_/g, ' ') + '"';
   if (!onboarded) {
+    if (!configured) {
+      const auto = await onbAutoConnect();
+      if (auto) {
+        await aria.config.set('ui.setup-needed', false);
+        setSetupNeeded(false);
+        await aria.config.set('ui.onboarded', true);
+        showSetupToast(`Connected to ${auto.name} on this machine. Change it any time in Settings.`);
+        return;
+      }
+    }
     onbApplyHarness();
-    // Default the LLM provider to "custom" so the step starts empty (and stays
-    // optional — a blank endpoint is skipped on finish). Picking a preset fills it.
-    onb.llmProvider.value = 'custom';
+    // Start on the "Choose a provider…" placeholder; picking a preset fills the
+    // endpoint and model, so the user normally only pastes a key.
+    onb.llmProvider.value = '';
+    onbApplyLlmProvider();
     onbStep = 0;
     onbRender();
     openOnboarding();

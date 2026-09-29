@@ -1,0 +1,1319 @@
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 3ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+
+> aria@3.0.6 lint
+> eslint src/
+
+
+> aria@3.0.6 typecheck
+> tsc --noEmit
+
+
+> aria@3.0.6 audit:runtime
+> npm audit --audit-level=high
+
+found 0 vulnerabilities
+
+> aria@3.0.6 smoke:all
+> npm run smoke && npm run smoke:tts && npm run smoke:stt && npm run smoke:stt-turn && npm run smoke:release-whisper && npm run smoke:resilience && npm run smoke:pdeathsig && npm run smoke:memory && npm run smoke:llm && npm run smoke:llm-models && npm run smoke:router && npm run smoke:local-intents && npm run smoke:tunnel && npm run smoke:session-features && npm run smoke:hardware && npm run smoke:updater && npm run smoke:orb && npm run smoke:ui-stability && npm run smoke:ux && npm run smoke:status-dots && npm run smoke:update-progress && npm run smoke:models && npm run smoke:audio && npm run smoke:main-hardening && npm run smoke:supervisor-hardening && npm run smoke:sidecar-scripts && npm run smoke:ipc-hardening && npm run smoke:turn-isolation && npm run smoke:model-startup && npm run smoke:e2e
+
+
+> aria@3.0.6 smoke
+> npm run build && node scripts/smoke-supervisor.js wakeword tts stt
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 2ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+
+=== Starting sidecars: wakeword, tts, stt ===
+
+[wakeword] started: pid=1110320
+[tts] started: pid=1110321
+[stt] started: pid=1110322
+
+=== Waiting 8s for init + heartbeats ===
+
+[stt] info: STT backend: Vulkan GPU
+[stt] initialized: backend=vulkan mode=server(warm) model=ggml-base.en.bin
+[stt] ready
+[wakeword] initialized: threshold=0.4 models=[hey_jarvis_v0.1.onnx]
+[wakeword] ready
+[tts] initialized: engine=piper voice=en_GB-alan-medium.onnx
+[tts] ready
+
+=== Status before shutdown ===
+  wakeword: pid=1110320 alive=true ready=true initialized=true
+  tts: pid=1110321 alive=true ready=true initialized=true
+  stt: pid=1110322 alive=true ready=true initialized=true
+
+=== Testing message send ===
+  wakeword: sendToSidecar -> true
+  tts: sendToSidecar -> true
+  stt: sendToSidecar -> true
+
+=== Calling stopAll() ===
+
+=== Orphan check ===
+  wakeword: pid=1110320 alive_after_stop=false OK
+  tts: pid=1110321 alive_after_stop=false OK
+  stt: pid=1110322 alive_after_stop=false OK
+
+=== RESULT: PASS (orphans=0) ===
+
+> aria@3.0.6 smoke:tts
+> npm run build && node scripts/smoke-tts.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 3ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+=== Starting TTS sidecar ===
+[tts] started: pid=1110700
+[tts] initialized: engine=piper voice=en_GB-alan-medium.onnx
+[tts] ready
+
+=== Sending synthesize request ===
+  <- tts_chunk #0 size=60928 sr=22050
+  <- tts_chunk #1 size=99328 sr=22050
+  <- tts_chunk #2 size=64512 sr=22050
+  <- tts_done
+
+=== Results ===
+  chunks announced (stdout): 3
+  bytes announced (stdout):  224768
+  PCM bytes received (UDS):  224768
+  tts_done received:         true
+  elapsed:                   601ms
+  audio duration:            5.10s
+
+=== Speed control (set_speed) ===
+  <- tts_chunk #0 size=98304 sr=22050
+  <- tts_chunk #1 size=164352 sr=22050
+  <- tts_chunk #2 size=103424 sr=22050
+  <- tts_done
+  normal(1.0): 224768  slow(0.6): 366080
+  slower => more audio: true
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:stt
+> npm run build && bash scripts/gen-test-audio.sh && node scripts/smoke-stt.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 3ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+Generated /tmp/stt_test_16k.wav (16kHz mono)
+Loaded PCM: 76906 bytes (2.40s @ 16kHz)
+
+=== Starting STT sidecar ===
+[stt] started: pid=1111018
+[stt] info: STT backend: Vulkan GPU
+[stt] initialized: backend=vulkan mode=server(warm) model=ggml-base.en.bin
+[stt] ready
+
+=== Streaming PCM over socket, then transcribe control over stdin ===
+[stt] info: transcribe 315ms for 2403ms audio (vulkan)
+  <- stt_result: "testing 1 2 3 4 5"
+
+=== Results ===
+  transcription: "testing 1 2 3 4 5"
+  elapsed: 424ms
+  expected numbers found: 5/5 [one, two, three, four, five]
+  contains "testing": true
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:stt-turn
+> npm run build && node scripts/smoke-stt-turn.js && python3 scripts/smoke-stt-control.py
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 2ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+[startup-audio-is-buffered] PASS
+[end-waits-for-start-ack] PASS
+[ack-flushes-startup-audio] PASS
+[ack-transcribes-complete-audio] PASS
+[current-result-accepted-once] PASS
+[duplicate-result-rejected] PASS
+[stale-result-rejected] PASS
+[current-start-ack-accepted] PASS
+[ready-end-transcribes-once] PASS
+[second-end-is-noop] PASS
+[new-result-accepted] PASS
+[renderer-guards-repeated-begin] PASS
+[duplicate-wake-does-not-chime] PASS
+
+=== RESULT: PASS ===
+[start-clears-old-audio] PASS
+[start-acks-turn-id] PASS
+[transcribe-waits-for-complete-audio] PASS — got [b'abcdef']
+[wait-adds-no-fixed-latency] PASS — waited 20.2ms
+[result-carries-turn-id] PASS — got {'type': 'stt_result', 'utterance_id': 'turn-1', 'text': 'clear speech', 'transcribe_ms': 0}
+[server-suppresses-nonspeech-tokens] PASS
+[cli-suppresses-nonspeech-tokens] PASS
+[server-waits-for-http-readiness] PASS — vulkan line + open port must not count as ready
+[warm-server-keeps-cli-fallback] PASS
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:release-whisper
+> node scripts/smoke-release-whisper.js
+
+[linux-installs-glslc] PASS — run: sudo apt-get update && sudo apt-get install -y rpm vulkan-tools libvulkan-dev mesa-vulkan-drivers glslang-tools glslc
+[whisper-build-is-release-fatal] PASS
+[whisper-stage-is-release-fatal] PASS
+[linux-build-preflight-requires-glslc] PASS
+[mac-arm64-build-is-native] PASS
+[mac-x64-build-is-native] PASS
+[mac-targets-do-not-cross-package-native-resources] PASS
+[mac-update-metadata-is-merged] PASS
+[mac-disables-broken-native-probe] PASS
+[mac-metadata-lists-both-architectures] PASS
+[mac-metadata-prefers-native-arm-update] PASS
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:resilience
+> npm run build && node scripts/smoke-resilience.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 3ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+=== Test 1: crash recovery ===
+
+[wakeword] started: pid=1111321
+[wakeword] initialized: threshold=0.4 models=[hey_jarvis_v0.1.onnx]
+[wakeword] ready
+
+Initial pid=1111321. Killing it (SIGKILL)...
+
+[wakeword] exited: code=null signal=SIGKILL
+[wakeword] restarting: attempt 1/5 in 1000ms
+[wakeword] started: pid=1111372
+[wakeword] initialized: threshold=0.4 models=[hey_jarvis_v0.1.onnx]
+[wakeword] ready
+
+  saw 'exited': true
+  saw 'restarting': true
+  restarted with new pid: true (1111321 -> 1111372)
+
+  Test 1: PASS
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:pdeathsig
+> npm run build && node scripts/smoke-pdeathsig.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 12ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+sidecar pid=1111994, parent pid=1111987
+SIGKILL the parent (simulating a hard crash)...
+sidecar alive after parent SIGKILL: false (expect false)
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:memory
+> npm run build && node scripts/smoke-memory.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 14ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+=== Starting wakeword with default RSS ceiling ===
+
+[wakeword] started: pid=1112323
+[wakeword] initialized: threshold=0.4 models=[hey_jarvis_v0.1.onnx]
+[wakeword] ready
+
+Initial pid=1112323. Lowering ceiling to 1MB; waiting for watchdog...
+
+[wakeword] memory-exceeded: RSS 184MB > limit 1MB
+[wakeword] exited: code=null signal=SIGTERM
+[wakeword] restarting: attempt 1/5 in 1000ms
+[wakeword] started: pid=1112439
+[wakeword] initialized: threshold=0.4 models=[hey_jarvis_v0.1.onnx]
+[wakeword] ready
+
+  saw 'memory-exceeded': true
+  restarted with new pid: true (1112323 -> 1112439)
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:llm
+> npm run build && node scripts/smoke-llm.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 4ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+[stream]    tokens=["Hello",", ","world","!"] done="Hello, world!" -> PASS
+[http-error] error="LLM returned 401: {"error":"invalid api key"}" -> PASS
+[conn-fail]  error="LLM connection failed: connect ECONNREFUSED 127.0.0.1:1. Check endpoint and network." -> PASS
+[no-endpoint] error="No LLM endpoint configured. Go to Settings to add one." -> PASS
+[tools]     tools=["web_search","open_url"] done="The weather is sunny." -> PASS
+[usage]     usage={"prompt":12,"completion":5,"total":17} -> PASS
+[trailing]  done="tail" terminalCalls=1 -> PASS
+[aborted]   error="LLM response was aborted before completion." calls=1 -> PASS
+[stalled]   error="LLM request timed out after 1s." calls=1 -> PASS
+[record-cap] error="LLM SSE record exceeded the 128-byte limit." -> PASS
+[text-cap]   error="LLM completion exceeded the 32-character limit." -> PASS
+[https-guard] error="Refusing to send credentials to a non-loopback HTTP endpoint. Use HTTPS." -> PASS
+[deadline]  error="LLM request exceeded its overall deadline of 1s." -> PASS
+[response-cap] error="LLM response exceeded the 128-byte limit." -> PASS
+[done-open] {"name":"done-open","tokens":["complete"],"tools":[],"done":"complete","error":null,"usage":{"prompt":0,"completion":0,"total":7},"terminalCalls":1} -> PASS
+[stream-error] {"name":"stream-error","tokens":[],"tools":[],"done":null,"error":"LLM stream failed: Provider overloaded","usage":null,"terminalCalls":1} -> PASS
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:llm-models
+> npm run build && node scripts/smoke-llm-models.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 2ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+[norm.host-only] PASS
+[norm.v1-base] PASS
+[norm.full-chat] PASS
+[norm.trailing-slash] PASS
+[norm.already-models] PASS
+[norm.garbage] PASS
+[pick.default-wins] PASS
+[pick.latest-over-auto] PASS
+[pick.alphabetical] PASS
+[pick.empty] PASS
+[pick.non-strings] PASS
+[list.ok] PASS
+[list.deduped] PASS
+[list.recommended] PASS
+[list.models-shape] PASS
+[list.top-level-array] PASS
+[list.split-utf8] PASS
+[list.5xx-surfaced] PASS
+[list.non-json] PASS
+[list.conn-fail] PASS
+[list.remote-http-key-refused] PASS
+
+ALL PASS
+
+> aria@3.0.6 smoke:router
+> npm run build && node scripts/smoke-router.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 4ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+[code] harness == PASS
+[run] harness == PASS
+[file] harness == PASS
+[git] harness == PASS
+[chat] llm == PASS
+[weather] llm == PASS
+[explicit-harness] harness == PASS
+[explicit-llm] llm == PASS
+[agent-prefix] harness == PASS
+[only-harness] harness == PASS
+[only-llm] llm == PASS
+[mode-harness] harness == PASS
+[mode-llm] llm == PASS
+[none] llm == PASS
+[weather-realtime] harness == PASS
+[news] harness == PASS
+[lookup] harness == PASS
+[sticky-followup] harness == PASS
+[sticky-yes] harness == PASS
+[sticky-escape] llm == PASS
+[no-sticky-long] llm == PASS
+[llm-no-sticky] llm == PASS
+[tool-after-llm-chat] harness == PASS
+[action-after-llm-chat] harness == PASS
+[lookup-after-llm-chat] harness == PASS
+[answer-to-question] harness == PASS
+[what-time] harness == PASS
+[todays-date] harness == PASS
+[rain-tomorrow] harness == PASS
+[set-timer] harness == PASS
+[set-alarm] harness == PASS
+[play-music] harness == PASS
+[open-app] harness == PASS
+[remind] harness == PASS
+[bitcoin-now] harness == PASS
+[directions] harness == PASS
+[latest] harness == PASS
+[send-text] harness == PASS
+[calendar] harness == PASS
+[nearby] harness == PASS
+[local-fireworks-yesterday] harness == PASS
+[sports-last-night] harness == PASS
+[most-recent-version] harness == PASS
+[open-now] harness == PASS
+[joke] llm == PASS
+[capital] llm == PASS
+[how-today] llm == PASS
+[opinion] llm == PASS
+[explain] llm == PASS
+[in-order-to] llm == PASS
+[translate] llm == PASS
+[convert] llm == PASS
+[how-many-units] llm == PASS
+[fix-sleep] llm == PASS
+[test-knowledge] llm == PASS
+[story] llm == PASS
+[open-door] harness == PASS
+[run-tests] harness == PASS
+[fix-bug-file] harness == PASS
+[live-currency] harness == PASS
+[calc-tip] harness == PASS
+[do-you-know-time] harness == PASS
+[tell-me-time] harness == PASS
+[current-time] harness == PASS
+[current-date] harness == PASS
+[go-to-wiki] harness == PASS
+[set-brightness] harness == PASS
+[start-music] harness == PASS
+[toggle-wifi] harness == PASS
+[change-volume] harness == PASS
+[who-is-winning] harness == PASS
+[latest-score] harness == PASS
+[vd-whats-on-screen] low == PASS
+[vd-what-am-i-looking-at] low == PASS
+[vd-what-app] low == PASS
+[vd-describe-screen] low == PASS
+[vd-read-error] high == PASS
+[vd-read-code] high == PASS
+[vd-summarize-doc] high == PASS
+[vd-default-high] high == PASS
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:local-intents
+> npm run build && node scripts/smoke-local-intents.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 3ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+[time-basic] PASS
+[time-current] PASS
+[time-know] PASS
+[time-tell] PASS
+[time-now] PASS
+[time-hey] PASS
+[date-basic] PASS
+[date-day] PASS
+[date-todays] PASS
+[time-tokyo] PASS
+[time-agent] PASS
+[how-are-you] PASS
+[time-history] PASS
+[timer-10m] PASS
+[timer-90s] PASS
+[timer-adj] PASS
+[timer-compound] PASS
+[timer-word] PASS
+[timer-vague] PASS
+[alarm-7am] PASS
+[alarm-730pm] PASS
+[alarm-wake] PASS
+[alarm-bare-8] PASS
+[remind-in] PASS
+[remind-at] PASS
+[remind-noon] PASS
+[remind-vague] PASS
+[remind-in-in] PASS
+[remind-at-at] PASS
+[time-hey-aria] PASS
+[time-jarvis] PASS
+[cancel-timer] PASS
+[cancel-alarms] PASS
+[list-timers] PASS
+[list-reminders] PASS
+[answer-time] PASS
+[answer-date] PASS
+[clock-noon] PASS
+[dur-half-hour] PASS
+[humanize-1h] PASS
+[next-7am-tomorrow] PASS
+[next-bare-8-tonight] PASS
+[timer-persisted] PASS
+[timer-fired] PASS
+[timer-removed] PASS
+[cancel-kind] PASS
+[cancel-all] PASS
+[list-empty] PASS
+[missed-announced] PASS
+[missed-removed] PASS
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:tunnel
+> npm run build && node scripts/smoke-tunnel.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 2ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+[argv.hasForward] PASS
+[argv.noZeroPort] PASS
+[argv.hostLast] PASS
+[argv.batchMode] PASS
+[argv.exitOnForwardFailure] PASS
+[argv.rejects(0)] PASS
+[argv.rejects(-1)] PASS
+[argv.rejects(1.5)] PASS
+[argv.rejects(NaN)] PASS
+[argv.identity] PASS
+[argv.sshPort] PASS
+[argv.noKeyByDefault] PASS
+[parse.opensshRealFormat] PASS
+[parse.colonForm] PASS
+[parse.ipv6] PASS
+[parse.noise] PASS
+[parse.empty] PASS
+[startGate.exists] PASS
+[startGate.singleFlight] PASS
+[startGate.stopInvalidatesPending] PASS
+[startGate.newGenerationAfterStop] PASS
+[startGate.claimCurrent] PASS
+[config.localPortDefault0] PASS
+[hermes.defaultModel] PASS
+[remote.hermesQuickButton] PASS
+[remote.rawCommandBlankHint] PASS
+[remote.hermesDefaultsFunction] PASS
+[remote.hermesPort8642] PASS
+[remote.connectEnablesToggle] PASS
+[tunnel.httpProbeBeforeConnected] PASS
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:session-features
+> npm run build && node scripts/smoke-session-features.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 5ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+[pin-ipc-channel] PASS
+[pin-preload-api] PASS
+[session-pin-field] PASS
+[session-harness-field] PASS
+[harness-delete-api] PASS
+[renderer-menu-button] PASS
+[renderer-menu-actions] PASS
+[renderer-delete-warning] PASS
+[session-menu-css] PASS
+[done-listening-chime] PASS
+[wakeword-windows-tcp-ipc] PASS
+[wakeword-windows-onnxruntime] PASS
+[wakeword-windows-pyinstaller-complete] PASS — wake-word bundle must carry openWakeWord resources and ONNX Runtime native/submodule pieces on Windows
+[perf-preset-power-saver-recommended] PASS — Settings preset dropdown must list Power saver (recommended) before Auto
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:hardware
+> npm run build && node scripts/smoke-hardware.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 3ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+[hw.cpuCores] PASS
+[hw.totalMemGB] PASS
+[hw.tier] PASS
+[hw.gpu.name] PASS
+[hw.gpu.vendor] PASS
+[hw.cached] PASS
+[clampCap.low] PASS
+[clampCap.high] PASS
+[clampCap.nan] PASS
+[clampCap.round] PASS
+[profile.35.threads>=1] PASS
+[profile.35.cap] PASS
+[profile.35.threads-monotonic] PASS
+[profile.35.quality-monotonic] PASS
+[profile.50.threads>=1] PASS
+[profile.50.cap] PASS
+[profile.50.threads-monotonic] PASS
+[profile.50.quality-monotonic] PASS
+[profile.80.threads>=1] PASS
+[profile.80.cap] PASS
+[profile.80.threads-monotonic] PASS
+[profile.80.quality-monotonic] PASS
+[profile.100.threads>=1] PASS
+[profile.100.cap] PASS
+[profile.100.threads-monotonic] PASS
+[profile.100.quality-monotonic] PASS
+[profile.35.cpu] PASS
+[preset.auto.sttModel] PASS
+[preset.auto.ttsEngine] PASS
+[preset.auto.orb] PASS
+[preset.auto.cap] PASS
+[preset.auto.threads] PASS
+[preset.power-saver.sttModel] PASS
+[preset.power-saver.ttsEngine] PASS
+[preset.power-saver.orb] PASS
+[preset.power-saver.cap] PASS
+[preset.power-saver.threads] PASS
+[preset.balanced.sttModel] PASS
+[preset.balanced.ttsEngine] PASS
+[preset.balanced.orb] PASS
+[preset.balanced.cap] PASS
+[preset.balanced.threads] PASS
+[preset.max-performance.sttModel] PASS
+[preset.max-performance.ttsEngine] PASS
+[preset.max-performance.orb] PASS
+[preset.max-performance.cap] PASS
+[preset.max-performance.threads] PASS
+[power-saver.cpu] PASS
+[power-saver.piper] PASS
+[power-saver.tiny] PASS
+[power-saver.orb-low] PASS
+[power-saver.cap-low] PASS
+[max.orb-tier-appropriate] PASS
+[max.cap-100] PASS
+[presets-distinct] PASS
+[isPerfPreset] PASS
+[power-saver.voice-male] PASS
+[default.preset.power-saver] PASS
+[default.gpuCap.30] PASS
+[tts.sidecar.default-piper] PASS
+[tts.sidecar.default-alan] PASS
+[piper.manifest.voice] PASS
+[piper.url.path] PASS
+[piper.url.generic] PASS
+[auto.high.cap-100] PASS
+[auto.high.orb-high] PASS
+[auto.high.perfProfile-high] PASS
+[auto.high.default-cap-was-medium] PASS
+[perf.installed] PASS
+[perf.stt] PASS
+[perf.llm] PASS
+[perf.tts] PASS
+[perf.total] PASS
+[perf.firstAudio] PASS
+[perf.target] PASS
+[perf.text.stt-null] PASS
+[perf.text.llm] PASS
+[perf.text.total] PASS
+[perf.text.firstAudio-null] PASS
+[perf.inv.firstAudio] PASS
+[perf.inv.no-inversion] PASS
+[perf.ttsdone.total] PASS
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:updater
+> npm run build && node scripts/smoke-updater.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 5ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+[patch newer] true == true -> PASS
+[minor newer] true == true -> PASS
+[major newer] true == true -> PASS
+[equal] false == false -> PASS
+[patch older] false == false -> PASS
+[major older] false == false -> PASS
+[numeric minor 2.10 > 2.9] true == true -> PASS
+[numeric patch 2.1.10 > 2.1.9] true == true -> PASS
+[leading v] true == true -> PASS
+[both leading v equal] false == false -> PASS
+[prerelease == base] false == false -> PASS
+[garbage remote] false == false -> PASS
+[linux fedora -> rpm] rpm == rpm -> PASS
+[linux rhel-like -> rpm] rpm == rpm -> PASS
+[linux opensuse -> rpm] rpm == rpm -> PASS
+[linux ubuntu -> deb] deb == deb -> PASS
+[linux unknown -> deb] deb == deb -> PASS
+[release asset deb] https://example.invalid/deb == https://example.invalid/deb -> PASS
+[release asset rpm] https://example.invalid/rpm == https://example.invalid/rpm -> PASS
+[release asset dev none] undefined == undefined -> PASS
+[appimage update is trusted] true == true -> PASS
+[unsigned mac update is manual] false == false -> PASS
+[unsigned windows update is manual] false == false -> PASS
+[signed windows update is trusted] true == true -> PASS
+[deb staging directory is private 0700] 448 == 448 -> PASS
+[deb staging file is regular] true == true -> PASS
+[deb staging file is private 0600] 384 == 384 -> PASS
+[deb staging pathname is inside private random directory] /home/envo_sloth/.hermes/cache/scratch/aria-update-RJL3SR == /home/envo_sloth/.hermes/cache/scratch/aria-update-RJL3SR -> PASS
+[deb staging cannot reuse an existing pathname] true == true -> PASS
+[deb privileged command is pkexec] pkexec == pkexec -> PASS
+[deb privileged command invokes fixed helper directly] /opt/aria/deb-update-installer.sh == /opt/aria/deb-update-installer.sh -> PASS
+[deb privileged command does not invoke a shell] false == false -> PASS
+[deb privileged command passes checksum as hex] a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 == a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5 -> PASS
+[deb privileged command passes package as argument] /tmp/aria-update-test/update.deb == /tmp/aria-update-test/update.deb -> PASS
+[deb helper copies into root-owned staging] true == true -> PASS
+[deb helper hashes root-owned copy] true == true -> PASS
+[deb helper resolves dependencies with apt] true == true -> PASS
+[first update operation acquires single-flight slot] true == true -> PASS
+[concurrent update operation is rejected] false == false -> PASS
+[update operation can retry after release] true == true -> PASS
+[release url helper exported] function == function -> PASS
+[release tag url allowed] https://github.com/envosloth/aria-voice/releases/tag/v1.2.3 == https://github.com/envosloth/aria-voice/releases/tag/v1.2.3 -> PASS
+[release asset url allowed] https://github.com/envosloth/aria-voice/releases/download/v1.2.3/ARIA-1.2.3.AppImage == https://github.com/envosloth/aria-voice/releases/download/v1.2.3/ARIA-1.2.3.AppImage -> PASS
+[missing url -> latest] https://github.com/envosloth/aria-voice/releases/latest == https://github.com/envosloth/aria-voice/releases/latest -> PASS
+[rejects http://github.com/envosloth/aria-voice/releases/latest] https://github.com/envosloth/aria-voice/releases/latest == https://github.com/envosloth/aria-voice/releases/latest -> PASS
+[rejects https://evil.example/envosloth/aria-voice/releases/latest] https://github.com/envosloth/aria-voice/releases/latest == https://github.com/envosloth/aria-voice/releases/latest -> PASS
+[rejects https://github.com.evil.example/envosloth/aria-voice/releases] https://github.com/envosloth/aria-voice/releases/latest == https://github.com/envosloth/aria-voice/releases/latest -> PASS
+[rejects https://github.com/attacker/aria-voice/releases/latest] https://github.com/envosloth/aria-voice/releases/latest == https://github.com/envosloth/aria-voice/releases/latest -> PASS
+[rejects https://github.com/envosloth/aria-voice-evil/releases/latest] https://github.com/envosloth/aria-voice/releases/latest == https://github.com/envosloth/aria-voice/releases/latest -> PASS
+[rejects https://github.com/envosloth/aria-voice/releasesX] https://github.com/envosloth/aria-voice/releases/latest == https://github.com/envosloth/aria-voice/releases/latest -> PASS
+[rejects https://github.com/envosloth/aria-voice/issues] https://github.com/envosloth/aria-voice/releases/latest == https://github.com/envosloth/aria-voice/releases/latest -> PASS
+[rejects https://user:pw@github.com/envosloth/aria-voice/releases] https://github.com/envosloth/aria-voice/releases/latest == https://github.com/envosloth/aria-voice/releases/latest -> PASS
+[rejects https://github.com:8443/envosloth/aria-voice/releases] https://github.com/envosloth/aria-voice/releases/latest == https://github.com/envosloth/aria-voice/releases/latest -> PASS
+[rejects file:///etc/passwd] https://github.com/envosloth/aria-voice/releases/latest == https://github.com/envosloth/aria-voice/releases/latest -> PASS
+[rejects javascript:alert(1)] https://github.com/envosloth/aria-voice/releases/latest == https://github.com/envosloth/aria-voice/releases/latest -> PASS
+[rejects not a url] https://github.com/envosloth/aria-voice/releases/latest == https://github.com/envosloth/aria-voice/releases/latest -> PASS
+[failed update resumes once] quiesce,resume == quiesce,resume -> PASS
+[partial quiesce failure resumes] quiesce,resume == quiesce,resume -> PASS
+[autoUpdater error handler exported] function == function -> PASS
+[slot held by in-flight operation] true == true -> PASS
+[non-install autoUpdater error keeps operation slot] false == false -> PASS
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:orb
+> node scripts/smoke-orb.js
+
+[asset.sourceGif.exists] PASS
+[asset.sourceGif.valid] PASS
+[asset.sourceGif.transparent] PASS
+[asset.video.exists] PASS
+[asset.video.webm] PASS
+[asset.video.alphaMetadata] PASS
+[asset.video.durationMetadata] PASS
+[asset.video.nontrivial] PASS
+[asset.poster.exists] PASS
+[asset.poster.png] PASS
+[markup.controlledVideo] PASS
+[markup.noUncontrolledPlayback] PASS
+[markup.noCanvasOrb] PASS
+[renderer.noObsoleteFpsDiagnostics] PASS
+[styles.stateFeedback] PASS
+[styles.audioReactive] PASS
+[styles.lightTheme] PASS
+[styles.transparentRendering] PASS
+[renderer.noCanvasLoop] PASS
+[renderer.phaseControl] PASS
+[renderer.stateAdapter] PASS
+[renderer.sttSafe] PASS
+[capture.isolatesUserDataBeforeConfig] PASS
+[capture.launcherUsesDisposableProfile] PASS
+[capture.doesNotPersistOnboarding] PASS
+[capture.verifiesRequestedState] PASS
+[capture.failClosed] PASS
+[build.copiesRuntimeAssets] PASS
+[adapter.initializesCompact] PASS
+[adapter.thinkingExpands] PASS
+[adapter.thinkingLoopsRipple] PASS
+[adapter.speakingHoldsParticles] PASS
+[adapter.speakingLevel] PASS
+[adapter.speakingFrameStaysHeld] PASS
+[adapter.speakingToProcessingConsolidates] PASS
+[adapter.speakingToProcessingStartsThinking] PASS
+[adapter.speechEndConsolidates] PASS
+[adapter.consolidationCompletes] PASS
+[adapter.speakingToListeningConsolidates] PASS
+[adapter.listeningKeepsActiveTail] PASS
+[adapter.listeningFinishesCompact] PASS
+[adapter.processingToListeningConsolidates] PASS
+[adapter.processingToListeningFinishesCompact] PASS
+[adapter.compute.cpuUnfrozen] PASS
+[adapter.compute.interruptedPlayKeepsPhase] PASS
+[adapter.compute.quiescesVisual] PASS
+[adapter.compute.failsafeScheduled] PASS
+[adapter.compute.failsafeRecovers] PASS
+[adapter.compute.newListenClearsStaleFreeze] PASS
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:ui-stability
+> node scripts/smoke-ui-stability.js
+
+[unresponsive.graceTimer] PASS
+[unresponsive.responsiveCancels] PASS
+[unresponsive.closedCancels] PASS
+[unresponsive.noImmediateReloadMessage] PASS
+[unresponsive.reloadStillExistsAfterGrace] PASS
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:ux
+> node scripts/smoke-ux.js
+
+[composer.sendControl] PASS
+[composer.sendBinding] PASS
+[compact.controls] PASS
+[compact.controlBindings] PASS
+[live.status] PASS
+[sidecar.statusText] PASS
+[mic.keyboardAndState] PASS
+[error.dismissible] PASS
+[onboarding.progress] PASS
+[settings.tabSemantics] PASS
+[modal.dialogSemantics] PASS
+[modal.focusManagement] PASS
+[modal.initialFocusFallback] PASS
+[setup.connectionCta] PASS
+[sessionMenu.keyboardFlow] PASS
+[ptt.flagGatesRelease] PASS
+[ptt.flagSetOnPress] PASS
+[screenshare.failureReturnsOrbIdle] PASS
+[tts.epochSeededFromMain] PASS
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:status-dots
+> node scripts/smoke-status-dots.js
+
+[map.present] PASS
+[guard.present] PASS
+[ready->active] PASS
+[started->active] PASS
+[error->error] PASS
+[circuit-open->error] PASS
+[exited->error] PASS
+[memory-exceeded->error] PASS
+[restarting->loading] PASS
+[log.keeps.active] PASS
+[heartbeat.keeps.active] PASS
+[unknown.keeps.active] PASS
+[log.not.in.map] PASS
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:update-progress
+> node scripts/smoke-update-progress.js
+
+[markup.progress] PASS
+[css.value] PASS
+[css.indeterminate] PASS
+[wire.downloading] PASS
+[wire.installing.indet] PASS
+[wire.downloaded.hide] PASS
+[wire.installed.hide] PASS
+[wire.error.hide] PASS
+[fn.present] PASS
+[hide.hidden] PASS
+[indet.shown] PASS
+[indet.class] PASS
+[indet.novalue] PASS
+[det.shown] PASS
+[det.value] PASS
+[det.class.cleared] PASS
+[det.clamp.high] PASS
+[det.clamp.low] PASS
+[hide.again] PASS
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:models
+> npm run build && node scripts/smoke-models.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 9ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+[download+checksum] size=262144 pct=100 calls=6 -> PASS
+[isPresent]        present=true -> PASS
+[existing-checksum] invalid=1 -> PASS
+[checksum-bad]     rejected=true -> PASS
+[range-resume]     resumeStartByte=196425 (half=131072) finalOk=true -> PASS
+[manifest-kokoro]  files=ggml-small.bin,kokoro-v1.0.onnx,voices-v1.0.bin -> PASS
+[manifest-piper]   files=ggml-small.bin,en_GB-alan-medium.onnx,en_GB-alan-medium.onnx.json -> PASS
+[dropped-response]  rejected=true -> PASS
+[stalled-response]  rejected=true -> PASS
+[redirect-limit]    rejected=true -> PASS
+[416-verified]       promoted=true -> PASS
+[416-incomplete]     rejected=true -> PASS
+[single-flight]      requests=1 results=fulfilled,fulfilled pct=100/100 -> PASS
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:audio
+> node scripts/smoke-audio.js
+
+[downsample-length] PASS — got 1600, expected 1600
+[downsample-antialiases] PASS — got 0.3333333432674408, 0
+[passthrough-16k] PASS
+[int16-zero] PASS
+[int16-full+] PASS — got 32767
+[int16-full-] PASS — got -32768
+[int16-clamp+] PASS — clamped >1 -> 32767
+[int16-clamp-] PASS — clamped <-1 -> -32768
+[freq-preserved] PASS — measured ~438Hz (expected 440)
+[pipeline-bytes] PASS — got 3200
+[rms-silence] PASS
+[rms-level] PASS — got 0.5
+[vad-ends-on-silence] PASS — ended at frame 7
+[vad-no-speech-no-end] PASS
+[vad-fires-once] PASS — fired 1 times
+[vad-transient-not-speech] PASS
+[vad-resumed-speech-clears-pause] PASS
+[vad-resumed-speech-still-ends-after-full-hang] PASS
+[vad-short-opening-survives-thinking-pause] PASS
+[vad-continued-opening-uses-normal-hang] PASS — ended at frame 4
+[vad-prod-opts-exported] PASS — {"frameMs":20,"hangMs":850,"shortSpeechMinMs":200,"shortSpeechMaxMs":500,"shortSpeechHangMs":1300}
+[vad-prod-1s-command-ends-on-normal-hang] PASS — ended after 860ms silence (normal hang 850ms)
+[vad-prod-cough-ends-on-normal-hang] PASS — ended after 860ms silence (normal hang 850ms)
+[vad-prod-short-opening-gets-extended-hang] PASS — ended after 1300ms silence (extended hang 1300ms)
+[vad-speech-floor-blocks-extended-hang] PASS — ended at frame 5
+[vad-followup-ignores-noise] PASS
+[vad-followup-hears-speech-over-noise] PASS
+[vad-followup-hears-immediate-speech] PASS
+[vad-followup-quiet-speech-does-not-poison-floor] PASS
+[vad-followup-ignores-noise-after-silence] PASS
+[rep-triple] PASS — got "what's the weather"
+[rep-punct-case] PASS — got "What's the weather?"
+[rep-normal-sentence] PASS
+[rep-internal-repeat-kept] PASS
+[rep-short-kept] PASS
+[rep-partial-tail-kept] PASS
+[rep-emphatic-no-kept] PASS
+[rep-emphatic-yes-kept] PASS
+[rep-two-part-kept] PASS
+[rep-single-token-loop-kept] PASS
+[rep-empty] PASS
+[discard-stale-followup-does-not-drop-next-turn] PASS
+[discard-old-turn-cleared-on-new-begin] PASS
+[discard-matching-silent-turn-once] PASS
+[san-bold] PASS — got "This is really important"
+[san-italic-underscore] PASS — got "a word here"
+[san-inline-code] PASS — got "run npm test now"
+[san-bare-url] PASS — got "see link for more"
+[san-md-link] PASS — got "click the docs please"
+[san-heading-bullets] PASS — got "Title one two"
+[san-code-fence] PASS — got "Here: done"
+[san-emoji] PASS — got "great job done"
+[san-keeps-punct] PASS — got "Wait — is it 3.5 or 4? Yes!"
+[san-url-only-empty] PASS — got "link"
+[san-stars-only-empty] PASS — got ""
+[san-empty] PASS
+[san-caret] PASS — got "press Ctrl+ to toggle"
+[san-trailing-ctrl-plus] PASS — got "the chord"
+[san-math] PASS — got "value 5%"
+[san-degree] PASS — got "heat to 90"
+[san-section] PASS — got "see 4.2 for details"
+[san-keeps-unicode-words] PASS — got "café déjà vu"
+[san-defn-circumflex] PASS — got "that symbol, called, marks a vowel"
+[san-defn-caret] PASS — got "the symbol,, points up"
+[san-defn-tilde] PASS — got ""approximately""
+[san-defn-backtick-caret] PASS — got "use () for the cursor"
+[san-always-circumflex] PASS — got "is the answer"
+[san-always-the-circumflex] PASS — got "is above"
+[san-always-umlaut] PASS — got "appears on the vowel"
+[san-always-cedilla] PASS — got "is under the c"
+[san-always-macron] PASS — got "is over the letter"
+[san-always-dieresis] PASS — got "goes on the second vowel"
+[san-keeps-ring] PASS — got "give me a ring when you arrive"
+[san-keeps-stroke] PASS — got "he had a stroke yesterday"
+[san-keeps-pipe-down] PASS — got "pipe down please"
+[san-keeps-hash-browns] PASS — got "the hash browns are ready"
+[san-keeps-grave-concern] PASS — got "I have grave concerns"
+[san-keeps-acute-pain] PASS — got "an acute pain in her side"
+[san-keeps-ring-fire] PASS — got "the ring of fire is beautiful"
+[san-keeps-caret-standalone] PASS — got "put the caret at the end of the line"
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:main-hardening
+> npm run build && node scripts/smoke-main-hardening.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 3ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+[jsonstore-set-rejects-__proto__] PASS
+[jsonstore-set-rejects-constructor/prototype] PASS
+[jsonstore-get-own-only] PASS
+[jsonstore-get-rejects-__proto__] PASS
+[jsonstore-delete-proto-noop] PASS
+[jsonstore-normal-set-get] PASS
+[validate-exported] PASS
+[validate-accepts-renderer-keys] PASS
+[validate-rejects-unknown-key] PASS
+[validate-rejects-object-subtree] PASS
+[validate-rejects-proto-key] PASS
+[validate-rejects-type-mismatch] PASS
+[validate-rejects-nonfinite] PASS
+[validate-rejects-bad-enum] PASS
+[validate-rawcommand-strict-mode] PASS
+[harness-detect-host-0.0.0.0] PASS — got http://127.0.0.1:8642/v1/chat/completions
+[harness-detect-host-::] PASS — got http://127.0.0.1:8642/v1/chat/completions
+[harness-detect-host-[::]] PASS — got http://127.0.0.1:8642/v1/chat/completions
+[harness-detect-host-::1] PASS — got http://[::1]:8642/v1/chat/completions
+[harness-detect-host-127.0.0.1] PASS — got http://127.0.0.1:8642/v1/chat/completions
+[harness-detect-empty-host] PASS
+[delete-harness-exported] PASS
+[delete-ok] PASS
+[delete-partial-then-destroy-settles] PASS — 53ms {"deleted":false,"error":"Harness response was aborted"}
+[delete-trickle-hits-deadline] PASS — 800ms {"deleted":false,"error":"Timed out deleting harness session"}
+[delete-body-capped] PASS — Harness returned 500 with an oversized body
+[no-fallback-after-tool-activity] PASS — calls=1 done=null errors=1
+[no-vision-retry-after-tool-activity] PASS — calls=1 errors=1
+[fallback-still-works-without-activity] PASS — calls=2 done="fallback reply"
+[llm-tool-events-not-forwarded] PASS — tools=[]
+[llm-tool-events-not-recorded] PASS
+[persist-failure-does-not-block-stream] PASS — {"done":"ok","errors":[],"timeout":false}
+[persist-failure-does-not-block-local-intent] PASS — {"done":"It's 8:59 PM.","errors":[]}
+[cancel-all-single-grammar] PASS — got "Cancelled your timer."
+[tunnel-stale-exit-ignored] PASS — state=starting childIsNew=true
+[tunnel-stale-stderr-ignored] PASS — msg=ssh /home/envo_sloth/.hermes/tools/node-26.7.0-linux-x64/bin/node /home/envo_sloth/.hermes/cache/scratch/aria-hardening-ZSZcvx/sleep-long.js…
+[tunnel-stop-kills-process-group] PASS — grandchild 1114235 alive=false
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:supervisor-hardening
+> npm run build && node scripts/smoke-supervisor-hardening.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 3ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+[socket-dir-not-under-shared-fixed-root] PASS — /home/envo_sloth/.hermes/cache/scratch/aria-1000-7EvYxH
+[socket-dir-is-private-mkdtemp] PASS — /home/envo_sloth/.hermes/cache/scratch/aria-1000-7EvYxH
+[socket-dir-recreated-after-cleanup] PASS — /home/envo_sloth/.hermes/cache/scratch/aria-1000-Fad3wH
+[socket-dir-prefers-valid-xdg-runtime-dir] PASS — /home/envo_sloth/.hermes/cache/scratch/xdg-test-ZuSl8t/aria-1000-0LMuuy
+[socket-dir-rejects-insecure-xdg] PASS — /home/envo_sloth/.hermes/cache/scratch/aria-1000-wRiLFE
+[stale-stdout-cannot-mark-new-child-ready] PASS — []
+[stale-exit-cannot-trigger-crash-restart] PASS — []
+[new-child-becomes-ready] PASS
+[heartbeat-kill-racing-stop-does-not-restart] PASS — ["started","ready","heartbeat-timeout","exited"]
+[restart-failure-reported-not-unhandled] PASS — unhandled=[] statuses=["started","ready","exited","restarting","error","restarting"]
+[restart-failure-reenters-backoff] PASS — ["started","ready","exited","restarting","error","restarting"]
+[quiesce-snapshots-sidecar-in-backoff] PASS — ["wakeword"]
+[quiesce-cancels-pending-backoff-restart] PASS — ["started","ready","exited","restarting"]
+[resume-restarts-backoff-sidecar] PASS — ["started","ready","exited","restarting","started","ready"]
+[stop-during-listen-prevents-spawn] PASS — []
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:sidecar-scripts
+> node scripts/smoke-sidecar-scripts.js
+
+[download function found] PASS
+[download HTTP error returns failure] PASS — rc=1
+[download HTTP error keeps resumable partial intact] PASS — "resumable-prefix"
+[download HTTP error never promotes] PASS
+[package-sidecar rejects traversal name] PASS — status=2
+[package-sidecar traversal cannot rm -rf outside build] PASS
+[package-sidecar rejects unknown name] PASS — status=2 package-sidecar.sh: unknown sidecar 'nonsense' (expected stt|tts|wakeword)
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:ipc-hardening
+> npm run build && node scripts/smoke-ipc-hardening.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 3ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+[llm-send-valid] PASS
+[llm-send-null-image] PASS
+[llm-send-rejects-string-payload] PASS
+[llm-send-rejects-null] PASS
+[llm-send-rejects-empty-turn] PASS
+[llm-send-rejects-nonstring-message] PASS
+[llm-send-rejects-oversize-message] PASS
+[llm-send-accepts-max-message] PASS
+[llm-send-rejects-png-image] PASS
+[llm-send-rejects-url-image] PASS
+[llm-send-rejects-oversize-image] PASS
+[llm-send-oversize-keeps-correlation] PASS
+[llm-send-bad-image-keeps-correlation] PASS
+[llm-send-no-turn-no-correlation] PASS
+[llm-send-rejection-emits-llm-error] PASS
+[secret-key-llm] PASS
+[secret-key-harness] PASS
+[secret-key-other-refused] PASS
+[secret-keys-cover-renderer] PASS — llm-api-key,harness-api-key
+[trusted-url-exact] PASS
+[trusted-url-hash] PASS
+[trusted-url-other-file] PASS
+[trusted-url-https] PASS
+[trusted-url-about-blank] PASS
+[trusted-url-file-host] PASS
+[ipc-all-through-wrappers] PASS — 2 raw ipcMain registrations (expect the 2 wrappers)
+[ipc-wrappers-assert-sender] PASS
+[ipc-sender-top-frame-and-url] PASS
+[nav-guards] PASS
+[config-set-validated] PASS
+[secure-store-allowlisted] PASS
+[llm-send-validated] PASS
+[coordinate-rejection-reported] PASS
+[stt-death-fails-turn] PASS
+[tts-epoch-channel] PASS
+[electron-ran] PASS — {"mainEpochBeforeReload":3,"mainEpochAfterReload":3,"ttsPlays":[{"epoch":4,"mainEpoch":4,"accepted":true},{"epoch":5,"mainEpoch":5,"accepted":true}],"sttSurvivesLog":true,"sttFailedOnDeath":true,"windowOpen":"null","urlAfterNavigate":"file:///home/envo_sloth/workspace/aria-voice-release/dist/renderer/index.html","secureBadKey":"rejected","secureGoodKey":"allowed","configBad":"rejected","configGood":"allowed"}
+[tts-epoch-main-advanced] PASS — main=3
+[tts-play-after-reload-accepted] PASS — [{"epoch":4,"mainEpoch":4,"accepted":true},{"epoch":5,"mainEpoch":5,"accepted":true}]
+[tts-play-epoch-beyond-pre-reload] PASS — first play epoch 4, main before 3
+[stt-turn-survives-benign-status] PASS
+[stt-turn-failed-on-sidecar-death] PASS
+[window-open-denied] PASS — null
+[navigation-blocked] PASS — file:///home/envo_sloth/workspace/aria-voice-release/dist/renderer/index.html
+[secure-bad-key-rejected] PASS
+[secure-good-key-allowed] PASS
+[config-bad-value-rejected] PASS
+[config-good-value-allowed] PASS
+
+=== RESULT: PASS ===
+
+> aria@3.0.6 smoke:turn-isolation
+> node scripts/smoke-turn-isolation.js
+
+PASS microphone failure is retryable without reload and PTT release works
+PASS endPushToTalk cancels delayed microphone acquisition
+PASS startNewSession cancels delayed microphone acquisition
+PASS startNewSession abandons capture and pending transcription
+PASS reopenSession abandons capture and pending transcription
+PASS typed turns isolate transcript, TTS and playback
+PASS stale screen capture cannot dispatch
+
+> aria@3.0.6 smoke:model-startup
+> node scripts/smoke-model-startup.js
+
+PASS stt/reload/models-true
+PASS stt/reload/models-false
+PASS stt/lazy/models-true
+PASS stt/lazy/models-false
+PASS tts/reload/models-true
+PASS tts/reload/models-false
+PASS tts/lazy/models-true
+PASS tts/lazy/models-false
+
+> aria@3.0.6 smoke:e2e
+> npm run build && bash scripts/gen-test-audio.sh && node scripts/smoke-e2e.js
+
+
+> aria@3.0.6 build
+> tsc && npm run build:preload && node scripts/copy-renderer.js
+
+
+> aria@3.0.6 build:preload
+> esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload/index.js
+
+
+  dist/preload/index.js  11.4kb
+
+⚡ Done in 5ms
+[copy-renderer] copied 8 files and 2 runtime assets -> dist/renderer
+Generated /tmp/stt_test_16k.wav (16kHz mono)
+=== Starting STT + TTS sidecars ===
+
+[trial 1] STT: streaming speech PCM -> transcribe
+    -> "testing 1 2 3 4 5" (1514ms)
+[trial 1] LLM: transcription -> streamed reply (mock)
+    -> "I heard you say the test numbers. All systems are working correctly." (first token 17ms, total 119ms)
+[trial 1] TTS: reply -> PCM audio
+    -> 2 chunks, 4.73s audio (first chunk 176ms, total 402ms)
+
+First local sample was over budget; running two confirmation trials.
+
+[trial 2] STT: streaming speech PCM -> transcribe
+    -> "testing 1 2 3 4 5" (525ms)
+[trial 2] LLM: transcription -> streamed reply (mock)
+    -> "I heard you say the test numbers. All systems are working correctly." (first token 10ms, total 107ms)
+[trial 2] TTS: reply -> PCM audio
+    -> 2 chunks, 4.68s audio (first chunk 254ms, total 553ms)
+
+[trial 3] STT: streaming speech PCM -> transcribe
+    -> "testing 1 2 3 4 5" (734ms)
+[trial 3] LLM: transcription -> streamed reply (mock)
+    -> "I heard you say the test numbers. All systems are working correctly." (first token 10ms, total 108ms)
+[trial 3] TTS: reply -> PCM audio
+    -> 2 chunks, 4.59s audio (first chunk 182ms, total 404ms)
+
+=== Latency (spec §7 budget) ===
+  Local samples:       1690ms, 779ms, 916ms
+  LOCAL median:        916ms  (OVER budget)
+  LLM first token:     17ms  (remote, excluded from local SLO)
+
+=== RESULT: FAIL ===

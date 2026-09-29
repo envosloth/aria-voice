@@ -214,19 +214,53 @@
       flex: 1; display: flex; flex-direction: column; gap: 14px;
       overflow-y: auto; padding-bottom: 12px; scroll-behavior: smooth; min-height: 0;
     }
-    #conversation:empty { align-items: center; justify-content: center; text-align: center; gap: 16px; opacity: .8; }
-    #conversation:empty::before {
-      content: ''; width: 10px; height: 10px; border-radius: 50%;
-      background: var(--accent-active); box-shadow: 0 0 24px 6px var(--glow); animation: floaty 4s ease-in-out infinite;
-    }
-    #conversation:empty::after { content: 'How can I help you today?'; font-size: 15px; font-weight: 500; color: var(--text-muted); }
-    body[data-setup-needed="true"] #conversation:empty::after { content: 'Connect ARIA to begin.'; }
-    .setup-connection {
-      position: absolute; top: calc(50% + 36px); left: 50%; transform: translateX(-50%); z-index: 1;
-      padding: 9px 13px; border: 1px solid color-mix(in srgb, var(--accent-active) 55%, var(--border)); border-radius: 10px;
-      background: color-mix(in srgb, var(--accent-active) 14%, var(--surface)); color: var(--text); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
-    }
-    .setup-connection:hover { background: color-mix(in srgb, var(--accent-active) 24%, var(--surface)); }
+
+    /* Plain-language activity strip: always says what ARIA is doing + what to do next. */
+    .activity { display: flex; align-items: center; gap: 10px; margin: 0 14px -2px; padding: 8px 12px; border-radius: 12px; min-height: 40px;
+      border: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 70%, transparent); font-size: 12.5px; transition: border-color .25s ease, background .25s ease; }
+    .activity-icon { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--activity-c, var(--success)); box-shadow: 0 0 8px var(--activity-c, var(--success)); }
+    .activity-text { display: flex; flex-direction: column; min-width: 0; flex: 1; line-height: 1.3; }
+    .activity-title { font-weight: 600; color: var(--text); }
+    .activity-detail { color: var(--text-muted); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .activity-detail:empty { display: none; }
+    .activity[data-phase="listening"] { --activity-c: #ffab4d; border-color: color-mix(in srgb, #ffab4d 45%, var(--border)); }
+    .activity[data-phase="thinking"]  { --activity-c: #b98bff; border-color: color-mix(in srgb, #b98bff 45%, var(--border)); }
+    .activity[data-phase="speaking"]  { --activity-c: #3fc8e8; border-color: color-mix(in srgb, #3fc8e8 45%, var(--border)); }
+    .activity[data-tone="warn"] { --activity-c: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, var(--border)); }
+    .activity[data-tone="bad"]  { --activity-c: var(--error); border-color: color-mix(in srgb, var(--error) 45%, var(--border)); }
+    .activity[data-phase="listening"] .activity-icon, .activity[data-phase="thinking"] .activity-icon, .activity[data-phase="speaking"] .activity-icon { animation: pulse 1.4s infinite; }
+    .activity-stop { flex: none; padding: 5px 12px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600;
+      color: var(--text); background: color-mix(in srgb, var(--error) 14%, transparent); border: 1px solid color-mix(in srgb, var(--error) 45%, transparent); }
+    .activity-stop:hover { background: color-mix(in srgb, var(--error) 26%, transparent); }
+    .activity-stop:focus-visible { outline: 2px solid var(--accent-active); outline-offset: 2px; }
+
+    /* First-run / empty conversation: explain how to use ARIA. */
+    #conversation:empty { display: none; }
+    #empty-state { display: none; flex: 1; min-height: 0; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 10px; overflow-y: auto; padding: 8px; }
+    #conversation:empty ~ #empty-state { display: flex; }
+    .es-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent-active); box-shadow: 0 0 24px 6px var(--glow); animation: floaty 4s ease-in-out infinite; margin-bottom: 6px; }
+    .es-title { font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+    .es-sub { color: var(--text-muted); font-size: 13px; max-width: 360px; }
+    .es-ways { list-style: none; display: flex; flex-direction: column; gap: 8px; margin: 12px 0 4px; width: min(100%, 380px); }
+    .es-ways li { display: flex; align-items: baseline; gap: 12px; text-align: left; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 60%, transparent); }
+    .es-key { font-weight: 600; font-size: 12.5px; white-space: nowrap; }
+    .es-desc { color: var(--text-muted); font-size: 12px; margin-left: auto; text-align: right; }
+    body[data-setup-needed="true"] .es-ways { display: none; }
+    .setup-connection { margin-top: 10px; padding: 10px 16px; border: 1px solid color-mix(in srgb, var(--accent-active) 55%, var(--border)); border-radius: 10px;
+      background: color-mix(in srgb, var(--accent-active) 18%, var(--surface)); color: var(--text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+    .setup-connection[hidden] { display: none; }
+    .setup-connection:hover { background: color-mix(in srgb, var(--accent-active) 28%, var(--surface)); }
+
+    /* Sidecar rows: state in words, not just colour. */
+    .endpoint .tag { font-family: inherit; font-size: 10.5px; font-weight: 500; letter-spacing: 0; }
+    .endpoint:has(.status-dot.active) .tag { color: var(--success); }
+    .endpoint:has(.status-dot.loading) .tag { color: var(--warning); }
+    .endpoint:has(.status-dot.error) .tag { color: var(--error); }
+    .chat-head .state-badge { display: none; }
+    @media (max-width: 720px) { .chat-head .state-badge { display: inline-flex; } .es-desc { display: none; } }
+    @media (max-width: 1080px) { .chat-head .state-badge { display: inline-flex; } }
+    .error-banner.warn { background: color-mix(in srgb, var(--warning) 12%, transparent); border-color: color-mix(in srgb, var(--warning) 40%, transparent); color: var(--warning); }
+    .error-banner.warn .dismiss { border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
     @keyframes floaty { 0%,100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-8px) scale(1.15); } }
 
     /* Message bubbles (classes referenced by app.js) */
@@ -341,9 +375,9 @@
       font: 600 10px var(--mono); letter-spacing: .2em; color: var(--text-muted);
     }
     .state-badge::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; }
-    .state-badge::after { content: 'IDLE'; }
+    .state-badge::after { content: 'READY'; }
     body[data-state="idle"] .state-badge { color: #7aa2ff; }
-    body[data-state="idle"] .state-badge::after { content: 'IDLE'; }
+    body[data-state="idle"] .state-badge::after { content: 'READY'; }
     body[data-state="listening"] .state-badge { color: #ffab4d; }
     body[data-state="listening"] .state-badge::after { content: 'LISTENING'; }
     body[data-state="processing"] .state-badge { color: #b98bff; }
@@ -352,10 +386,10 @@
     body[data-state="speaking"] .state-badge::after { content: 'SPEAKING'; }
 
     .ops-sub { font-size: 11px; color: var(--text-muted); text-align: center; min-height: 1.4em; }
-    body[data-state="idle"] .ops-sub::after { content: 'waiting for wake word'; }
-    body[data-state="listening"] .ops-sub::after { content: 'listening to you'; }
-    body[data-state="processing"] .ops-sub::after { content: 'thinking it through'; }
-    body[data-state="speaking"] .ops-sub::after { content: 'speaking'; }
+    body[data-state="idle"] .ops-sub::after { content: 'ready when you are'; }
+    body[data-state="listening"] .ops-sub::after { content: 'I can hear you'; }
+    body[data-state="processing"] .ops-sub::after { content: 'working on your answer'; }
+    body[data-state="speaking"] .ops-sub::after { content: 'reading the answer aloud'; }
 
     /* Per-conversation token spend, split by backend. margin-top:auto pins this
        (and the foot below it) to the bottom of the orb rail. */
@@ -519,6 +553,19 @@
     .onboard-ghost { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 13px; padding: 8px; transition: color .2s ease; }
     .onboard-ghost:hover { color: var(--text); }
     .onboard-ghost:active { transform: scale(.95); opacity: .6; }
+    .onb-status { min-height: 1.3em; margin: -6px 0 10px; text-align: left; font-size: 12px; color: var(--text-muted); }
+    .onb-status.err-msg { color: var(--error); }
+    .onb-advanced { text-align: left; margin: 0 0 12px; }
+    .onb-advanced > summary { cursor: pointer; color: var(--text-muted); font-size: 12px; padding: 4px 0; }
+    .onb-advanced > summary:hover { color: var(--text); }
+    .onb-advanced[open] > summary { margin-bottom: 10px; }
+    .onboard-panel { max-height: 90vh; overflow-y: auto; }
+    .onboard-steps[hidden] { display: none; }
+    .onboard-progress:empty { display: none; }
+    .onboard-step { min-height: 0; }
+    .onboard-footer { position: sticky; bottom: -36px; margin: 20px -36px -36px; padding: 14px 36px 24px; background: color-mix(in srgb, var(--surface) 96%, transparent); }
+    .setup-toast { position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 12px); z-index: 150; max-width: min(90vw, 520px); padding: 10px 16px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--glass-border); color: var(--text); font-size: 13px; box-shadow: 0 10px 30px rgba(0,0,0,.5); opacity: 0; visibility: hidden; transition: opacity .3s ease, transform .3s ease, visibility .3s; }
+    .setup-toast.visible { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
     #onb-skip { margin-left: auto; }
   </style>
 </head>
@@ -537,28 +584,28 @@
         <div class="brand-name">ARIA</div>
       </div>
 
-      <div class="side-cap cap">ENDPOINTS</div>
+      <div class="side-cap cap">System status</div>
       <div class="endpoint">
         <span class="status-dot" id="status-stt" aria-hidden="true"></span>
         <span class="sr-only" id="status-stt-label" role="status" aria-live="polite">Speech to text is starting.</span>
-        <span class="name">Speech&nbsp;→&nbsp;Text</span>
-        <span class="tag">STT</span>
+        <span class="name">Speech recognition</span>
+        <span class="tag" id="status-stt-text" aria-hidden="true">Starting…</span>
       </div>
       <div class="endpoint">
         <span class="status-dot" id="status-tts" aria-hidden="true"></span>
         <span class="sr-only" id="status-tts-label" role="status" aria-live="polite">Text to speech is starting.</span>
-        <span class="name">Text&nbsp;→&nbsp;Speech</span>
-        <span class="tag">TTS</span>
+        <span class="name">Voice</span>
+        <span class="tag" id="status-tts-text" aria-hidden="true">Starting…</span>
       </div>
       <div class="endpoint">
         <span class="status-dot" id="status-wakeword" aria-hidden="true"></span>
         <span class="sr-only" id="status-wakeword-label" role="status" aria-live="polite">Wake word is starting.</span>
-        <span class="name">Wake&nbsp;word</span>
-        <span class="tag">WAKE</span>
+        <span class="name">Wake word</span>
+        <span class="tag" id="status-wakeword-text" aria-hidden="true">Starting…</span>
       </div>
 
       <div class="side-cap cap" style="display:flex;align-items:center;gap:6px;">
-        <span>SESSION</span>
+        <span>Conversations</span>
         <button id="new-session-btn" title="New session — clear the conversation" style="margin-left:auto;">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           New
@@ -588,7 +635,7 @@
       <div class="chat-head">
         <div class="chat-title">Current conversation</div>
         <div class="chat-sub" id="chat-sub">aria · voice</div>
-        <div style="margin-left:auto" class="state-badge"></div>
+        <div style="margin-left:auto" class="state-badge" aria-hidden="true"></div>
         <div class="compact-actions" aria-label="Conversation controls">
           <button id="compact-new-session-btn" class="compact-action" title="Start a new conversation" aria-label="Start a new conversation">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -610,9 +657,27 @@
           <button class="dismiss" id="error-dismiss" type="button">Dismiss</button>
         </div>
         <div id="conversation"></div>
-        <button id="setup-connection-btn" class="setup-connection" type="button" hidden>Configure a connection</button>
+        <div id="empty-state">
+          <div class="es-dot" aria-hidden="true"></div>
+          <h2 class="es-title" id="empty-title">How can I help?</h2>
+          <p class="es-sub" id="empty-sub">Talk or type — ARIA answers out loud and here.</p>
+          <ul class="es-ways" id="empty-ways">
+            <li><span class="es-key" id="empty-hint-wake">Say “hey jarvis”</span><span class="es-desc">Hands-free. ARIA starts listening.</span></li>
+            <li><span class="es-key">Hold the mic</span><span class="es-desc">Push to talk. Release to send.</span></li>
+            <li><span class="es-key">Type below</span><span class="es-desc">Press Enter to send.</span></li>
+          </ul>
+          <button id="setup-connection-btn" class="setup-connection" type="button" hidden>Set up connection</button>
+        </div>
         <div class="partial-text" id="partial"></div>
       </main>
+      <div class="activity" id="activity-strip" data-phase="idle" data-tone="ok">
+        <span class="activity-icon" aria-hidden="true"></span>
+        <span class="activity-text">
+          <span class="activity-title" id="activity-title">Ready</span>
+          <span class="activity-detail" id="activity-detail"></span>
+        </span>
+        <button id="activity-stop" class="activity-stop" type="button" aria-label="Stop ARIA (Esc)" title="Stop (Esc)" hidden>Stop</button>
+      </div>
       <div class="input-area">
         <button id="screen-btn" type="button" title="Share your screen with the agent (or say &quot;share my screen&quot;)" aria-label="Share your screen with ARIA" aria-pressed="false">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -621,11 +686,11 @@
             <line x1="12" y1="17" x2="12" y2="21"/>
           </svg>
         </button>
-        <input type="text" id="text-input" placeholder="Ask ARIA… Press Enter to send" autocomplete="off" aria-label="Message ARIA">
+        <input type="text" id="text-input" placeholder="Type a message, or hold the mic to talk" autocomplete="off" aria-label="Message ARIA">
         <button id="send-btn" type="button" aria-label="Send message" title="Send message" disabled>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>
-        <button id="mic-btn" type="button" title="Hold to speak (or use global shortcut)" aria-label="Hold to speak" aria-pressed="false">
+        <button id="mic-btn" type="button" title="Hold to talk — release to send" aria-label="Hold to speak" aria-pressed="false">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
             <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
@@ -945,99 +1010,71 @@
     </div>
   </div>
 
-  <!-- First-run onboarding walkthrough -->
+  <!-- First-run setup: one screen. Local harnesses are auto-detected before this
+       ever shows; the mic starts on its own (see startMicCapture at boot). -->
   <div class="onboard-overlay" id="onboard-overlay">
     <div class="onboard-panel" role="dialog" aria-modal="true" aria-label="ARIA setup">
-      <div class="onboard-steps" id="onboard-dots" aria-hidden="true"></div>
+      <div class="onboard-steps" id="onboard-dots" aria-hidden="true" hidden></div>
       <p class="onboard-progress" id="onb-progress" aria-live="polite"></p>
 
-      <!-- Step 0: Welcome -->
       <div class="onboard-step" data-step="0">
         <div class="onboard-logo"></div>
         <h2>Welcome to ARIA</h2>
-        <p>A local-first voice assistant. Speech recognition and speech run on
-        your machine; only the language model is remote. Let's get you set up —
-        takes about a minute.</p>
-      </div>
-
-      <!-- Step 1: Agent harness -->
-      <div class="onboard-step" data-step="1" hidden>
-        <h2>Choose your agent harness</h2>
-        <p>ARIA routes your voice to an agent harness over an OpenAI-compatible
-        endpoint. Pick one and confirm its endpoint URL.</p>
-        <label>Harness
-          <select id="onb-harness"></select>
-        </label>
-        <label id="onb-endpoint-row" style="display:none;">Endpoint URL
-          <input type="url" id="onb-endpoint" placeholder="http://localhost:8080/v1/chat/completions">
-        </label>
-        <p class="hint" id="onb-note"></p>
-        <label>Model
-          <input type="text" id="onb-model" placeholder="model name">
-        </label>
-      </div>
-
-      <!-- Step 2: API key -->
-      <div class="onboard-step" data-step="2" hidden>
-        <h2>API key <span style="color:var(--text-muted);font-size:14px;">(optional)</span></h2>
-        <p id="onb-key-desc">If your harness needs a key, paste it here — it's
-        stored encrypted in your OS keyring. Local harnesses usually don't need
-        one; leave it blank.</p>
-        <label>API Key
-          <input type="password" id="onb-key" placeholder="optional">
-        </label>
-        <p class="hint" id="onb-detect-status" style="margin:-6px 0 12px;"></p>
-        <button id="onb-detect" class="onboard-secondary" hidden>Auto-detect key</button>
-        <button id="onb-test" class="onboard-secondary">Test connection</button>
-        <span id="onb-test-result"></span>
-      </div>
-
-      <!-- Step 3: Direct LLM provider (conversational model) -->
-      <div class="onboard-step" data-step="3" hidden>
-        <h2>Add a language model <span style="color:var(--text-muted);font-size:14px;">(recommended)</span></h2>
-        <p>Connect a conversational LLM directly with your own API key — or a local
-        server like Ollama or LM Studio. This answers everyday questions; the agent
-        harness handles tool-using tasks. Set one or both; leave blank to skip.</p>
-        <label>Provider
+        <p>Speech runs on this machine; only the language model is remote.
+        Choose one and you're ready to talk — say <b id="onb-wake">"hey jarvis"</b>
+        or press the mic button.</p>
+        <label>Language model
           <select id="onb-llm-provider"></select>
         </label>
-        <label>Endpoint URL
-          <input type="url" id="onb-llm-endpoint" placeholder="https://api.provider.com/v1/chat/completions">
+        <label>API key <span id="onb-llm-key-note" style="color:var(--text-muted);font-size:13px;"></span>
+          <input type="password" id="onb-llm-key" placeholder="sk-..." autocomplete="off">
         </label>
-        <label>Model
-          <input type="text" id="onb-llm-model" placeholder="model name">
-        </label>
-        <label>API Key <span style="color:var(--text-muted);font-size:13px;">(optional for local servers)</span>
-          <input type="password" id="onb-llm-key" placeholder="sk-...">
-        </label>
-        <button id="onb-llm-test" class="onboard-secondary">Test connection</button>
-        <span id="onb-llm-test-result"></span>
-      </div>
+        <p id="onb-status" class="onb-status" role="status" aria-live="polite"></p>
 
-      <!-- Step 4: Microphone -->
-      <div class="onboard-step" data-step="4" hidden>
-        <h2>Microphone access</h2>
-        <p>ARIA listens for a wake word and your voice. Grant microphone access
-        so it can hear you. You can always type instead.</p>
-        <button id="onb-mic" class="onboard-secondary">Enable microphone</button>
-        <span id="onb-mic-result"></span>
-      </div>
+        <details class="onb-advanced" id="onb-llm-details">
+          <summary>Endpoint &amp; model</summary>
+          <label>Endpoint URL
+            <input type="url" id="onb-llm-endpoint" placeholder="https://api.provider.com/v1/chat/completions">
+          </label>
+          <label>Model
+            <input type="text" id="onb-llm-model" placeholder="model name">
+          </label>
+          <button id="onb-llm-test" class="onboard-secondary" type="button">Test connection</button>
+          <span id="onb-llm-test-result"></span>
+        </details>
 
-      <!-- Step 5: Done -->
-      <div class="onboard-step" data-step="5" hidden>
-        <div class="onboard-logo"></div>
-        <h2>You're all set</h2>
-        <p>Say <b id="onb-wake">"hey jarvis"</b> or press the mic button to talk.
-        Change anything later in Settings (gear icon).</p>
+        <details class="onb-advanced" id="onb-harness-details">
+          <summary>Use an agent harness instead (Hermes, Claude Code, …)</summary>
+          <label>Harness
+            <select id="onb-harness"></select>
+          </label>
+          <label id="onb-endpoint-row" style="display:none;">Endpoint URL
+            <input type="url" id="onb-endpoint" placeholder="http://localhost:8080/v1/chat/completions">
+          </label>
+          <p class="hint" id="onb-note"></p>
+          <label>Model
+            <input type="text" id="onb-model" placeholder="model name">
+          </label>
+          <p id="onb-key-desc" class="hint">API key, if the gateway needs one — stored encrypted in your OS keyring.</p>
+          <label>API key
+            <input type="password" id="onb-key" placeholder="optional" autocomplete="off">
+          </label>
+          <p class="hint" id="onb-detect-status" style="margin:-6px 0 12px;"></p>
+          <button id="onb-detect" class="onboard-secondary" type="button" hidden>Auto-detect key</button>
+          <button id="onb-test" class="onboard-secondary" type="button">Test connection</button>
+          <span id="onb-test-result"></span>
+        </details>
       </div>
 
       <div class="onboard-footer">
-        <button id="onb-back" class="onboard-ghost">Back</button>
-        <button id="onb-skip" class="onboard-ghost">Skip setup</button>
-        <button id="onb-next" class="primary">Next</button>
+        <button id="onb-back" class="onboard-ghost" type="button" hidden>Back</button>
+        <button id="onb-skip" class="onboard-ghost" type="button">Skip for now</button>
+        <button id="onb-next" class="primary" type="button">Start</button>
       </div>
     </div>
   </div>
+
+  <div id="setup-toast" class="setup-toast" role="status" aria-live="polite"></div>
 
   <script src="perf.js"></script>
   <script src="audio-utils.js"></script>

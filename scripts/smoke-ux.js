@@ -48,6 +48,19 @@ check('onboarding.progress',
   /id="onb-progress"[^>]*aria-live="polite"/.test(html) &&
   /onb\.progress\.textContent\s*=/.test(app),
   'multi-step setup needs explicit progress, not dots alone');
+check('onboarding.singleScreen',
+  (html.match(/class="onboard-step"/g) || []).length === 1 && /const ONB_LAST = 0;/.test(app) &&
+  !/id="onb-mic"/.test(html) && /Skip for now/.test(html),
+  'first-run setup must be one screen; the mic starts on its own, not via a setup step');
+check('onboarding.autoConnectsLocalHarness',
+  /async function onbAutoConnect\(/.test(app) && /await onbAutoConnect\(\)/.test(app) && /id="setup-toast"/.test(html),
+  'a local Hermes/OpenClaw gateway with a readable key must connect with zero questions');
+check('onboarding.keyNotStoredByTest',
+  !/onb\.llmTest\.addEventListener[\s\S]{0,400}aria\.secure\.set/.test(app),
+  'testing a connection must not persist the key before the user presses Start');
+check('onboarding.keyringFlag',
+  /password-store', 'gnome-libsecret'/.test(fs.readFileSync(path.join(__dirname, '..', 'src/main/index.ts'), 'utf8')),
+  'Linux desktops without a GNOME/KDE session must still select the Secret Service backend');
 check('settings.tabSemantics',
   /role="tablist"/.test(html) && /role="tab"/.test(html) && /setAttribute\('aria-selected'/.test(app),
   'settings navigation needs tab semantics');
@@ -85,7 +98,7 @@ check('sessionMenu.keyboardFlow',
     !/addEventListener\('(?:mouseup|mouseleave|blur)', endUtterance\)/.test(app),
     'PTT release must not end hands-free VAD turns');
   check('ptt.flagSetOnPress',
-    /function startPushToTalk\(\)[\s\S]{0,300}pttActive = true/.test(pttBlock) &&
+    /function startPushToTalk\(\)[\s\S]{0,300}beginUtterance\(\{ ptt: true \}\)/.test(pttBlock) && /if \(opts && opts.ptt\) pttActive = true/.test(app) &&
     /micBtn\.addEventListener\('mousedown', startPushToTalk\)/.test(pttBlock),
     'mousedown/keydown must mark the turn as push-to-talk');
 }
@@ -105,6 +118,47 @@ check('sessionMenu.keyboardFlow',
 check('tts.epochSeededFromMain',
   /aria\.tts\.epoch\(\)/.test(app) && /aria\.tts\.stop\([^)]*\)\s*\.then\(/.test(app),
   'renderer must seed and resync its TTS epoch from main');
+
+// Plain-language activity: one strip that always says what ARIA is doing and
+// what the user can do next, plus a Stop control while it is busy.
+check('activity.strip',
+  /id="activity-strip"[^>]*data-phase=/.test(html) && /id="activity-title"/.test(html) && /id="activity-detail"/.test(html),
+  'a visible strip must name the current phase and next action');
+check('activity.stopControl',
+  /id="activity-stop"[^>]*aria-label="Stop/.test(html) && /activityStop\.addEventListener\('click', stopEverything\)/.test(app),
+  'user needs a visible Stop while ARIA thinks or speaks');
+check('activity.driver',
+  /function refreshActivity\(/.test(app) && /function orbState\(s\)[\s\S]{0,400}refreshActivity\(\)/.test(app) &&
+  /aria\.llm\.onRoute[\s\S]{0,500}refreshActivity\(\)/.test(app) && /aria\.llm\.onTool[\s\S]{0,300}refreshActivity\(\)/.test(app),
+  'phase, route and tool changes must repaint the strip');
+{
+  const onStatus = (app.match(/aria\.sidecar\.onStatus\([\s\S]*?\n\}\);/) || [''])[0];
+  check('activity.sidecarAndSetup',
+    /function setSetupNeeded[\s\S]{0,900}refreshActivity\(\)/.test(app) && onStatus.includes('refreshActivity()'),
+    'setup and sidecar health must be reflected in the strip');
+}
+check('empty.state',
+  /id="empty-state"/.test(html) && /#conversation:empty ~ #empty-state/.test(html) && /id="empty-hint-wake"/.test(html),
+  'first-run screen must explain how to talk to ARIA');
+check('empty.setupButtonInside',
+  /id="empty-state"[\s\S]*id="setup-connection-btn"/.test(html),
+  'connection CTA belongs inside the empty state, not overlapping text');
+check('sidebar.plainLabels',
+  /System status/.test(html) && /id="status-stt-text"/.test(html) && /id="status-tts-text"/.test(html) && /id="status-wakeword-text"/.test(html) &&
+  !/>ENDPOINTS</.test(html),
+  'sidecar rows need words (Ready/Starting/Offline), not just a dot');
+check('sidebar.statusWords',
+  /statusText\.textContent/.test(app),
+  'sidecar status text must be updated');
+check('banner.warnLevel',
+  /function showError\(msg, level\)/.test(app) && /error-banner\.warn|\.error-banner\.warn/.test(html) && !/Security warning: secret storage/.test(app),
+  'non-fatal notices must not look like failures and must use plain wording');
+check('composer.placeholder',
+  /placeholder="Type a message, or hold the mic to talk"/.test(html),
+  'composer must advertise both input methods');
+check('header.singleBadge',
+  /\.chat-head \.state-badge \{ display: none/.test(html),
+  'the state must not be shown twice on wide layouts');
 
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

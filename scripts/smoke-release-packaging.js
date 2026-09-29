@@ -49,8 +49,12 @@ check('release runs build', /npm run build/.test(workflow));
 check('release runs lint', /npm run lint/.test(workflow));
 check('release runs typecheck', /npm run typecheck/.test(workflow));
 check('release runs packaging guard', /npm run smoke:release-packaging/.test(workflow));
-check('release blocks runtime dependency vulnerabilities', /npm run audit:runtime/.test(workflow)
-  && packageJson.scripts['audit:runtime'] === 'npm audit --omit=dev --audit-level=high');
+check('release audits Electron as well as production packages', /npm run audit:runtime/.test(workflow)
+  && packageJson.scripts['audit:runtime'] === 'npm audit --audit-level=high');
+check('Electron binary provisioned explicitly', /npm exec --no -- install-electron/.test(workflow));
+check('native matrix never publishes releases', /--publish never/.test(workflow) && !/--publish onTagOrDraft/.test(workflow));
+check('single release finalizer', /gh release create/.test(workflow) && /needs: build/.test(workflow));
+check('release retains updater metadata artifacts', /dist-installers\/latest\*\.yml/.test(workflow) && /dist-installers\/\*\.blockmap/.test(workflow));
 const provisionIndex = workflow.indexOf('ARIA_WAKEWORD_ONLY=1 bash scripts/download-models.sh');
 const freezeIndex = workflow.indexOf('npm run package:sidecars');
 check('release provisions wake-word ONNX assets', provisionIndex >= 0);

@@ -18,6 +18,22 @@ function makeServer() {
       return;
     }
 
+    if (req.url === '/stream-error') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.end('data: {"error":{"message":"Provider overloaded"}}\n\ndata: [DONE]\n\n');
+      return;
+    }
+
+    if (req.url === '/done-open') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'complete' } }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [], usage: { total_tokens: 7 } })}\n\n`);
+      // DONE is terminal even when the provider leaves HTTP open. Trailing
+      // events must not leak into an already-completed turn.
+      res.write('data: [DONE]\n\ndata: {"choices":[{"delta":{"content":"stale"}}]}\n\n');
+      return;
+    }
+
     if (req.url === '/trailing') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       // No final newline/event separator: a compliant client must still parse
@@ -217,6 +233,18 @@ async function main() {
   const c14ok = !!c14.error && /response exceeded/i.test(c14.error) && c14.terminalCalls === 1;
   console.log(`[response-cap] error=${JSON.stringify(c14.error)} -> ${c14ok ? 'PASS' : 'FAIL'}`);
   pass = pass && c14ok;
+
+  const doneOpen = await runCase('done-open', { endpoint: `${base}/done-open`, model: 'mock', timeoutMs: 150, overallDeadlineMs: 500 });
+  const doneOpenOk = doneOpen.done === 'complete' && !doneOpen.error &&
+    doneOpen.tokens.join('') === 'complete' && doneOpen.usage?.total === 7 && doneOpen.terminalCalls === 1;
+  console.log(`[done-open] ${JSON.stringify(doneOpen)} -> ${doneOpenOk ? 'PASS' : 'FAIL'}`);
+  pass = pass && doneOpenOk;
+
+  const streamError = await runCase('stream-error', { endpoint: `${base}/stream-error`, model: 'mock' });
+  const streamErrorOk = /Provider overloaded/.test(streamError.error || '') &&
+    streamError.done === null && streamError.terminalCalls === 1;
+  console.log(`[stream-error] ${JSON.stringify(streamError)} -> ${streamErrorOk ? 'PASS' : 'FAIL'}`);
+  pass = pass && streamErrorOk;
 
   server.close();
   console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);

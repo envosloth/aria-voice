@@ -13,6 +13,7 @@
 import http from 'http';
 import https from 'https';
 import { URL } from 'url';
+import { StringDecoder } from 'string_decoder';
 import { credentialedEndpointSecurityError } from './endpoint-security';
 
 // Same wiring as llm-stream.ts: shared keep-alive agent pool so repeated
@@ -120,6 +121,7 @@ export function listModels(rawEndpoint: string, apiKey: string): Promise<Discove
         },
         (res) => {
           let body = '';
+          const decoder = new StringDecoder('utf8');
           let ended = false;
           let received = 0;
           const MAX_MODEL_LIST_BYTES = 1024 * 1024;
@@ -139,11 +141,12 @@ export function listModels(rawEndpoint: string, apiKey: string): Promise<Discove
               done({ ok: false, endpoint: targetUrl, models: [], error: 'Model discovery response exceeded 1048576-byte limit' });
               return;
             }
-            body += c.toString();
+            body += decoder.write(c);
           });
           res.on('end', () => {
             ended = true;
             if (settled) return;
+            body += decoder.end();
             if (!res.statusCode || res.statusCode < 200 || res.statusCode >= 300) {
               done({
                 ok: false, endpoint: targetUrl, models: [],
@@ -162,12 +165,12 @@ export function listModels(rawEndpoint: string, apiKey: string): Promise<Discove
             // under "models" — accept either. Filter to string ids only; strip
             // duplicates.
             let rawList: unknown[] = [];
-            if (parsed && typeof parsed === 'object') {
+            if (Array.isArray(parsed)) {
+              rawList = parsed;
+            } else if (parsed && typeof parsed === 'object') {
               const p = parsed as Record<string, unknown>;
               if (Array.isArray(p.data)) rawList = p.data;
               else if (Array.isArray(p.models)) rawList = p.models;
-            } else if (Array.isArray(parsed)) {
-              rawList = parsed;
             }
             const ids: string[] = [];
             const seen = new Set<string>();

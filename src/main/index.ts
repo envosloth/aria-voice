@@ -43,6 +43,15 @@ if (isWayland) {
 }
 app.commandLine.appendSwitch('enable-features', chromiumFeatures.join(','));
 
+// Linux secret storage: Chromium only auto-selects the Secret Service (GNOME
+// Keyring / KeePassXC / KWallet's compat service) on GNOME/KDE-family desktops.
+// On Hyprland, Sway, i3, etc. it silently falls back to "basic_text", which
+// secure-storage.ts refuses to use — so no API key could ever be saved. Ask for
+// libsecret explicitly; if no Secret Service is running Electron still reports
+// an unsafe backend and the existing fail-closed path applies.
+if (process.platform === 'linux' && !app.commandLine.hasSwitch('password-store')) {
+  app.commandLine.appendSwitch('password-store', 'gnome-libsecret');
+}
 // NOTE: we intentionally keep vsync ENABLED. Disabling it (to chase uncapped
 // FPS) made the orb tear/shake; the render is cheap (~0.2ms/frame) so vsync at
 // the display's native refresh (60/120/160 Hz) is already smooth and stable.
@@ -1176,7 +1185,7 @@ app.whenReady().then(async () => {
           const testResult = await wc.executeJavaScript(`document.getElementById('onb-llm-test-result').textContent`);
           console.log('[ARIA_VERIFY] llm-test-result=' + JSON.stringify(testResult));
           await wc.executeJavaScript(
-            `(function(){var n=document.getElementById('onb-next');for(var i=0;i<6;i++)n.click();})(); true;`,
+            `(function(){var n=document.getElementById('onb-next');n.click();})(); true;`,
           );
           await new Promise((r) => setTimeout(r, 600));
           const ep2 = await wc.executeJavaScript(`aria.config.get('llm.endpoint')`);
@@ -1505,14 +1514,14 @@ function scheduleSidecarReload(name: SidecarName): void {
 // backend from the environment only at spawn, so we refresh the env from the
 // current config and restart the sidecar — but only if it has actually been
 // started. A not-yet-lazy-started sidecar needs nothing: it will read the fresh
-// env when it first spawns. A new STT model is downloaded first (the sidecar
-// can't load a missing ggml file).
+// env when it first spawns; ensureSidecar verifies its models there. Both STT
+// models and TTS engine/voice assets must be provisioned before restarting.
 async function applySidecarConfig(name: SidecarName): Promise<void> {
   if (!supervisor) return;
   applyConfigToEnv(); // refresh ALL ARIA_* env vars from the current config
   if (!lazyStarted.has(name)) return; // not running yet -> fresh env used on first spawn
   try {
-    if (name === 'stt') {
+    if (name === 'stt' || name === 'tts') {
       const ok = await ensureModelsReady(); // download the newly-selected model if absent
       if (!ok) return;
     }
@@ -1566,7 +1575,13 @@ async function ensureSidecar(name: SidecarName, timeoutMs = 20000): Promise<void
   if (!lazyStarted.has(name)) {
     let start = sidecarStarts.get(name);
     if (!start) {
-      start = supervisor.start(name).then(() => { lazyStarted.add(name); }).finally(() => { sidecarStarts.delete(name); });
+      start = (async () => {
+        if ((name === 'stt' || name === 'tts') && !await ensureModelsReady()) {
+          throw new Error(`${name} models are unavailable`);
+        }
+        await supervisor.start(name);
+        lazyStarted.add(name);
+      })().finally(() => { sidecarStarts.delete(name); });
       sidecarStarts.set(name, start);
     }
     await start;

@@ -39,6 +39,15 @@ const server = http.createServer((req, res) => {
   } else if (req.url === '/alt/models') { // proxy that nests under "models"
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ models: ['solo-model'] }));
+  } else if (req.url === '/unicode/models') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    const body = Buffer.from(JSON.stringify({ data: [{ id: 'modèle-模型' }] }));
+    const split = body.indexOf(Buffer.from('è')) + 1;
+    res.write(body.subarray(0, split));
+    setTimeout(() => res.end(body.subarray(split)), 20);
+  } else if (req.url === '/array/models') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(['z-model', { id: 'a-model' }, 'z-model']));
   } else if (req.url === '/bad/models') {
     res.writeHead(500); res.end('boom');
   } else if (req.url === '/notjson/models') {
@@ -57,6 +66,12 @@ server.listen(0, async () => {
 
     const alt = await listModels(`${base}/alt`, '');
     check('list.models-shape', alt.ok && alt.models.length === 1 && alt.models[0] === 'solo-model', JSON.stringify(alt));
+
+    const array = await listModels(`${base}/array`, '');
+    check('list.top-level-array', array.ok && JSON.stringify(array.models) === JSON.stringify(['z-model', 'a-model']), JSON.stringify(array));
+
+    const unicode = await listModels(`${base}/unicode`, '');
+    check('list.split-utf8', unicode.ok && unicode.models[0] === 'modèle-模型', JSON.stringify(unicode));
 
     const bad = await listModels(`${base}/bad`, '');
     check('list.5xx-surfaced', bad.ok === false && /500/.test(bad.error || ''), JSON.stringify(bad));
