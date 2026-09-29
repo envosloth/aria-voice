@@ -15,7 +15,8 @@ export const IPC = {
   STT_STATE: 'stt:state',
 
   TTS_PLAY: 'tts:play',     // renderer -> main: request synthesis of text
-  TTS_STOP: 'tts:stop',     // renderer -> main: cancel current synthesis
+  TTS_STOP: 'tts:stop',     // renderer -> main (invoke): cancel synthesis; resolves main's new epoch
+  TTS_EPOCH: 'tts:epoch',   // renderer -> main (invoke): main's authoritative TTS epoch (seed after load/reload)
   TTS_REPLY_DONE: 'tts:reply-done', // renderer -> main: no further requests for this reply
   TTS_AUDIO: 'tts:audio',   // main -> renderer: raw PCM chunk for playback
   TTS_STATE: 'tts:state',   // main -> renderer: chunk/done state events

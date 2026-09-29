@@ -1,9 +1,11 @@
 import './smoke-user-data';
 import { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, nativeImage } from 'electron';
+import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { Supervisor } from './supervisor';
 import { config } from './config';
+import { validateConfigSet } from './config';
 import { getSecureBackend, isSecureBackendSafe, setSecret, getSecret, deleteSecret } from './secure-storage';
 import { streamChat } from './llm-stream';
 import { listModels, normalizeChatBaseUrl } from './llm-models';
@@ -19,7 +21,9 @@ import {
   currentVersion, deliveryChannel, isInstallingUpdate,
 } from './updater';
 import { IPC } from '../shared/ipc-channels';
-import { SidecarName } from '../shared/constants';
+import {
+  SidecarName, isRendererSecretKey, isTrustedRendererUrl, validateLlmSendPayload,
+} from '../shared/constants';
 import { tunnel, installTunnelHook } from './tunnel-supervisor';
 import { SttTurnGate, TranscribeRequest } from './stt-turn';
 import { LlmGeneration, LlmGenerationGate, TtsAudioGate, TtsAudioPacket } from './voice-lifecycle';
@@ -63,6 +67,9 @@ function clearRendererUnresponsiveTimer(): void {
 }
 
 const SMOKE = process.env.ARIA_SMOKE === '1';
+// smoke-ipc-hardening.js: record TTS_PLAY epoch acceptance instead of synthesizing.
+const VERIFY_HARDENING = SMOKE && !!process.env.ARIA_VERIFY_HARDENING;
+const smokeTtsPlays: { epoch: number; mainEpoch: number; accepted: boolean }[] = [];
 
 // Global safety net: ARIA runs in the tray and must survive transient faults
 // (a failed network call in the coordinator, a sidecar spawn that rejects, a
@@ -82,6 +89,68 @@ process.on('unhandledRejection', (reason) => {
 app.on('child-process-gone', (_e, details) => {
   console.error(`[ARIA] child-process-gone: type=${details.type} reason=${details.reason}`);
 });
+
+// The only document ARIA's windows may ever display. Every IPC handler checks the
+// sender frame against it (assertTrustedSender) and navigation away is refused.
+const RENDERER_INDEX = path.join(__dirname, '..', 'renderer', 'index.html');
+
+// Navigation/window hardening for EVERY webContents (current window, a crash-
+// recovery replacement, devtools-spawned contents). The renderer is sandboxed,
+// but a navigated or popped-up page would inherit the preload's `aria.*` bridge;
+// refusing navigation, popups, and <webview> keeps that bridge on index.html.
+app.on('web-contents-created', (_e, contents) => {
+  contents.on('will-navigate', (event, url) => {
+    if (!isTrustedRendererUrl(url, RENDERER_INDEX)) {
+      event.preventDefault();
+      console.warn('[ARIA] blocked navigation to', url);
+    }
+  });
+  contents.on('will-redirect', (event, url) => {
+    if (!isTrustedRendererUrl(url, RENDERER_INDEX)) event.preventDefault();
+  });
+  contents.on('will-attach-webview', (event) => { event.preventDefault(); });
+  contents.setWindowOpenHandler(({ url }) => {
+    console.warn('[ARIA] blocked window.open to', url);
+    return { action: 'deny' };
+  });
+});
+
+/**
+ * True only for IPC from the top frame of ARIA's own window showing index.html.
+ * Subframes, other webContents, and anything navigated elsewhere are refused.
+ */
+function isTrustedSender(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
+  const frame = event.senderFrame;
+  if (!frame || frame.parent !== null) return false;
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return false;
+  return isTrustedRendererUrl(frame.url, RENDERER_INDEX);
+}
+
+function assertTrustedSender(event: IpcMainEvent | IpcMainInvokeEvent, channel: string): void {
+  if (!isTrustedSender(event)) {
+    console.warn(`[ARIA] rejected IPC on ${channel} from untrusted sender ${event.senderFrame?.url ?? '(destroyed frame)'}`);
+    throw new Error('Untrusted IPC sender');
+  }
+}
+
+// Every renderer->main channel is registered through these wrappers so no
+// handler can be added without the sender check.
+type IpcArgs = any[];
+function handle(channel: string, fn: (event: IpcMainInvokeEvent, ...args: IpcArgs) => unknown): void {
+  ipcMain.handle(channel, (event, ...args) => {
+    assertTrustedSender(event, channel);
+    return fn(event, ...args);
+  });
+}
+function on(channel: string, fn: (event: IpcMainEvent, ...args: IpcArgs) => void): void {
+  ipcMain.on(channel, (event, ...args) => {
+    try { assertTrustedSender(event, channel); } catch { return; }
+    fn(event, ...args);
+  });
+}
+
+const isNonEmptyString = (v: unknown, max = 256): v is string =>
+  typeof v === 'string' && v.length > 0 && v.length <= max;
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -165,7 +234,7 @@ function createWindow(): BrowserWindow {
   win.on('responsive', clearRendererUnresponsiveTimer);
   win.on('closed', clearRendererUnresponsiveTimer);
 
-  win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  win.loadFile(RENDERER_INDEX);
   return win;
 }
 
@@ -274,14 +343,32 @@ function registerInWindowShortcut(): void {
 }
 
 function setupIpcHandlers(): void {
-  ipcMain.handle(IPC.SESSIONS_LIST, () => sessions.listSessions());
-  ipcMain.handle(IPC.SESSIONS_GET, (_e, id: string) => sessions.getSession(id));
-  ipcMain.handle(IPC.SESSIONS_DELETE, (_e, id: string) => deletePersistedSession(id));
-  ipcMain.handle(IPC.SESSIONS_PIN, (_e, id: string, pinned: boolean) => sessions.setSessionPinned(id, pinned));
-  ipcMain.handle(IPC.SESSIONS_RESUME, (_e, id: string) => resumeSession(id));
+  handle(IPC.SESSIONS_LIST, () => sessions.listSessions());
+  handle(IPC.SESSIONS_GET, (_e, id: unknown) => (isNonEmptyString(id) ? sessions.getSession(id) : null));
+  handle(IPC.SESSIONS_DELETE, (_e, id: unknown) => {
+    if (!isNonEmptyString(id)) throw new Error('Invalid session id');
+    return deletePersistedSession(id);
+  });
+  handle(IPC.SESSIONS_PIN, (_e, id: unknown, pinned: unknown) => {
+    if (!isNonEmptyString(id) || typeof pinned !== 'boolean') throw new Error('Invalid session pin request');
+    return sessions.setSessionPinned(id, pinned);
+  });
+  handle(IPC.SESSIONS_RESUME, (_e, id: unknown) => {
+    if (!isNonEmptyString(id)) throw new Error('Invalid session id');
+    return resumeSession(id);
+  });
 
-  ipcMain.handle(IPC.CONFIG_GET, (_e, key: string) => config.get(key));
-  ipcMain.handle(IPC.CONFIG_SET, (_e, key: string, value: unknown) => {
+  handle(IPC.CONFIG_GET, (_e, key: unknown) => (isNonEmptyString(key) ? config.get(key) : undefined));
+  handle(IPC.CONFIG_SET, (_e, rawKey: unknown, rawValue: unknown) => {
+    // Renderer writes are limited to known leaf keys with type/enum/range-checked
+    // values (config.ts). A rejection reaches the renderer as a rejected invoke.
+    const key = typeof rawKey === 'string' ? rawKey : '';
+    const checked = validateConfigSet(key, rawValue);
+    if (!checked.ok) {
+      console.warn(`[ARIA] CONFIG_SET rejected: ${checked.error}`);
+      throw new Error(checked.error);
+    }
+    const value = checked.value;
     const changed = config.get(key) !== value;
     config.set(key, value);
     if (!changed) return;
@@ -327,25 +414,52 @@ function setupIpcHandlers(): void {
   // The tunnel state is also pushed to the renderer on every change
   // (the `tunnel.on('status', …)` hook above), so the renderer can
   // subscribe via TUNNEL_STATUS instead of polling.
-  ipcMain.handle(IPC.TUNNEL_SNAPSHOT, () => tunnel.snapshot());
-  ipcMain.on(IPC.TUNNEL_START, () => tunnel.start());
-  ipcMain.on(IPC.TUNNEL_STOP, () => tunnel.stop());
+  handle(IPC.TUNNEL_SNAPSHOT, () => tunnel.snapshot());
+  on(IPC.TUNNEL_START, () => tunnel.start());
+  on(IPC.TUNNEL_STOP, () => tunnel.stop());
 
-  ipcMain.handle(IPC.SECURE_BACKEND, () => ({
+  handle(IPC.SECURE_BACKEND, () => ({
     backend: getSecureBackend(),
     safe: isSecureBackendSafe(),
   }));
-  ipcMain.handle(IPC.SECURE_STORE_GET, (_e, key: string) => getSecret(key));
-  ipcMain.handle(IPC.SECURE_STORE_SET, (_e, key: string, value: string) => setSecret(key, value));
-  ipcMain.handle(IPC.SECURE_STORE_DELETE, (_e, key: string) => deleteSecret(key));
+  // Only the two credentials the UI manages; other secure-store entries (if any)
+  // are never reachable from the renderer.
+  handle(IPC.SECURE_STORE_GET, (_e, key: unknown) => {
+    if (!isRendererSecretKey(key)) throw new Error('Secure-store key not allowed');
+    return getSecret(key);
+  });
+  handle(IPC.SECURE_STORE_SET, (_e, key: unknown, value: unknown) => {
+    if (!isRendererSecretKey(key)) throw new Error('Secure-store key not allowed');
+    if (typeof value !== 'string' || value.length > 8192) throw new Error('Invalid secret value');
+    return setSecret(key, value);
+  });
+  handle(IPC.SECURE_STORE_DELETE, (_e, key: unknown) => {
+    if (!isRendererSecretKey(key)) throw new Error('Secure-store key not allowed');
+    return deleteSecret(key);
+  });
 
-  ipcMain.on(IPC.LLM_SEND, (_e, payload: string | { message: string; image?: string | null; turnId?: string; generationId?: number }) => {
-    const message = typeof payload === 'string' ? payload : payload.message;
-    const image = typeof payload === 'string' ? null : (payload.image || null);
-    const turnId = typeof payload === 'string' ? '' : (payload.turnId || '');
-    const generationId = typeof payload === 'string' || !Number.isFinite(payload.generationId)
-      ? Date.now() : Number(payload.generationId);
-    const generation = llmGenerationGate.begin(turnId || `text-${Date.now()}`, generationId);
+  on(IPC.LLM_SEND, (_e, payload: unknown) => {
+    // Shape/size validation (constants.ts): object payload, non-empty message
+    // <= 32k chars, image null or a bounded data:image/jpeg;base64 URL, and a
+    // non-empty turnId. Anything else is dropped before touching the gate.
+    const { request, error: invalidReason, correlation } = validateLlmSendPayload(payload);
+    if (!request) {
+      console.warn(`[ARIA] LLM_SEND rejected: ${invalidReason}`);
+      // Settle the renderer's pending turn (it already shows the user bubble
+      // and 'processing') rather than leaving it hung with no error.
+      if (correlation) {
+        const rejected = llmGenerationGate.begin(correlation.turnId, correlation.generationId);
+        cancelCoordination();
+        if (llmGenerationGate.isCurrent(rejected)) {
+          mainWindow?.webContents.send(IPC.LLM_ERROR, {
+            error: invalidReason, turnId: rejected.turnId, generationId: rejected.generationId,
+          });
+        }
+      }
+      return;
+    }
+    const { message, image, turnId, generationId } = request;
+    const generation = llmGenerationGate.begin(turnId, generationId);
     // Abort the prior stream before starting this generation. Its callbacks can
     // still arrive, so every callback below also checks the generation gate.
     cancelCoordination();
@@ -354,25 +468,30 @@ function setupIpcHandlers(): void {
     const send = (channel: string, body: Record<string, unknown>) => {
       if (isCurrent()) mainWindow?.webContents.send(channel, { ...body, turnId: generation.turnId, generationId: generation.generationId });
     };
-    void coordinate(message, {
+    coordinate(message, {
       onRoute: (info) => send(IPC.LLM_ROUTE, info),
       onToken: (token) => send(IPC.LLM_TOKEN, { token }),
       onTool: (info) => send(IPC.LLM_TOOL, info),
       onDone: (text) => send(IPC.LLM_DONE, { text }),
       onError: (error) => send(IPC.LLM_ERROR, { error }),
-    }, { image, turnId: generation.turnId, isCurrent });
+    }, { image, turnId: generation.turnId, isCurrent }).catch((e: unknown) => {
+      // A rejection escaping the coordinator must still settle this generation
+      // in the renderer (otherwise the orb/turn stays pending forever).
+      console.error('[ARIA] coordinate failed:', e);
+      send(IPC.LLM_ERROR, { error: e instanceof Error ? e.message : String(e) });
+    });
   });
 
   // Latency instrumentation (see perf.ts): the renderer asks once whether marks
   // are enabled, then fire-and-forgets stage marks that we log in one timeline.
-  ipcMain.handle(IPC.PERF_ENABLED, () => perfEnabled());
-  ipcMain.on(IPC.PERF_MARK, (_e, m: { turn: string; stage: string; t?: number; extra?: Record<string, unknown> }) => {
+  handle(IPC.PERF_ENABLED, () => perfEnabled());
+  on(IPC.PERF_MARK, (_e, m: { turn: string; stage: string; t?: number; extra?: Record<string, unknown> }) => {
     perfMarkExternal(m);
   });
 
   // Detected hardware + the adaptive profile for the current GPU cap, so the
   // Settings → Performance panel can show what ARIA detected and how it adapted.
-  ipcMain.handle(IPC.HARDWARE_INFO, () => {
+  handle(IPC.HARDWARE_INFO, () => {
     const hw = detectHardware();
     let cap = clampCap(config.get('ui.gpuCap'));
     // Just crashed? Report a low cap for the cooldown so the reloaded renderer
@@ -384,16 +503,17 @@ function setupIpcHandlers(): void {
   // In-app updates (see updater.ts). The renderer asks for the current version +
   // delivery channel to render the Updates panel, triggers a check, and either
   // installs (AppImage) or opens the release page (.deb/dev).
-  ipcMain.handle(IPC.UPDATE_CURRENT, () => ({ version: currentVersion(), channel: deliveryChannel() }));
-  ipcMain.on(IPC.UPDATE_CHECK, () => { void checkForUpdates(); });
-  ipcMain.on(IPC.UPDATE_INSTALL, () => { void installUpdate(); });
-  ipcMain.on(IPC.UPDATE_OPEN, (_e, url?: string) => openReleasePage(url));
+  handle(IPC.UPDATE_CURRENT, () => ({ version: currentVersion(), channel: deliveryChannel() }));
+  on(IPC.UPDATE_CHECK, () => { void checkForUpdates(); });
+  on(IPC.UPDATE_INSTALL, () => { void installUpdate(); });
+  on(IPC.UPDATE_OPEN, (_e, url?: string) => openReleasePage(url));
 
   // Barge-in: the renderer heard the wake word (or push-to-talk) while a reply
   // was still streaming — abort generation so ARIA stops talking and listens.
-  ipcMain.on(IPC.LLM_CANCEL, (_e, requested?: Partial<LlmGeneration>) => {
-    const generation = requested?.turnId && Number.isFinite(requested.generationId)
-      ? { turnId: requested.turnId, generationId: Number(requested.generationId) }
+  on(IPC.LLM_CANCEL, (_e, raw?: unknown) => {
+    const requested = raw && typeof raw === 'object' ? raw as Partial<LlmGeneration> : undefined;
+    const generation = isNonEmptyString(requested?.turnId) && Number.isFinite(requested?.generationId)
+      ? { turnId: requested!.turnId as string, generationId: Number(requested!.generationId) }
       : undefined;
     if (!generation || llmGenerationGate.isCurrent(generation)) {
       llmGenerationGate.cancel(generation);
@@ -403,21 +523,23 @@ function setupIpcHandlers(): void {
 
   // New session: abort anything in flight and wipe the conversation history so
   // the next turn starts with no prior context.
-  ipcMain.on(IPC.LLM_RESET, () => { llmGenerationGate.cancel(); cancelCoordination(); resetConversation(); });
+  on(IPC.LLM_RESET, () => { llmGenerationGate.cancel(); cancelCoordination(); resetConversation(); });
 
-  ipcMain.on(IPC.TTS_PLAY, (_e, request: { text?: string; replyId?: string; requestId?: string; epoch?: number }) => {
+  on(IPC.TTS_PLAY, (_e, request: { text?: string; replyId?: string; requestId?: string; epoch?: number }) => {
     const text = request?.text || '';
     const replyId = request?.replyId || '';
     const requestId = request?.requestId || '';
     const epoch = Number(request?.epoch);
-    if (!text || !replyId || !requestId || !Number.isFinite(epoch) || epoch !== ttsEpoch) return;
+    const accepted = !!text && !!replyId && !!requestId && Number.isFinite(epoch) && epoch === ttsEpoch;
+    if (VERIFY_HARDENING) { smokeTtsPlays.push({ epoch, mainEpoch: ttsEpoch, accepted }); return; }
+    if (!accepted) return;
     ttsAudioGate.activate(replyId, epoch);
     queueTtsControl(epoch, async () => {
       supervisor.sendToSidecar('tts', { type: 'synthesize', text, reply_id: replyId, request_id: requestId, epoch });
     });
   });
 
-  ipcMain.on(IPC.TTS_REPLY_DONE, (_e, request: { replyId?: string; epoch?: number }) => {
+  on(IPC.TTS_REPLY_DONE, (_e, request: { replyId?: string; epoch?: number }) => {
     const replyId = request?.replyId || '';
     const epoch = Number(request?.epoch);
     if (!replyId || !Number.isFinite(epoch) || epoch !== ttsEpoch) return;
@@ -427,17 +549,26 @@ function setupIpcHandlers(): void {
     });
   });
 
-  ipcMain.on(IPC.TTS_STOP, (_e, request?: { epoch?: number }) => {
+  // Main owns the TTS epoch; it survives renderer reloads (crash recovery,
+  // unresponsive reload). The renderer seeds from TTS_EPOCH at startup and
+  // adopts the value TTS_STOP resolves, so a reloaded renderer (which restarts at
+  // 0) can never be stuck below main's epoch with every chunk dropped.
+  handle(IPC.TTS_EPOCH, () => ttsEpoch);
+  handle(IPC.TTS_STOP, (_e, request?: { epoch?: unknown }) => {
     const requestedEpoch = Number(request?.epoch);
-    const nextEpoch = Number.isFinite(requestedEpoch) && requestedEpoch > ttsEpoch ? requestedEpoch : ttsEpoch + 1;
+    // Accept a renderer-proposed epoch only if it moves forward by a sane step.
+    const nextEpoch = Number.isSafeInteger(requestedEpoch) && requestedEpoch > ttsEpoch
+      && requestedEpoch <= ttsEpoch + 1_000_000
+      ? requestedEpoch : ttsEpoch + 1;
     ttsEpoch = nextEpoch;
     ttsAudioGate.activate('', ttsEpoch);
     supervisor.sendToSidecar('tts', { type: 'stop', epoch: ttsEpoch });
+    return ttsEpoch;
   });
 
   // Onboarding "Test connection": one short non-streaming round-trip to confirm
   // the endpoint + key work. Returns {ok} or {ok:false, error}.
-  ipcMain.handle(IPC.LLM_TEST, async (_e, opts: { endpoint: string; model: string; apiKey?: string }) => {
+  handle(IPC.LLM_TEST, async (_e, opts: { endpoint: string; model: string; apiKey?: string }) => {
     return await new Promise((resolve) => {
       let settled = false;
       const done = (r: { ok: boolean; error?: string }) => { if (!settled) { settled = true; resolve(r); } };
@@ -461,7 +592,7 @@ function setupIpcHandlers(): void {
   // — normalizeChatBaseUrl() converts it to the /v1/models route. A missing or
   // unauthorized endpoint returns ok:false with the underlying error so the UI
   // can show "discovery failed — enter the model manually".
-  ipcMain.handle(IPC.LLM_LIST_MODELS, async (_e, opts: { endpoint: string; apiKey?: string }) => {
+  handle(IPC.LLM_LIST_MODELS, async (_e, opts: { endpoint: string; apiKey?: string }) => {
     return await listModels(opts.endpoint, opts.apiKey || '');
   });
 
@@ -469,19 +600,25 @@ function setupIpcHandlers(): void {
   // (Hermes → ~/.hermes/.env, etc.). Reads the endpoint + gateway key so the
   // Settings/onboarding fields can pre-fill without the user hunting for the
   // key. Read-only; never persists — the renderer saves via the normal path.
-  ipcMain.handle(IPC.LLM_DETECT_HARNESS, (_e, id: string) => detectHarness(id || ''));
+  handle(IPC.LLM_DETECT_HARNESS, (_e, id: string) => detectHarness(id || ''));
 
   // Mic PCM from the renderer (getUserMedia, 16kHz mono s16le). Always feed the
   // always-on wake-word sidecar; also feed STT while an utterance is active.
-  ipcMain.on(IPC.MIC_AUDIO, (_e, chunk: ArrayBuffer) => {
-    const buf = Buffer.from(chunk);
+  on(IPC.MIC_AUDIO, (_e, chunk: unknown) => {
+    // 16 kHz s16le frames are a few KB; refuse anything that isn't a bounded buffer.
+    if (!(chunk instanceof ArrayBuffer || ArrayBuffer.isView(chunk))) return;
+    if (chunk.byteLength === 0 || chunk.byteLength > 256 * 1024) return;
+    const buf = chunk instanceof ArrayBuffer
+      ? Buffer.from(chunk)
+      : Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
     if (config.get('wakeword.enabled')) supervisor.sendPcm('wakeword', buf);
     const readyChunk = sttGate.pushAudio(buf);
     if (readyChunk) supervisor.sendPcm('stt', readyChunk);
   });
 
-  ipcMain.on(IPC.STT_START, (_e, turnId?: string) => {
-    const requestedTurnId = turnId || `voice-${Date.now()}`;
+  on(IPC.STT_START, (_e, turnId?: unknown) => {
+    const requestedTurnId = isNonEmptyString(turnId, 128) ? turnId : `voice-${Date.now()}`;
+    sttActiveTurn = null;
     sttTurnId = requestedTurnId;
     sttGate.begin(requestedTurnId);
     perfMark(requestedTurnId, 'stt_start');
@@ -491,7 +628,9 @@ function setupIpcHandlers(): void {
         // A newer utterance may supersede this async startup. Never let an old
         // promise reset the new turn's buffered audio.
         if (sttGate.isCurrent(requestedTurnId)) {
-          supervisor.sendToSidecar('stt', { type: 'start', utterance_id: requestedTurnId });
+          if (supervisor.sendToSidecar('stt', { type: 'start', utterance_id: requestedTurnId })) {
+            sttActiveTurn = requestedTurnId; // sidecar now owns this turn's state
+          }
         }
       } catch (e) {
         if (sttGate.failStart(requestedTurnId)) {
@@ -502,7 +641,8 @@ function setupIpcHandlers(): void {
     })();
   });
 
-  ipcMain.on(IPC.STT_END, (_e, turnId?: string) => {
+  on(IPC.STT_END, (_e, turnId?: unknown) => {
+    if (typeof turnId !== 'string') return;
     if (turnId && !sttGate.isCurrent(turnId)) return;
     perfMark(sttTurnId, 'stt_transcribe_req');
     const request = sttGate.end();
@@ -519,6 +659,22 @@ const STT_START_DEADLINE_MS = 5000;
 // Turn id of the in-flight voice utterance (from the renderer), so the STT
 // stage marks join the same timeline as that turn's later LLM/TTS marks.
 let sttTurnId = '';
+// The STT turn the sidecar process itself holds state for: set once `start` was
+// delivered to it (and again on ack/transcribe), cleared on result/failure. If
+// the process dies meanwhile, that turn's result can never arrive.
+let sttActiveTurn: string | null = null;
+const STT_DEATH_STATUSES = new Set(['exited', 'heartbeat-timeout', 'memory-exceeded', 'circuit-open', 'error']);
+
+/** Fail the in-flight STT turn when the sidecar holding it died. */
+function failSttTurnOnSidecarDeath(status: string, detail?: string): void {
+  const turnId = sttActiveTurn;
+  if (!turnId || !STT_DEATH_STATUSES.has(status)) return;
+  sttActiveTurn = null;
+  if (!sttGate.failStart(turnId)) return;
+  mainWindow?.webContents.send(IPC.STT_STATE, {
+    state: 'stt_failed', turnId, error: `Speech recognition stopped (${status}${detail ? `: ${detail}` : ''})`,
+  });
+}
 
 function queueTtsControl(epoch: number, action: () => Promise<void>): void {
   ttsControlChain = ttsControlChain.catch(() => {}).then(async () => {
@@ -543,7 +699,18 @@ function deliverTtsPackets(packets: TtsAudioPacket[]): void {
   }
 }
 
+function onSidecarStatus(name: SidecarName, status: string, detail?: string): void {
+  if (name === 'tts' && (status === 'started' || status === 'exited')) ttsAudioGate.resetTransport();
+  if (name === 'stt') failSttTurnOnSidecarDeath(status, detail);
+  mainWindow?.webContents.send(IPC.SIDECAR_STATUS, { name, status, detail });
+  if (status === 'error' || status === 'circuit-open') {
+    mainWindow?.webContents.send(IPC.SIDECAR_ERROR, { name, status, detail });
+  }
+  if (SMOKE) console.log(`[ARIA_SMOKE][${name}] ${status}${detail ? ': ' + detail : ''}`);
+}
+
 function sendSttTranscribe(request: TranscribeRequest): void {
+  sttActiveTurn = request.turnId;
   supervisor.sendToSidecar('stt', {
     type: 'transcribe',
     utterance_id: request.turnId,
@@ -576,14 +743,7 @@ app.whenReady().then(async () => {
   });
 
   supervisor = new Supervisor(
-    (name: SidecarName, status: string, detail?: string) => {
-      if (name === 'tts' && (status === 'started' || status === 'exited')) ttsAudioGate.resetTransport();
-      mainWindow?.webContents.send(IPC.SIDECAR_STATUS, { name, status, detail });
-      if (status === 'error' || status === 'circuit-open') {
-        mainWindow?.webContents.send(IPC.SIDECAR_ERROR, { name, status, detail });
-      }
-      if (SMOKE) console.log(`[ARIA_SMOKE][${name}] ${status}${detail ? ': ' + detail : ''}`);
-    },
+    onSidecarStatus,
     (name: SidecarName, msg: Record<string, unknown>) => {
       routeSidecarMessage(name, msg);
     },
@@ -831,6 +991,57 @@ app.whenReady().then(async () => {
       // Safety net: quit if the external verifier didn't kill us first.
       setTimeout(() => { void supervisor.stopAll().then(() => app.exit(0)); }, 20000);
       return; // skip the standard 4s auto-quit while verifying
+    }
+
+    // IPC/navigation hardening + TTS epoch reload verification. Drives the REAL
+    // renderer: bumps main's TTS epoch via stops, reloads the renderer (as crash
+    // recovery does), and confirms the fresh renderer seeded main's epoch; then
+    // attempts navigation / window.open / a disallowed secure key / an invalid
+    // config write. Consumed by scripts/smoke-ipc-hardening.js.
+    if (process.env.ARIA_VERIFY_HARDENING && mainWindow) {
+      const wc = mainWindow.webContents;
+      const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+      const out: Record<string, unknown> = {};
+      (async () => {
+        try {
+          await delay(800);
+          await wc.executeJavaScript(`(async()=>{for(let i=0;i<3;i++) await aria.tts.stop({}); return true;})()`);
+          out.mainEpochBeforeReload = ttsEpoch;
+          const reloaded = new Promise<void>((r) => wc.once('did-finish-load', () => r()));
+          wc.reload();
+          await reloaded;
+          await delay(600);
+          out.mainEpochAfterReload = ttsEpoch;
+          // A timer announcement runs the real speakOnly -> stopPlayback(true) ->
+          // ttsPlay path; main records whether the play's epoch matched its own.
+          wc.send(IPC.TIMER_FIRED, 'hardening check one');
+          await delay(400);
+          wc.send(IPC.TIMER_FIRED, 'hardening check two');
+          await delay(400);
+          out.ttsPlays = smokeTtsPlays.slice();
+          // STT sidecar death with a turn in flight must fail that turn; a
+          // benign status (log) must not.
+          sttGate.begin('verify-stt-a'); sttActiveTurn = 'verify-stt-a';
+          onSidecarStatus('stt', 'log', 'noise');
+          out.sttSurvivesLog = sttGate.isCurrent('verify-stt-a');
+          onSidecarStatus('stt', 'heartbeat-timeout', 'verify');
+          out.sttFailedOnDeath = !sttGate.isCurrent('verify-stt-a') && sttActiveTurn === null;
+          out.windowOpen = await wc.executeJavaScript(`String(window.open('https://example.com/'))`);
+          await wc.executeJavaScript(`location.href='https://example.com/'; true`).catch(() => {});
+          await delay(400);
+          out.urlAfterNavigate = wc.getURL();
+          out.secureBadKey = await wc.executeJavaScript(`aria.secure.get('not-a-key').then(()=> 'allowed', ()=> 'rejected')`);
+          out.secureGoodKey = await wc.executeJavaScript(`aria.secure.get('llm-api-key').then(()=> 'allowed', ()=> 'rejected')`);
+          out.configBad = await wc.executeJavaScript(`aria.config.set('tts.speed','fast').then(()=> 'allowed', ()=> 'rejected')`);
+          out.configGood = await wc.executeJavaScript(`aria.config.set('audio.volume',0.5).then(()=> 'allowed', ()=> 'rejected')`);
+        } catch (e) {
+          out.error = (e as Error).message;
+        }
+        console.log('[ARIA_VERIFY] hardening=' + JSON.stringify(out));
+        await supervisor.stopAll();
+        app.exit(0);
+      })();
+      return;
     }
 
     // Screen-share chat-state verification (Item 7): fake getDisplayMedia with a
@@ -1374,6 +1585,7 @@ function routeSidecarMessage(name: SidecarName, msg: Record<string, unknown>): v
       const turnId = typeof msg.utterance_id === 'string' ? msg.utterance_id : '';
       const action = sttGate.ackStarted(turnId);
       if (!action) break;
+      sttActiveTurn = turnId;
       for (const chunk of action.chunks) supervisor.sendPcm('stt', chunk);
       if (action.transcribe) sendSttTranscribe(action.transcribe);
       break;
@@ -1382,6 +1594,7 @@ function routeSidecarMessage(name: SidecarName, msg: Record<string, unknown>): v
       {
         const turnId = typeof msg.utterance_id === 'string' ? msg.utterance_id : '';
         if (!sttGate.acceptResult(turnId)) break;
+        if (sttActiveTurn === turnId) sttActiveTurn = null;
         perfMark(turnId, 'stt_result', { chars: typeof msg.text === 'string' ? msg.text.length : 0 });
         mainWindow?.webContents.send(IPC.STT_RESULT, { text: msg.text, turnId });
       }
@@ -1395,6 +1608,7 @@ function routeSidecarMessage(name: SidecarName, msg: Record<string, unknown>): v
     case 'stt_failed':
       {
         const turnId = typeof msg.utterance_id === 'string' ? msg.utterance_id : '';
+        if (sttActiveTurn === turnId) sttActiveTurn = null;
         if (sttGate.failStart(turnId)) {
           mainWindow?.webContents.send(IPC.STT_STATE, { state: 'stt_failed', turnId, error: msg.error || msg.detail || 'Speech recognition failed' });
         }

@@ -71,5 +71,40 @@ check('sessionMenu.keyboardFlow',
   /menu\.addEventListener\('keydown'/.test(app) && /btn\.focus\(\)/.test(app),
   'session overflow menus need keyboard navigation and focus return');
 
+// Push-to-talk release handlers must only end a PTT turn: a hands-free (wake
+// word / VAD) turn must not be cut off when the pointer leaves the mic button,
+// the button blurs, or an unrelated key-up reaches it.
+{
+  const pttBlock = app.slice(app.indexOf('let pttActive'), app.indexOf('// Start capturing as soon as'));
+  check('ptt.flagGatesRelease',
+    /let pttActive = false/.test(app) &&
+    /function endPushToTalk\(\)\s*\{\s*if \(!pttActive\) return;/.test(pttBlock) &&
+    /micBtn\.addEventListener\('mouseup', endPushToTalk\)/.test(pttBlock) &&
+    /micBtn\.addEventListener\('mouseleave', endPushToTalk\)/.test(pttBlock) &&
+    /micBtn\.addEventListener\('blur', endPushToTalk\)/.test(pttBlock) &&
+    !/addEventListener\('(?:mouseup|mouseleave|blur)', endUtterance\)/.test(app),
+    'PTT release must not end hands-free VAD turns');
+  check('ptt.flagSetOnPress',
+    /function startPushToTalk\(\)[\s\S]{0,300}pttActive = true/.test(pttBlock) &&
+    /micBtn\.addEventListener\('mousedown', startPushToTalk\)/.test(pttBlock),
+    'mousedown/keydown must mark the turn as push-to-talk');
+}
+
+// A voice "share my screen" whose getDisplayMedia fails must not leave the orb
+// stuck in 'processing' (submitUserMessage returns before LLM dispatch).
+{
+  const start = app.slice(app.indexOf('async function startScreenShare'), app.indexOf('function stopScreenShare'));
+  const failBranch = start.slice(start.indexOf('} catch (err)'));
+  check('screenshare.failureReturnsOrbIdle',
+    /orbState\('idle'\)/.test(failBranch),
+    'failed screen share must return the orb to idle');
+}
+
+// TTS epoch: main is authoritative; the renderer seeds from it at startup and
+// adopts main's epoch from every stop, so a renderer reload cannot desync.
+check('tts.epochSeededFromMain',
+  /aria\.tts\.epoch\(\)/.test(app) && /aria\.tts\.stop\([^)]*\)\s*\.then\(/.test(app),
+  'renderer must seed and resync its TTS epoch from main');
+
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

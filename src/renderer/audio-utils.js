@@ -60,8 +60,13 @@
 
   // Energy-based endpointer for hands-free turns. Feed it per-frame RMS (or
   // raw frames); it reports when an utterance has ended — i.e. speech was seen
-  // and then `hangMs` of sustained silence followed. Decoupled from timers so
-  // it can be unit-tested deterministically.
+  // and then sustained silence followed. `hangMs` is the normal trailing-silence
+  // delay. `shortSpeechHangMs` is a longer delay granted only while the
+  // cumulative qualified speech lies in [shortSpeechMinMs, shortSpeechMaxMs]:
+  // a brief opening fragment ("I'm…", "can you…") gets thinking time, while a
+  // completed request (more speech) and a lone cough/click (less than the
+  // floor) both end on the normal hang. Decoupled from timers so it can be
+  // unit-tested deterministically.
   //
   // Noise hardening (the conversation-mode "picks up background noise" fix):
   // (1) `minSpeechMs` — energy must stay above the gate for this long
@@ -80,6 +85,11 @@
     opts = opts || {};
     const threshold = opts.threshold != null ? opts.threshold : 0.012;
     const hangMs = opts.hangMs != null ? opts.hangMs : 800;
+    const shortSpeechMaxMs = opts.shortSpeechMaxMs != null ? Math.max(0, opts.shortSpeechMaxMs) : 0;
+    const shortSpeechHangMs = opts.shortSpeechHangMs != null
+      ? Math.max(hangMs, opts.shortSpeechHangMs)
+      : hangMs;
+    const shortSpeechMinMs = opts.shortSpeechMinMs != null ? Math.max(0, opts.shortSpeechMinMs) : 0;
     const frameMs = opts.frameMs != null ? opts.frameMs : 20;
     const minSpeechMs = opts.minSpeechMs != null ? opts.minSpeechMs : 40;
     const seedFloor = !!opts.seedFloor;
@@ -89,6 +99,7 @@
     const floorCaptureMax = opts.floorCaptureMax != null ? opts.floorCaptureMax : 0.06;
     let sawSpeech = false;
     let speechMs = 0;   // consecutive above-gate ms (resets on any quiet frame)
+    let totalSpeechMs = 0;
     let silenceMs = 0;
     let ended = false;
     let noiseFloor = seedFloor ? 0 : -1; // ambient RMS estimate
@@ -106,7 +117,12 @@
       const gate = Math.max(threshold, noiseFloor * 3);
       if (frameRms >= gate) {
         speechMs += frameMs;
-        if (!sawSpeech && speechMs >= minSpeechMs) sawSpeech = true;
+        if (!sawSpeech && speechMs >= minSpeechMs) {
+          sawSpeech = true;
+          totalSpeechMs = speechMs;
+        } else if (sawSpeech) {
+          totalSpeechMs += frameMs;
+        }
         // Once an utterance is qualified, every above-gate frame is speech. Do
         // not make a resumed speaker re-qualify before clearing a brief pause:
         // follow-up turns need 240ms to open, but a mid-sentence word after a
@@ -117,7 +133,11 @@
         if (!seedFloor) noiseFloor = noiseFloor * 0.95 + frameRms * 0.05;
         if (sawSpeech) {
           silenceMs += frameMs;
-          if (silenceMs >= hangMs) {
+          const activeHangMs = shortSpeechMaxMs > 0
+            && totalSpeechMs >= shortSpeechMinMs && totalSpeechMs <= shortSpeechMaxMs
+            ? shortSpeechHangMs
+            : hangMs;
+          if (silenceMs >= activeHangMs) {
             ended = true;
             return true;
           }
@@ -126,7 +146,7 @@
       return false;
     };
     this.pushFrame = function (float32) { return this.pushRms(rms(float32)); };
-    this.reset = function () { sawSpeech = false; speechMs = 0; silenceMs = 0; ended = false; noiseFloor = seedFloor ? 0 : -1; };
+    this.reset = function () { sawSpeech = false; speechMs = 0; totalSpeechMs = 0; silenceMs = 0; ended = false; noiseFloor = seedFloor ? 0 : -1; };
     this.hasSpeech = function () { return sawSpeech; };
   }
 
@@ -306,8 +326,23 @@
     };
   }
 
+  // Endpointing used for every hands-free (wake word / shortcut / follow-up)
+  // turn. Shared with app.js so scripts/smoke-audio.js tests the shipped tuning.
+  //   - 850ms normal trailing silence (calibration knob: shorter clips mid-pause
+  //     speakers, longer feels laggy);
+  //   - 1300ms when only 200–500ms of speech has been heard so far — an opening
+  //     fragment followed by a hesitation. A ~1s command ("what time is it")
+  //     exceeds 500ms and a cough stays under 200ms, so both use 850ms.
+  const HANDSFREE_ENDPOINT_OPTS = Object.freeze({
+    frameMs: 20,
+    hangMs: 850,
+    shortSpeechMinMs: 200,
+    shortSpeechMaxMs: 500,
+    shortSpeechHangMs: 1300,
+  });
+
   const api = {
-    TARGET_RATE, downsampleTo16k, floatToInt16, micFrameToPcm16k, rms, VadEndpointer,
+    TARGET_RATE, HANDSFREE_ENDPOINT_OPTS, downsampleTo16k, floatToInt16, micFrameToPcm16k, rms, VadEndpointer,
     SttDiscardGate, sanitizeForSpeech, collapseRepeats,
   };
 

@@ -86,9 +86,11 @@ Channel families (see `ipc-channels.ts` for the full list + inline docs):
 
 1. Add the channel to `IPC` in `src/shared/ipc-channels.ts` (with a `// direction:`
    comment).
-2. Register the handler in `setupIpcHandlers()` in `index.ts` (`ipcMain.handle` for
-   request/response, `ipcMain.on` for fire-and-forget, `webContents.send` for
-   push-to-renderer).
+2. Register the handler in `setupIpcHandlers()` in `index.ts` through the
+   sender-checked `handle()` wrapper for request/response or `on()` for
+   fire-and-forget — never raw `ipcMain.handle`/`ipcMain.on`, which skip the
+   trusted-frame check. Use `webContents.send` for push-to-renderer. Validate
+   every renderer-supplied argument's type and size.
 3. Expose it on the `aria.*` surface in `src/preload/index.ts`.
 4. Call it from `app.js`.
 

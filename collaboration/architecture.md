@@ -12,7 +12,10 @@ Three process tiers: **Electron main** (privileged, TypeScript), **renderer**
    (and to **stt** while an utterance is open).
 2. Wake word (or the mic button / global shortcut) opens an utterance
    (`STT_START`). The renderer runs energy-based endpointing (`VadEndpointer`) for
-   hands-free turns; ~850 ms of trailing silence ends it (`STT_END`).
+   hands-free turns; ~850 ms of trailing silence ends it (`STT_END`), or 1.3 s
+   when only a brief 200–500 ms opening fragment has been spoken so far. If the
+   STT sidecar dies with a turn in flight, main fails that turn (`STT_STATE`
+   `stt_failed`) so the renderer never waits on a result that cannot arrive.
 3. The **stt** sidecar (warm `whisper-server`, Vulkan) returns text (`STT_RESULT`).
 4. The renderer submits it (`LLM_SEND`). The **coordinator** routes to the direct
    LLM or the agent harness, streams the reply over SSE (`llm-stream.ts`), and emits
@@ -29,7 +32,7 @@ The orb's state machine (`idle → listening → processing → speaking`) is dr
 
 | File | Owns |
 |------|------|
-| `index.ts` | App entry: window, tray, menus, **all IPC handlers**, wiring sidecar callbacks to the renderer, renderer crash **circuit breaker** (`render-process-gone`). |
+| `index.ts` | App entry: window, tray, menus, **all IPC handlers** (registered via sender-checked `handle()`/`on()` wrappers; navigation/popup/webview guards), authoritative TTS epoch, wiring sidecar callbacks to the renderer, renderer crash **circuit breaker** (`render-process-gone`). |
 | `supervisor.ts` | Spawns/monitors sidecars: heartbeat, **restart + circuit breaker**, **RSS memory watchdog**, tree-kill on quit, PDEATHSIG backstop. Public API: `start/stop/restart/stopAll/startMonitoring/sendToSidecar/sendPcm/onBinaryData`. |
 | `coordinator.ts` | The brain of a turn: shared conversation history, `route()` to LLM vs harness (+ fallback), Hermes session continuity, per-session **token attribution**, session delete/harness-delete. |
 | `router.ts` | Pure routing heuristics (regex): agentic/realtime/action phrases → harness; chat → LLM. Also `visionDetailFor()`. Unit-tested by `smoke:router`. |
@@ -73,4 +76,5 @@ Each is `sidecars/<name>/` with its own `venv` (dev) or PyInstaller onedir binar
 ## Shared — `src/shared/`
 
 `ipc-channels.ts` (the channel-name registry — import `IPC`, never hardcode a
-string) and `constants.ts`.
+string) and `constants.ts` (also the pure renderer-input policy: `parseLlmSendPayload`,
+`isRendererSecretKey`, `isTrustedRendererUrl`).

@@ -93,7 +93,15 @@ let currentAssistantMsg = null;
 // reaches the speakers after a barge-in. Re-armed by ttsPlay() the instant we
 // intentionally ask for new speech.
 let ttsMuted = false;
+// Main owns the TTS epoch (it survives a renderer reload/crash recovery). Seed
+// from main at startup and adopt main's value after every stop; until the seed
+// arrives, playback requests stamped with a stale epoch are simply dropped.
 let ttsEpoch = 0;
+function adoptTtsEpoch(epoch) {
+  const n = Number(epoch);
+  if (Number.isFinite(n) && n > ttsEpoch) ttsEpoch = n;
+}
+try { aria.tts.epoch().then(adoptTtsEpoch).catch(() => {}); } catch (e) {}
 let activeTtsReplyId = null;
 let ttsRequestId = 0;
 
@@ -405,6 +413,10 @@ async function startScreenShare() {
   } catch (err) {
     screenStream = null;
     showError(`Screen share unavailable: ${err.message}. You can still type or talk.`);
+    // A voice "share my screen" left the orb in 'processing' (endUtterance) and
+    // submitUserMessage returns before LLM dispatch, so nothing else would ever
+    // settle it. Only reset when we're not mid-listen or speaking another reply.
+    if (orbStateName === 'processing') orbState('idle');
     return false;
   }
 }
@@ -585,7 +597,8 @@ async function startMicCapture() {
 }
 
 // Energy-based endpointing for hands-free (wake-word) utterances: after ~850ms
-// of silence (once speech has been seen) the utterance ends. Logic lives in the
+// of trailing silence (1.3s after only a brief 200–500ms opening fragment) the
+// utterance ends. Logic lives in the
 // shared, unit-tested VadEndpointer; here we just drive it and cap the duration.
 let vadActive = false;
 let vad = null;
@@ -674,23 +687,22 @@ function beginUtterance(opts) {
   // VAD endpointing only for hands-free (wake-word) turns; push-to-talk ends on
   // button release.
   vadActive = !!(opts && opts.vad);
-  // Endpoint after ~850ms of silence. 550ms was too eager — it clipped users who
-  // paused mid-thought ("can you, um…"), the "it starts replying before I'm done"
-  // report. 850ms rides over natural sentence-internal pauses while still starting
-  // transcription promptly once the user is actually finished; the 8s hard cap
-  // below bounds a stuck utterance.
-  // ponytail: fixed hang. If a slow speaker still gets clipped, this is the knob —
-  // consider a longer hang only after the first speech pause vs after a full stop.
+  // Endpointing (window.AriaAudio.HANDSFREE_ENDPOINT_OPTS): a turn normally ends
+  // after ~850ms of trailing silence. Only a brief opening fragment — 200–500ms
+  // of speech so far, e.g. "I'm…" or "can you…" — gets 1.3s, so a hesitation
+  // does not submit a one-clause turn. A ~1s command and a lone cough/click both
+  // use the normal 850ms hang; the 8s hard cap below bounds a stuck utterance.
   // Follow-up (conversation-mode) windows get a harder speech gate: the mic
   // reopens unprompted, so ambient noise must not count as the user talking —
   // 240ms of sustained energy to qualify as speech, and the window's first
   // frames seed an adaptive noise floor (see VadEndpointer). Wake-word turns
   // keep the permissive gate: the user deliberately invoked those.
+  const endpointOpts = window.AriaAudio.HANDSFREE_ENDPOINT_OPTS;
   vad = vadActive
     ? new window.AriaAudio.VadEndpointer(
       opts && opts.followup
-        ? { frameMs: 20, hangMs: 850, minSpeechMs: 240, seedFloor: true }
-        : { frameMs: 20, hangMs: 850 })
+        ? { ...endpointOpts, minSpeechMs: 240, seedFloor: true }
+        : endpointOpts)
     : null;
   clearTimeout(vadSafetyTimer);
   if (vadActive) vadSafetyTimer = setTimeout(endUtterance, 8000); // hard cap
@@ -710,6 +722,7 @@ function endUtterance(opts) {
   if (!listening) return;
   const shouldPlayDoneChime = !(opts && opts.discard);
   listening = false;
+  pttActive = false;
   vadActive = false;
   vad = null;
   clearTimeout(vadSafetyTimer);
@@ -749,20 +762,34 @@ function maybeStartFollowup() {
   beginUtterance({ vad: true, followup: true });
 }
 
-micBtn.addEventListener('mousedown', beginUtterance);
-micBtn.addEventListener('mouseup', endUtterance);
-micBtn.addEventListener('mouseleave', endUtterance);
+// Push-to-talk. Release events (mouseup/mouseleave/blur/keyup) end ONLY a turn
+// this button started: a hands-free (wake word / shortcut / follow-up) VAD turn
+// must not be cut off because the pointer drifted off the button or it blurred.
+let pttActive = false;
+function startPushToTalk() {
+  if (listening) return; // a hands-free turn is already open; leave it to VAD
+  beginUtterance();
+  if (listening) pttActive = true;
+}
+function endPushToTalk() {
+  if (!pttActive) return;
+  pttActive = false;
+  endUtterance();
+}
+micBtn.addEventListener('mousedown', startPushToTalk);
+micBtn.addEventListener('mouseup', endPushToTalk);
+micBtn.addEventListener('mouseleave', endPushToTalk);
 micBtn.addEventListener('keydown', (e) => {
   if (e.repeat || (e.key !== ' ' && e.key !== 'Enter')) return;
   e.preventDefault();
-  beginUtterance();
+  startPushToTalk();
 });
 micBtn.addEventListener('keyup', (e) => {
   if (e.key !== ' ' && e.key !== 'Enter') return;
   e.preventDefault();
-  endUtterance();
+  endPushToTalk();
 });
-micBtn.addEventListener('blur', endUtterance);
+micBtn.addEventListener('blur', endPushToTalk);
 
 // Start capturing as soon as we have a user gesture (autoplay policy) or load.
 startMicCapture();
@@ -811,6 +838,7 @@ aria.stt.onPartial((result) => {
 aria.stt.onState((event) => {
   if (!event || event.state !== 'stt_failed' || event.turnId !== currentVoiceTurnId) return;
   listening = false;
+  pttActive = false;
   vadActive = false;
   vad = null;
   clearTimeout(vadSafetyTimer);
@@ -1172,7 +1200,7 @@ function stopPlayback(cancelSidecar) {
   pcmCarryByte = -1;
   if (cancelSidecar) {
     ttsEpoch++;
-    try { aria.tts.stop({ epoch: ttsEpoch }); } catch (e) {}
+    try { aria.tts.stop({ epoch: ttsEpoch }).then(adoptTtsEpoch).catch(() => {}); } catch (e) {}
   }
 }
 
@@ -1324,7 +1352,8 @@ aria.wakeword.onDetected((phrase, score) => {
   if (listening) return; // repeated detection: do not chime into active STT audio
   playWakeChime(); // audible "I'm listening" confirmation
   // Wake word heard -> open a hands-free STT utterance with VAD endpointing:
-  // it ends automatically after ~850ms of silence (or the 8s safety cap).
+  // it ends automatically after ~850ms of trailing silence (1.3s after a brief
+  // opening fragment), or at the 8s safety cap.
   beginUtterance({ vad: true });
 });
 
@@ -1599,7 +1628,7 @@ function remoteBindingPromises(includeEnabled) {
     const el = cfg[elKey.split('.')[1]];
     if (!el) return Promise.resolve();
     let v = el[prop];
-    if (parse) v = (Number.isFinite(+v) ? parse(v) : fallback);
+    if (parse) { const n = parse(v); v = Number.isFinite(n) ? n : fallback; }
     return aria.config.set(cfgKey, v);
   });
 }
@@ -1612,7 +1641,7 @@ for (const [elKey, cfgKey, prop, parse, fallback] of remoteBindings) {
   const ev = (el.type === 'checkbox' || el.type === 'radio') ? 'change' : 'input';
   el.addEventListener(ev, () => {
     let v = el[prop];
-    if (parse) v = (Number.isFinite(+v) ? parse(v) : fallback);
+    if (parse) { const n = parse(v); v = Number.isFinite(n) ? n : fallback; }
     aria.config.set(cfgKey, v);
   });
 }

@@ -50,9 +50,17 @@ down on `balanced`+ profiles. The canvas path has been removed, but the safeguar
 - **Sidecar stdout is line-framed JSON that splits across read chunks.** The
   supervisor keeps a per-sidecar `stdoutBuf` until the newline (reset on respawn,
   size-capped). Emit whole JSON lines from Python.
-- **Endpointing vs latency is a live tension.** `VadEndpointer` hang is ~850 ms:
-  shorter clips users mid-pause ("it replied before I finished"); longer feels
-  laggy. It's a calibration knob, not a constant to "optimize away."
+- **Endpointing vs latency is a live tension.** Hands-free turns use
+  `AriaAudio.HANDSFREE_ENDPOINT_OPTS`: ~850 ms of trailing silence normally, but
+  1.3 s while only 200–500 ms of speech has been heard (an opening fragment such
+  as "I'm…" followed by a hesitation). A ~1 s command and a lone cough/click
+  (< 200 ms) both end on the normal 850 ms hang. Shorter clips users mid-pause
+  ("it replied before I finished"); longer feels laggy. These are calibration
+  knobs, not constants to "optimize away" — `smoke:audio` asserts the shipped
+  values against a 1 s command, a cough, and a short opening.
+- **Push-to-talk release only ends PTT turns.** mouseup/mouseleave/blur/keyup on
+  the mic button are gated by `pttActive`; otherwise moving the pointer off the
+  button cut off an in-progress wake-word (VAD) turn.
 - **Wake-word sensitivity vs false fires is the other tension.** Too sensitive → room
   noise/ARIA's own audio barge in and cut replies; too strict → misses. There's a
   barge-in score gate while speaking. Re-tune deliberately, both directions.
@@ -92,6 +100,18 @@ down on `balanced`+ profiles. The canvas path has been removed, but the safeguar
   viewport. The fix pattern: re-parent the popup onto `<body>` and position it from
   the button's viewport rect. (This is exactly why the session ⋮ menu was "hidden
   away.")
+- **Every renderer→main channel is sender-checked.** Register handlers only via
+  the `handle()`/`on()` wrappers in `index.ts`; they assert the sender is the top
+  frame of `mainWindow` showing the packaged `renderer/index.html`. Navigation,
+  redirects, `window.open`, and `<webview>` are refused app-wide
+  (`web-contents-created`) because any other page would inherit `aria.*`.
+  Validate payloads in main: CONFIG_SET goes through `validateConfigSet`, secure
+  storage accepts only `llm-api-key`/`harness-api-key`, and LLM_SEND is bounded
+  (`parseLlmSendPayload`). `smoke:ipc-hardening` covers all of this.
+- **Main owns the TTS epoch.** It survives renderer reloads (crash recovery,
+  unresponsive reload) while the renderer restarts at 0. The renderer seeds from
+  `aria.tts.epoch()` at startup and adopts the value `aria.tts.stop()` resolves;
+  without that, every TTS_PLAY after a reload carried a stale epoch → permanent mute.
 - **rAF loops must be capped and gated.** Uncapped orb render + TTS-RMS loops once
   pegged the CPU. Loops are FPS-capped, background-throttled, and stop themselves when
   idle. Don't add an always-on `requestAnimationFrame`.

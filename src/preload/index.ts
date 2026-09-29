@@ -39,7 +39,9 @@ const api = {
 
   tts: {
     play: (request: { text: string; replyId: string; requestId: string; epoch: number }) => ipcRenderer.send(IPC.TTS_PLAY, request),
-    stop: (request?: { replyId?: string; epoch?: number }) => ipcRenderer.send(IPC.TTS_STOP, request || {}),
+    // Resolves main's authoritative epoch after the stop (main never goes backwards).
+    stop: (request?: { replyId?: string; epoch?: number }): Promise<number> => ipcRenderer.invoke(IPC.TTS_STOP, request || {}),
+    epoch: (): Promise<number> => ipcRenderer.invoke(IPC.TTS_EPOCH),
     replyDone: (request: { replyId: string; epoch: number }) => ipcRenderer.send(IPC.TTS_REPLY_DONE, request),
     onAudio: (cb: (packet: { pcm: ArrayBuffer; replyId: string; requestId: string; epoch: number; sampleRate: number }) => void) =>
       ipcRenderer.on(IPC.TTS_AUDIO, (_e, packet: { pcm: Buffer; replyId: string; requestId: string; epoch: number; sampleRate: number }) => {

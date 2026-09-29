@@ -103,6 +103,57 @@ for (let i = 0; i < 3; i++) endedEarly = vadR.pushRms(0) || endedEarly;
 check('vad-resumed-speech-clears-pause', !endedEarly);
 check('vad-resumed-speech-still-ends-after-full-hang', vadR.pushRms(0) === false && vadR.pushRms(0) === true);
 
+// A brief opening fragment such as "I'm…" needs more thinking time than a
+// completed sentence. The extended hang applies only while cumulative speech is
+// short; once the speaker continues beyond that threshold, normal endpointing
+// resumes so full requests are not made sluggish.
+const vadOpeningPause = new A.VadEndpointer({
+  threshold: 0.1, frameMs: 20, hangMs: 100,
+  shortSpeechMaxMs: 80, shortSpeechHangMs: 240,
+});
+for (let i = 0; i < 4; i++) vadOpeningPause.pushRms(0.5); // 80ms opening fragment
+let clippedOpening = false;
+for (let i = 0; i < 8; i++) clippedOpening = vadOpeningPause.pushRms(0) || clippedOpening; // 160ms pause
+check('vad-short-opening-survives-thinking-pause', !clippedOpening);
+vadOpeningPause.pushRms(0.5); // continuation moves cumulative speech past 80ms
+let normalEndFrame = -1;
+for (let i = 0; i < 6; i++) {
+  if (vadOpeningPause.pushRms(0) && normalEndFrame < 0) normalEndFrame = i;
+}
+check('vad-continued-opening-uses-normal-hang', normalEndFrame === 4, `ended at frame ${normalEndFrame}`);
+
+// Production hands-free tuning (the exact options app.js passes). Three cases:
+//   - an ordinary ~1s command ("what time is it") must end on the NORMAL hang,
+//     not wait out the extended opening-fragment hang;
+//   - a single cough/transient (qualifies as speech but < the speech floor)
+//     must also end on the normal hang;
+//   - a genuine short opening ("I'm…", ~300ms) still survives a ~1s think pause.
+const P = A.HANDSFREE_ENDPOINT_OPTS || {};
+check('vad-prod-opts-exported', P.hangMs > 0 && P.shortSpeechHangMs > P.hangMs && P.shortSpeechMaxMs > 0,
+  JSON.stringify(P));
+function framesToEnd(opts, speechFrames, maxSilenceFrames) {
+  const v = new A.VadEndpointer(opts);
+  for (let i = 0; i < speechFrames; i++) v.pushRms(0.5);
+  for (let i = 0; i < maxSilenceFrames; i++) if (v.pushRms(0)) return i + 1;
+  return -1;
+}
+const fm = P.frameMs || 20;
+const normalFrames = Math.ceil((P.hangMs || 0) / fm);
+const cmdEnd = framesToEnd({ threshold: 0.1, ...P }, Math.round(1000 / fm), 200);
+check('vad-prod-1s-command-ends-on-normal-hang', cmdEnd > 0 && cmdEnd <= normalFrames,
+  `ended after ${cmdEnd * fm}ms silence (normal hang ${P.hangMs}ms)`);
+const coughEnd = framesToEnd({ threshold: 0.1, ...P }, 3, 200); // 60ms transient
+check('vad-prod-cough-ends-on-normal-hang', coughEnd > 0 && coughEnd <= normalFrames,
+  `ended after ${coughEnd * fm}ms silence (normal hang ${P.hangMs}ms)`);
+const openingEnd = framesToEnd({ threshold: 0.1, ...P }, Math.round(300 / fm), 200);
+check('vad-prod-short-opening-gets-extended-hang', openingEnd * fm >= 1000 && openingEnd * fm <= (P.shortSpeechHangMs || 0) + fm,
+  `ended after ${openingEnd * fm}ms silence (extended hang ${P.shortSpeechHangMs}ms)`);
+// Speech floor unit check: with shortSpeechMinMs, a 60ms blip uses normal hang.
+const floorEnd = framesToEnd({
+  threshold: 0.1, frameMs: 20, hangMs: 100, shortSpeechMaxMs: 400, shortSpeechHangMs: 300, shortSpeechMinMs: 200,
+}, 3, 50);
+check('vad-speech-floor-blocks-extended-hang', floorEnd === 5, `ended at frame ${floorEnd}`);
+
 // 9d. VadEndpointer follow-up gate: 240ms sustained energy required, and a
 //     low-level adaptive floor makes steady ambience read as silence. A noisy room
 //     (RMS 0.05, well over the 0.012 base threshold) never counts as speech…
