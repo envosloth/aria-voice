@@ -20,11 +20,13 @@
  *     single-utterance benchmark cannot supply (the app always has one)
  *
  * Tuning history (kept here so a number is never read as better than it is):
- *   sets b, c, h1-h6 were graded in sequence; each fresh set measured 75-90% and
- *   the rules were then extended for the classes it exposed. h6 was the last
- *   measurement and no rules were changed afterwards, so it is the most recent
- *   honest estimate of unseen accuracy (81.7%). The fitted corpus scores ~99%,
- *   and that gap is the real state of this heuristic router.
+ *   sets b, c, h1-h6 were graded in sequence; each fresh set measured 75-90%
+ *   unseen and the rules were then extended for the classes it exposed, which
+ *   makes that set fitted from then on. The last clean unseen measurement was
+ *   h6 at 81.7% by rule (87.5% with the model tiebreaker), and the rules were
+ *   changed again afterwards, so h6 is now a regression set too. Every case file
+ *   in this repo is therefore fitted; the fitted corpus reads ~98-99%, and that
+ *   gap to the unseen numbers is the real state of this heuristic router.
  *
  * Honesty rules: a set used while tuning is never reported as a holdout; cases
  * this project deliberately decides the other way live in
