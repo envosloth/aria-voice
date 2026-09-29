@@ -53,9 +53,9 @@ if (process.platform === 'linux' && !app.commandLine.hasSwitch('password-store')
   app.commandLine.appendSwitch('password-store', 'gnome-libsecret');
 }
 // NOTE: we intentionally keep vsync ENABLED. Disabling it (to chase uncapped
-// FPS) made the orb tear/shake; the render is cheap (~0.2ms/frame) so vsync at
-// the display's native refresh (60/120/160 Hz) is already smooth and stable.
-// Orb motion is time-based (see orb.js) so it looks identical at any refresh.
+// FPS) made the orb tear/shake. The orb's rAF loop is FPS-capped per quality
+// tier and its motion is time-based (see orb.js), so it looks identical at any
+// display refresh.
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -1212,22 +1212,18 @@ app.whenReady().then(async () => {
 
     setTimeout(async () => {
       let smokeFailed = false;
-      // Native video diagnostics; Chromium owns frame scheduling for the orb.
+      // Orb render-loop diagnostics (procedural canvas orb, see orb.js).
       if (process.env.ARIA_FPS && mainWindow) {
         try {
-          const r = await mainWindow.webContents.executeJavaScript(`(() => {
-            const video = document.getElementById('orb-animation');
-            if (!(video instanceof HTMLVideoElement)) throw new Error('orb video unavailable');
-            const quality = typeof video.getVideoPlaybackQuality === 'function'
-              ? video.getVideoPlaybackQuality() : {};
-            return {
-              decoded: quality.totalVideoFrames || 0,
-              dropped: quality.droppedVideoFrames || 0,
-              readyState: video.readyState,
-            };
-          })()`);
-          console.log(`[ARIA_FPS] native video decoded=${r.decoded} dropped=${r.dropped} readyState=${r.readyState}`);
-        } catch (e) { console.log('[ARIA_FPS] video diagnostics failed:', (e as Error).message); }
+          const r = await mainWindow.webContents.executeJavaScript(`new Promise((resolve) => {
+            const start = AriaOrb.getMetrics().frames;
+            setTimeout(() => {
+              const m = AriaOrb.getMetrics();
+              resolve({ fps: (m.frames - start) / 2, particles: m.particles, running: m.running });
+            }, 2000);
+          })`);
+          console.log(`[ARIA_FPS] orb fps=${r.fps} particles=${r.particles} running=${r.running}`);
+        } catch (e) { console.log('[ARIA_FPS] orb diagnostics failed:', (e as Error).message); }
       }
       // Offscreen screenshot for UI verification (no visible window).
       if (process.env.ARIA_SMOKE_SHOT && mainWindow) {
@@ -1241,86 +1237,68 @@ app.whenReady().then(async () => {
             if (!['idle', 'listening', 'processing', 'speaking'].includes(s)) {
               throw new Error(`invalid ARIA_ORB_STATE: ${s}`);
             }
-            // Dismiss onboarding/settings overlays so the orb is unobstructed.
-            await mainWindow.webContents.executeJavaScript(
-              `document.querySelectorAll('.overlay,#onboard-overlay,#settings-overlay').forEach(e=>{e.classList.remove('visible');e.hidden=true;e.style.display='none';}); true;`,
+            // Hide onboarding/settings overlays for the rest of this capture:
+            // onboarding loads asynchronously and can re-show after removal.
+            await mainWindow.webContents.insertCSS(
+              '.overlay,.onboard-overlay,#onboard-overlay,#settings-overlay{display:none!important}',
             );
-            const frame = s === 'processing' || s === 'speaking' ? 4.4 : 0;
-            await mainWindow.webContents.executeJavaScript(`new Promise((resolve, reject) => {
-              const state = ${JSON.stringify(s)};
-              const video = document.getElementById('orb-animation');
-              if (!(video instanceof HTMLVideoElement)) {
-                reject(new Error('orb video unavailable'));
-                return;
-              }
-              if (typeof orbState === 'function') orbState(state);
-              else AriaOrb.setState(state);
-              if (state === 'speaking') AriaOrb.setLevel(0.7);
-              video.pause();
-              const target = ${frame};
-              if (Math.abs(video.currentTime - target) < 0.01) {
-                resolve(true);
-                return;
-              }
-              const timer = setTimeout(() => reject(new Error('orb snapshot seek timed out')), 1500);
-              video.addEventListener('seeked', () => {
-                clearTimeout(timer);
-                video.pause();
-                resolve(true);
-              }, { once: true });
-              video.currentTime = target;
-            })`);
-            await new Promise((r) => setTimeout(r, 300));
             await mainWindow.webContents.executeJavaScript(`(() => {
-              document.querySelectorAll('.overlay,#onboard-overlay,#settings-overlay')
+              document.querySelectorAll('.overlay,.onboard-overlay,#onboard-overlay,#settings-overlay')
                 .forEach((element) => element.remove());
               return true;
             })()`);
-            await new Promise((r) => setTimeout(r, 250));
             const rendered = await mainWindow.webContents.executeJavaScript(`new Promise((resolve, reject) => {
               const expectedState = ${JSON.stringify(s)};
               const expectedPhase = expectedState === 'processing' ? 'thinking'
                 : expectedState === 'speaking' ? 'speaking' : 'consolidated';
-              const expectedTime = ${frame};
-              const video = document.getElementById('orb-animation');
-              if (!(video instanceof HTMLVideoElement)) {
-                reject(new Error('orb video unavailable for final state assertion'));
+              const canvas = document.getElementById('orb-canvas');
+              if (!(canvas instanceof HTMLCanvasElement)) {
+                reject(new Error('orb canvas unavailable'));
                 return;
               }
               if (typeof orbState === 'function') orbState(expectedState);
               else AriaOrb.setState(expectedState);
               if (expectedState === 'speaking') AriaOrb.setLevel(0.7);
-              video.pause();
-              const verify = () => requestAnimationFrame(() => requestAnimationFrame(() => {
-                video.pause();
+              AriaOrb.settle();
+              requestAnimationFrame(() => requestAnimationFrame(() => {
+                // Startup IPC (presets, wake-word state) can land between the
+                // request and the capture; re-assert and settle the requested
+                // state so the PNG is deterministic, then verify the adapter.
+                if (AriaOrb.getState() !== expectedState) {
+                  if (typeof orbState === 'function') orbState(expectedState);
+                  else AriaOrb.setState(expectedState);
+                }
+                AriaOrb.settle();
                 const actual = {
                   adapterState: AriaOrb.getState(),
                   bodyState: document.body.dataset.state,
-                  videoState: video.dataset.state,
-                  phase: video.dataset.phase,
-                  paused: video.paused,
-                  currentTime: video.currentTime,
+                  canvasState: canvas.dataset.state,
+                  phase: AriaOrb.getPhase(),
+                  hidden: canvas.hidden,
+                  frames: AriaOrb.getMetrics().frames,
+                  expansion: AriaOrb.getMetrics().expansion,
+                  visibility: document.visibilityState,
                 };
                 if (actual.adapterState !== expectedState || actual.bodyState !== expectedState
-                  || actual.videoState !== expectedState || actual.phase !== expectedPhase
-                  || !actual.paused || Math.abs(actual.currentTime - expectedTime) > 0.05) {
+                  || actual.canvasState !== expectedState || actual.phase !== expectedPhase
+                  || actual.hidden || actual.frames < 1) {
                   reject(new Error('orb snapshot state mismatch: ' + JSON.stringify(actual)));
                   return;
                 }
                 resolve(actual);
               }));
-              if (Math.abs(video.currentTime - expectedTime) < 0.01) {
-                verify();
-                return;
-              }
-              const timer = setTimeout(() => reject(new Error('final orb snapshot seek timed out')), 1500);
-              video.addEventListener('seeked', () => {
-                clearTimeout(timer);
-                verify();
-              }, { once: true });
-              video.currentTime = expectedTime;
             })`);
-            console.log(`[ARIA_SMOKE] orb state verified: ${s} phase=${rendered.phase} paused=${rendered.paused}`);
+            // Onboarding loads asynchronously and can re-insert its overlay after
+            // the first removal; clear again so the capture shows the orb.
+            await new Promise((r) => setTimeout(r, 400));
+            await mainWindow.webContents.executeJavaScript(`(() => {
+              document.querySelectorAll('.overlay,.onboard-overlay,#onboard-overlay,#settings-overlay')
+                .forEach((element) => element.remove());
+              AriaOrb.settle();
+              return true;
+            })()`);
+            await new Promise((r) => setTimeout(r, 150));
+            console.log(`[ARIA_SMOKE] orb state verified: ${s} phase=${rendered.phase} frames=${rendered.frames}`);
           }
           if (process.env.ARIA_CHAT_DEMO) {
             // Drive a fake harness turn through the REAL IPC path (route + tool
