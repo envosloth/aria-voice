@@ -33,6 +33,41 @@
       "router": "llm",
       "other_label": "harness",
       "ruling": "A negated command performs no action, so the router answers it in chat (it can still explain or ask what the user wants). The independent labeler read any mention of an alarm as an agent task."
+    },
+    {
+      "set": "routing-cases-h2a.json",
+      "text": "The printer's jammed again and I can't get it to stop.",
+      "router": "llm",
+      "other_label": "harness",
+      "ruling": "A bare statement about a device is conversation unless it also asks for help. The same labeler called 'The kitchen light is still on.' harness while a different one called 'My printer has been jammed all morning.' chat, so this phrasing is two-way."
+    },
+    {
+      "set": "routing-cases-h3a.json",
+      "text": "My alarm didn't go off this morning.",
+      "router": "harness",
+      "other_label": "llm",
+      "ruling": "The labelers split on device statements; 'alarm' pulls it to the agent here. Two-way."
+    },
+    {
+      "set": "routing-cases-h4.json",
+      "text": "Is this laptop good enough for video editing?",
+      "router": "llm",
+      "other_label": "harness",
+      "ruling": "Shopping/advice about a device the user owns is knowledge under the policy, but the labeler read 'this laptop' as looking at hardware."
+    },
+    {
+      "set": "routing-cases-h4.json",
+      "text": "Turn that frown upside down.",
+      "router": "harness",
+      "other_label": "llm",
+      "ruling": "An idiom containing an action verb. Rare in practice; special-casing idioms is not worth the rule surface."
+    },
+    {
+      "set": "routing-cases-h3a.json",
+      "text": "Draft a short apology email to my landlord.",
+      "router": "harness",
+      "other_label": "llm",
+      "ruling": "Producing a deliverable is a machine change, but the same class was labeled chat elsewhere ('I don't need you to send anything, just draft an apology'), and the opposite case ('Write the teacher a thank-you note') was labeled harness. Two-way; the router treats composing a new document as work it can save, and only negations or 'rewrite my text' as chat."
     }
   ]
 }

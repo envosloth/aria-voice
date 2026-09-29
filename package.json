@@ -72,8 +72,9 @@
     "smoke:ipc-hardening": "npm run build && node scripts/smoke-ipc-hardening.js",
     "smoke:turn-isolation": "node scripts/smoke-turn-isolation.js",
     "smoke:model-startup": "node scripts/smoke-model-startup.js",
-    "smoke:routing-accuracy": "npm run build && node scripts/routing-benchmark.js scripts/routing-cases-b.json scripts/routing-cases-c.json --holdout scripts/routing-cases-h1.json scripts/routing-adversarial.json scripts/routing-cases-h2a.json scripts/routing-cases-h2b.json",
-    "smoke:routing-accuracy:dev": "npm run build && node scripts/routing-benchmark.js"
+    "smoke:routing-accuracy": "npm run build && node scripts/routing-benchmark.js scripts/routing-cases-b.json scripts/routing-cases-c.json --holdout scripts/routing-cases-h1.json scripts/routing-adversarial.json scripts/routing-cases-h2a.json scripts/routing-cases-h2b.json scripts/routing-cases-h3a.json scripts/routing-cases-h3b.json scripts/routing-cases-h4.json",
+    "smoke:routing-accuracy:dev": "npm run build && node scripts/routing-benchmark.js",
+    "smoke:routing-accuracy:quick": "npm run build && node scripts/routing-benchmark.js"
   },
   "author": "ARIA Project <aria@localhost>",
   "license": "MIT",

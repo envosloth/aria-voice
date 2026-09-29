@@ -60,7 +60,7 @@ const NEGATED_TOOL =
 // A negated ACTION is not an action either: "don't add anything to my calendar,
 // I'm just thinking out loud".
 const NEGATED_ACTION =
-  /\b(?:don'?t|do not|no need to|not going to|won'?t)\b(?!\s+(?:forget|forgetting))[^.]{0,24}\b(?:add|put|send|post|schedule|create|make|set|book|order|buy|text|email|call|delete|move|change|turn|touch|mess with)\b/i;
+  /\b(?:don'?t|do not|no need to|not going to|won'?t)\b(?!\s+(?:forget|forgetting))[^.]{0,24}\b(?:add|put|send|post|schedule|create|make|set|book|order|buy|text|email|call|delete|move|change|turn|touch|mess with|run|execute|install|deploy|launch)\b/i;
 const NEGATED_DEVICE =
   /\b(?:don'?t|do not|no need to)\b(?!\s+(?:forget|forgetting))[^.]{0,20}\b(?:turn (?:it|the)|dim|brighten|lock|restart|shut down|set)\b|\bcan you not\b|\bplease don'?t\b/i;
 
@@ -87,7 +87,7 @@ const WRITE_DELIVERABLE =
 // the user is describing — so it counts when the same sentence asks for an
 // ACTION on it (see DEICTIC_ACTION); otherwise the knowledge/advice rules win.
 const ON_SCREEN =
-  /\b(?:on my screen|on the screen|on my display|in front of me|what am i looking at|what'?s on my screen|highlighted (?:text|code)|this window|that window|error dialog on my screen)\b|\bi(?:'m| am) looking at\b[^.]{0,40}\b(?:fix|click|copy|read|edit|paste|open|close|translate|summari[sz]e)\b|\bwhat does (?:this|that) say\b|^(?:please |can you )?(?:summari[sz]e|read|explain|translate|fix|check|look at) (?:this|that|it)\b[^.]{0,25}$|\bread (?:me )?(?:that|this|it|the last part)\b[^.]{0,20}\b(?:out loud|aloud|again)\b/i;
+  /\b(?:on my screen|on the screen|on my display|in front of me|what am i looking at|what'?s on my screen|highlighted (?:text|code)|this window|that window|error dialog on my screen)\b|\bi(?:'m| am) looking at\b[^.]{0,40}\b(?:fix|click|copy|read|edit|paste|open|close|translate|summari[sz]e)\b|\bwhat does (?:this|that) say\b|\bread (?:me )?(?:that|this|it|the last part)\b[^.]{0,20}\b(?:out loud|aloud|again)\b/i;
 
 // Rule 4: imperative orders at the start of the message. Start-anchored so a
 // noun mid-sentence can't trigger it, with a bounded action-verb vocabulary.
@@ -97,7 +97,7 @@ const ACTION =
 // Rule 4 (deictic): a verb applied to "this/that <thing>", which only makes
 // sense as an instruction about something the machine is showing.
 const DEICTIC_ACTION =
-  /\b(?:read|click|press|copy|paste|highlight|open|fix|patch|refactor|run|grep|check|edit|delete|remove|rename|merge|rebase|scroll|select|type|compute|calculate|inspect)\b[^.]{0,24}\b(?:this|that|the) (?:error|code|message|log|stack ?trace|trace|document|doc|page|window|dialog|screenshot|chart|image|graph|text|button|regex|function|snippet|script|file|output|config)\b/i;
+  /\b(?:read|click|press|copy|paste|highlight|open|fix|patch|refactor|run|grep|check|edit|delete|remove|rename|merge|rebase|scroll|select|type|compute|calculate|inspect|translate)\b[^.]{0,24}\b(?:this|that|the) (?:error|code|message|log|stack ?trace|trace|document|doc|page|window|dialog|screenshot|chart|image|graph|text|button|regex|function|snippet|script|file|output|config)\b/i;
 
 // Rule 5: machine / account changes a chat model cannot perform. These outrank
 // a knowledge framing because the user is asking to change a system.
@@ -106,12 +106,12 @@ const MACHINE_CHANGE =
 
 // Rule 6: knowledge framing — the user wants to understand something.
 const CHAT_KNOWLEDGE =
-  /^\s*(?:can you |could you |could you please |please |quick question[,\s]*|so )*(?:explain|describe|teach me|walk me through|talk me through|help me understand|define|summari[sz]e|tell me about|give me (?:an? )?(?:overview|summary) of)\b|\bwhat does (?:the )?(?:word|term|phrase|acronym) .{1,40}\bmean\b|\bwhat does .{1,40}\b(?:do|return|mean|set|use|stand for)\b|\bwhat(?:'s| is) the difference between\b|\bwhat are the differences\b|\bwhy (?:is|are|does|do|did|can'?t)\b|\bwhen (?:was|were|did)\b|\bwhat (?:was|were)\b|\bwhen (?:is|are|does|do)\b[^.]{0,40}\b(?:usually|typically|generally|normally|every (?:year|week|day|month|season)|around here|in general|in (?:january|february|march|april|may|june|july|august|september|october|november|december))\b|\bhow (?:does|do|did) \w+|\bhow (?:would|might) (?:a|an|the|you|one|that) \w+|\bwho (?:invented|wrote|discovered|created|was the)\b|\bteach me (?:about|how)\b|\bexplain (?:to me )?(?:how|why|what)\b/i;
+  /^\s*(?:can you |could you |could you please |please |quick question[,\s]*|so )*(?:explain|describe|teach me|walk me through|talk me through|help me understand|define|summari[sz]e|tell me about|give me (?:an? )?(?:overview|summary) of)\b|\bwhat does (?:the )?(?:word|term|phrase|acronym) .{1,40}\bmean\b|\bwhat does .{1,40}\b(?:do|return|mean|set|use|stand for)\b|\bwhat(?:'s| is) the difference between\b|\bwhat are the differences\b|\bwhy (?:is|are|does|do|did|can'?t|would|won'?t|should)\b|\bwhen (?:was|were|did)(?!\s+(?:i|we)\b)\b|\bwhat (?:was|were)\b|\bwhen (?:is|are|does|do)\b[^.]{0,40}\b(?:usually|typically|generally|normally|every (?:year|week|day|month|season)|around here|in general|in (?:january|february|march|april|may|june|july|august|september|october|november|december))\b|\bhow (?:does|do|did) \w+|\bhow (?:would|might) (?:a|an|the|you|one|that) \w+|\bwho (?:invented|wrote|discovered|created|was the)\b|\bteach me (?:about|how)\b|\bexplain (?:to me )?(?:how|why|what)\b/i;
 
 // Rule 6 exception: the question is about a failure or result of MY system, so
 // answering it means looking at the machine, not reciting knowledge.
 const MY_SYSTEM_TROUBLE =
-  /\bmy (?:build|deploy|deployment|benchmark|test|tests|test suite|pipeline|container|cluster|branch|repo|repository|app|application|server|machine|disk|drive|backup|code|script|loop|function|program|query|database|python|node|laptop|phone)\b[^.]{0,40}\b(?:fail|failed|failing|broke|broken|crash|crashed|error|errors|down|stuck|hung|slow)\b|\bwhy (?:did|does) my\b[^.]{0,30}\b(?:fail|break|crash|hang|stop working)\b|\bexplain (?:the )?(?:results|output|numbers) of my\b|\bwhat(?:'s| is) wrong with my\b/i;
+  /\bmy (?:build|deploy|deployment|benchmark|test|tests|test suite|pipeline|container|cluster|branch|repo|repository|app|application|server|machine|disk|drive|backup|code|script|loop|function|program|query|database|python|node)\b[^.]{0,40}\b(?:fail|failed|failing|broke|broken|crash|crashed|error|errors|down|stuck|hung|slow)\b|\bwhy (?:did|does) my\b[^.]{0,30}\b(?:fail|break|crash|hang|stop working)\b|\bexplain (?:the )?(?:results|output|numbers) of my\b|\bwhat(?:'s| is) wrong with my\b/i;
 
 // A knowledge framing still means live data when the sentence asks about NOW —
 // "explain what the weather is right now" wants the agent, not a lecture.
@@ -120,7 +120,7 @@ const KNOWLEDGE_LIVE_OVERRIDE =
 
 // Rule 7: live world data.
 const LIVE_DATA =
-  /\b(?:weather|forecast|temperature|humidity|raining|rain|snowing|snow|sunny|cloudy|windy|storm|umbrella|sunrise|sunset|uv index|air quality|pollen|news|headlines|breaking news|stock price|stock market|share price|scores?|standings|who'?s winning|who is winning|who won|exchange rate|bitcoin|ethereum|crypto|price of|how much is|market cap|this week|this weekend|right now|currently|the latest|most recent|newest|up[- ]?to[- ]?date|current version|latest version|what'?s happening|what'?s going on in the world)\b/i;
+  /\b(?:weather|forecast|temperature|humidity|raining|rain|snowing|snow|sunny|cloudy|windy|storm|umbrella|sunrise|sunset|uv index|air quality|pollen|news|headlines|breaking news|stock price|stock market|share price|scores?|standings|exchange rate|(?:bitcoin|ethereum|crypto|btc|eth)\b[^.]{0,20}\b(?:price|worth|value|rate|doing|at)|price of|how much is|market cap|this week|this weekend|right now|currently|the latest|most recent|newest|up[- ]?to[- ]?date|current version|latest version|what'?s happening|what'?s going on in the world)\b/i;
 
 // Rule 7: navigation / proximity / place lookups.
 // A question about a specific place's opening/reservation behaviour is a live
@@ -141,17 +141,38 @@ const CHECK_MY_STUFF =
 // Questions only the user's own data can answer: how far they walked, when they
 // last did something, how long until an event, what something cost last month.
 const MY_DATA_QUESTION =
-  /\bhow many (?:steps|calories|miles|kilometers|km|hours|minutes|days) (?:did|have) i\b|\bdid i (?:already )?(?:take|do|finish|send|pay|call|walk|water|log|book|order|schedule)\b|\bwhen did i (?:last|first)\b|\bhow many days (?:until|till|to)\b|\bhow long until (?:my|the|our)\b|\bwhat did .{0,25}\bcost (?:last|this)\b|\b(?:last|this) (?:month|year|week),?\s*how much\b|\bhow much (?:did|have) (?:we|i) (?:pay|spend|spent)\b/i;
+  /\bhow many (?:steps|calories|miles|kilometers|km|hours|minutes|days) (?:did|have) i\b|\bdid i (?:already )?(?:take|do|finish|send|pay|call|walk|water|log|book|order|schedule)\b|\bwhat did i (?:have|eat|do|say|buy|order|send)\b|\bwhen did i (?:last|first)\b|\bhow many days (?:until|till|to)\b|\bhow long until (?:my|the|our)\b|\bwhat did .{0,25}\bcost (?:last|this)\b|\b(?:last|this) (?:month|year|week),?\s*how much\b|\bhow much (?:did|have) (?:we|i) (?:pay|spend|spent)\b/i;
 
 // A statement about the user's own habits is conversation, not a request.
 const HABIT_STATEMENT =
   /^(?:every (?:morning|day|week|night|evening)|most (?:mornings|days|evenings)|i (?:usually|always|often|normally|sometimes|tend to|like to)|we (?:usually|always|often|normally))\b/i;
 
 // "just say if it clashes" is still a question about the user's calendar.
-const CALENDAR_CHECK = /\b(?:calendar|schedule|agenda|plans?)\b[^.]{0,30}\b(?:clash|conflict|double[- ]booked|overlap)\b|\b(?:clash|conflict|overlap)\b[^.]{0,30}\b(?:calendar|schedule|plans?)\b/i;
+const CALENDAR_CHECK = /\b(?:calendar|schedule|agenda|plans?)\b[^.]{0,30}\b(?:clash(?:es)?|conflicts?|double[- ]booked|overlaps?)\b|\b(?:clash(?:es)?|conflicts?|overlaps?)\b[^.]{0,30}\b(?:calendar|schedule|plans?)\b/i;
+
+// "how's it going with that thing I asked about" is a follow-up on an earlier
+// request, which only the agent that ran it can answer.
+const FOLLOWUP_STATUS = /\b(?:that|the|this) (?:thing|stuff|task|job|request|email|order|booking) (?:i|we) (?:asked|mentioned|sent|requested|ordered)\b/i;
+
+// A named document on this machine ("summarize this PDF", "the draft in my
+// folder") is work even when the verb sounds like a knowledge request.
+const DOCUMENT_ON_MACHINE = /\b(?:pdf|docx?|spreadsheet|attachment|folder|downloads|the (?:file|document|draft) (?:in|i)|my (?:drafts|files|documents|downloads))\b/i;
+
+// Capability questions are conversation ("what can you actually do with my
+// calendar", "do you have access to my email").
+const CAPABILITY_QUESTION =
+  /\bwhat can you (?:actually )?(?:do|see|access|read)\b|\b(?:do|can) you (?:have|get) access to\b|\bcan you (?:see|access|read) my\b|\bwhat (?:are|is) your (?:capabilities|limits)\b/i;
+
+// A definition of a term inside some domain is knowledge, not a system action.
+const TEXTBOOK_QUESTION = /\bwhat(?:'s| is) a\b[^.]{0,40}\bin (?:an?|the) \w+\b/i;
+
+// An appliance mentioned as broken is a request only when the user also asks.
+const ASK_CUE = /\b(?:can|could|would) you\b|\bplease\b|\?|\bhelp\b|\bwhat should i\b|\bfix it\b|\bdo something\b|\bdeal with it\b|\bwould you mind\b/i;
 
 const SEE_IF = /\bsee if (?:the|my|they|it|there|that)\b/i;
-const READ_FILE = /\bread\b[^.]{0,25}\b(?:pdf|docx?|spreadsheet|attachment|report|article|file|folder|downloads)\b/i;
+const READ_FILE = /\b(?:read|summari[sz]e|translate|open|scan)\b[^.]{0,25}\b(?:pdf|docx?|spreadsheet|attachment|report|article|file|folder|downloads|document)\b|\bsave (?:it|that|this|the (?:summary|translation|file))\b/i;
+// Sending an artifact to someone is an action.
+const SEND_ARTIFACT = /\b(?:email|send|share|forward|text) (?:it|this|that|them|the [\w-]+) (?:to|over to)\b/i;
 
 // Outdoor events depend on the sky right now.
 const SKY_EVENT = /\b(?:meteor|eclipse|aurora|comet|fireworks?|planet|stars?)\b[^.]{0,30}\b(?:tonight|today|tomorrow|this (?:evening|weekend)|visible|clear enough)\b|\bsky\b[^.]{0,25}\b(?:clear|cloudy|cloud cover)\b/i;
@@ -180,7 +201,7 @@ const IMPLICIT_BROKEN =
 const GET_STARTED = /\bget (?:the|my|that)\b[^.]{0,25}\b(?:started|going|running|ready|done|booked|scheduled|ordered|fixed|printed)\b|\b(?:handle|take care of|deal with|sort out) (?:it|that|this)\b|\b(?:do|fix|check) it\b|\bforget (?:the|that|all that)\b[^.]{0,25}\bjust\b|\bread out\b|\bread (?:me )?(?:my|the) (?:last|latest|previous|next) (?:message|text|email|note)\b/i;
 const IMPLICIT_ORDER = /\b(?:i'?m|im) (?:out of|running low on|all out of)\b[^.]{0,30}\b(?:get|order|buy|pick up|add|grab)\b|\bget me (?:some|more|another|a|an)\b/i;
 const IMPLICIT_LOOKUP =
-  /\b(?:look (?:that|it|this) up|search for it)\b[^.]{0,15}\b(?:online|on the web|on the internet)\b|\bgo look (?:that|it) up\b/i;
+  /\b(?:look (?:that|it|this) up|search for it)\b[^.]{0,15}\b(?:online|on the web|on the internet)\b|\bgo look (?:that|it) up\b|\bgo online\b|\b(?:check|look) (?:that|this|it) (?:up )?online\b/i;
 
 // Money conversion and cross-store comparison are lookups the assistant is
 // expected to perform (a live rate, three shop pages) rather than arithmetic.
@@ -212,7 +233,7 @@ const AGENTIC = new RegExp(
 
     // news / finance / sports (live)
     'news', 'headlines', 'stock', 'stocks', 'shares', 'market', 'crypto',
-    'bitcoin', 'ethereum', 'price of', 'how much is', 'exchange rate', 'currency',
+    'price of', 'how much is', 'exchange rate', 'currency',
     'score', 'scores', 'standings', 'latest score', 'final score',
     // search / web / research
     'search', 'search for', 'look up', 'lookup', 'google', 'bing', 'wikipedia',
@@ -303,7 +324,8 @@ export function route(message: string, cfg: RouteConfig): Target {
   // "Every morning I check the traffic before leaving" describes a habit; it
   // asks for nothing.
   if (HABIT_STATEMENT.test(text) && !/\?|\b(?:can you|could you|please|remind me|set|add|check if)\b/i.test(text)) return 'llm';
-  if (LANGUAGE_FIX.test(text) && !FILE_WORK_FIX.test(text)) return 'llm';
+  const openDocument = /\b(?:in my (?:drafts|files|documents|folder|downloads)|i have open|attached|saved|in the file|in the document)\b/i.test(text);
+  if (LANGUAGE_FIX.test(text) && !FILE_WORK_FIX.test(text) && !openDocument) return 'llm';
   // A negation loses when the same sentence also carries a positive instruction
   // ("don't just tell me, actually add it to my calendar", "don't guess, just
   // look it up online") and never covers "don't let me forget" (a reminder).
@@ -311,27 +333,38 @@ export function route(message: string, cfg: RouteConfig): Target {
     && !/\b(?:actually|instead|but)\b/i.test(text)
     && !/\bjust (?:look|add|set|send|do|check|go|tell)\b/i.test(text)
     && !/\b(?:let me forget|forget to)\b/i.test(text)
-    && !/\b(?:clash|conflict|double[- ]booked|overlap)\b/i.test(text);
+    && !/\b(?:clash(?:es)?|conflicts?|double[- ]booked|overlaps?)\b/i.test(text);
   if (NEGATED_TOOL.test(text) || NEGATED_ACTION.test(text) || NEGATED_DEVICE.test(text)) {
     if (negated) return 'llm';
+    // "don't run anything, just tell me" — the second half is the request.
+    if (/\b(?:don'?t|do not|no need to)\b[^.]{0,30}\bjust (?:tell|say|explain|talk|chat|answer)\b/i.test(text)) return 'llm';
   }
-  if (HYPOTHETICAL.test(text)) return 'llm';
+  // …but a hypothetical that also carries a real request is still a request
+  // ("pretend you're my assistant and book a table for two at seven").
+  const HYPOTHETICAL_ASK = /\b(?:book|order|buy|reserve|set|create|add|send|schedule|call|email|text|remind|check)\b/i;
+  if (HYPOTHETICAL.test(text) && !(HYPOTHETICAL_ASK.test(text) && !/\b(?:i asked you to|what would you need|what would that take)\b/i.test(text))) return 'llm';
   // A word problem with a hypothesis and no live data is arithmetic.
   if (/\bif i\b/i.test(text) && /\bhow (?:much|many)\b/i.test(text) && !LIVE_DATA.test(text) && !MY_DATA_QUESTION.test(text)) return 'llm';
-  if (EDIT_TEXT.test(text)) return 'llm';
+  // Editing text the user has OPEN or saved is machine work; editing prose they
+  // pasted or described is chat.
+  if (EDIT_TEXT.test(text) && !/\b(?:in my (?:drafts|files|documents|folder|downloads)|i have open|attached|saved|in the file|in the document)\b/i.test(text)) return 'llm';
 
   // 3. Anything the user points at on screen belongs to the agent, which is the
   // only target that can see or touch it ("summarize the document I'm looking at"
   // must not be answered out of the chat model's imagination).
   // A bare "summarize this" is about something in front of the user; "summarize
   // this function in one sentence" is a question about a snippet.
-  const bareDeictic = /^(?:please |can you )?(?:summari[sz]e|read|explain|translate|fix|check|look at)\s+(?:this|that|it)\s*[.!?]?$/i.test(text.trim());
+  const bareDeictic = (text.trim().split(/\s+/).length <= 4
+      && /^(?:please |can you )?(?:summari[sz]e|read|explain|translate|fix|check|look at)\s+(?:this|that|it)\s*[.!?]?$/i.test(text.trim()))
+    || /^(?:please |hey aria )?(?:what'?s|what is|who'?s|who is|what does) (?:this|that)\s*[.!?]?$/i.test(text.trim())
+    || /\bis (?:it|that|this) far (?:from here|away)\b/i.test(text);
   if (ON_SCREEN.test(text) || bareDeictic) return 'harness';
 
   // 4. An imperative is an order, even when the rest of the sentence reads like a
   // question ("google who invented the telescope") or the object is deictic
   // ("fix this regex", "read this error to me").
-  if (ACTION.test(text) || TIMER_COMMAND.test(text) || DEVICE_STATE.test(text)) return 'harness';
+  const recallAsk = /^\s*(?:please\s+)?remind me\s+(?:how|what|when|where|who|why|if|whether|about|of|that)\b/i.test(text);
+  if ((ACTION.test(text) && !recallAsk) || TIMER_COMMAND.test(text) || DEVICE_STATE.test(text)) return 'harness';
   if (DEICTIC_ACTION.test(text)) return 'harness';
 
   // 5. A machine or account change the chat model cannot perform — including
@@ -348,11 +381,17 @@ export function route(message: string, cfg: RouteConfig): Target {
   const LEGACY = /\b(?:usually|typically|generally|normally|on average|in general|these days|at this time of year|historically|in \d{4}|in (?:january|february|march|april|may|june|july|august|september|october|november|december)|on (?:mars|jupiter|venus|saturn|the moon)|in (?:space|history)|centur(?:y|ies)|ancient|medieval|invented|history of)\b/i;
   const TIMELESS = /\b(?:usually|typically|generally|normally|on average|in general|these days|at this time of year|historically|every (?:year|week|day|month|season)|in \d{4}|in (?:january|february|march|april|may|june|july|august|september|october|november|december)|on (?:mars|jupiter|venus|saturn|the moon)|in (?:space|history)|centur(?:y|ies)|ancient|medieval|invented|history of|around here|school year)\b/i;
   if (CHAT_KNOWLEDGE.test(text) && !MY_SYSTEM_TROUBLE.test(text) && !KNOWLEDGE_LIVE_OVERRIDE.test(text)
+      && !DOCUMENT_ON_MACHINE.test(text)
       && (!NAVIGATE.test(text) || TIMELESS.test(text))) {
     return 'llm';
   }
   if (LIVE_DATA.test(text) && TIMELESS.test(text) && !KNOWLEDGE_LIVE_OVERRIDE.test(text)) return 'llm';
   if (MY_SYSTEM_TROUBLE.test(text)) return 'harness';
+
+  // Hypothesised arithmetic ("if I double the recipe, how much is three quarter
+  // cups") is maths, even though it contains "how much is".
+  if (/\bif i\b/i.test(text) && /\bhow (?:much|many)\b/i.test(text)
+      && !MY_DATA_QUESTION.test(text) && !/\b(?:price|cost|worth|rate|dollars?|euros?|pounds?)\b/i.test(text)) return 'llm';
 
   // 7. Proximity / navigation and device-state questions are live lookups.
   if (NAVIGATE.test(text)) return 'harness';
@@ -370,18 +409,27 @@ export function route(message: string, cfg: RouteConfig): Target {
   // A phrasing question that happens to contain a first-person status line is
   // not a task ("what's a polite way to say I'm running late").
   const phrasingQuestion = /\b(?:way to (?:say|phrase|word|put)|how (?:do|would) i (?:say|tell|phrase|word)|how to say)\b/i.test(text);
+  if (CAPABILITY_QUESTION.test(text) || TEXTBOOK_QUESTION.test(text)) return 'llm';
   if ((CHAT_ADVICE.test(text) || phrasingQuestion) && !liveNow) return 'llm';
 
   // 9. Remaining live-data lookups: time, weather, news, prices.
   if (TIME_DATE.test(text) || LIVE_DATA.test(text) || SKY_EVENT.test(text)) return 'harness';
   if (PLACE_LOOKUP.test(text) || REPEAT_ROUTINE.test(text)) return 'harness';
   if (CHECK_MY_STUFF.test(text) || GET_STARTED.test(text)) return 'harness';
-  if (SEE_IF.test(text) || READ_FILE.test(text) || MY_DATA_QUESTION.test(text) || CALENDAR_CHECK.test(text)) return 'harness';
+  if (SEE_IF.test(text) || READ_FILE.test(text) || SEND_ARTIFACT.test(text) || MY_DATA_QUESTION.test(text) || CALENDAR_CHECK.test(text)) return 'harness';
+  // "is that still on for tomorrow" continues an earlier booking question.
+  if (/\b(?:still (?:on|happening|going ahead)|on for (?:tomorrow|today|tonight))\b/i.test(text)) return 'harness';
+  if (FOLLOWUP_STATUS.test(text)) return 'harness';
   if (CURRENCY_CONVERT.test(text) || SHOPPING_COMPARE.test(text)) return 'harness';
 
   // 10. Implicit asks — a described state plus an expected action.
   if (IMPLICIT_DEVICE.test(text) || IMPLICIT_MESSAGE.test(text) || IMPLICIT_REMIND.test(text)) return 'harness';
-  if (IMPLICIT_BROKEN.test(text) || GET_STARTED.test(text)) return 'harness';
+  if (IMPLICIT_BROKEN.test(text) && ASK_CUE.test(text)) return 'harness';
+  // Lights, music, fans: an ask phrased around the device.
+  const deviceAsk = /\b(?:lights?|lamps?|fan|music|tv|volume|thermostat|heat|air conditioning)\b/i.test(text)
+    && /\b(?:turn(?:ing)?|switch(?:ing)?|shut(?:ting)?|dim(?:ming)?|lower(?:ing)?|raise|raising|off|down|on)\b/i.test(text);
+  if ((ASK_CUE.test(text) && /\b(?:turn(?:ing)?|switch(?:ing)?|shut(?:ting)?|dim(?:ming)?|lower(?:ing)?|raise|raising)\b[^.]{0,25}\b(?:lights?|lamp|fan|music|tv|volume|screen|heat)\b/i.test(text)) || deviceAsk) return 'harness';
+  if (GET_STARTED.test(text)) return 'harness';
   if (IMPLICIT_ORDER.test(text) || IMPLICIT_LOOKUP.test(text)) return 'harness';
 
   // 11. Broad agentic / tool keyword list.
