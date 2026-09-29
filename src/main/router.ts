@@ -5,8 +5,9 @@
 // priority first, each rule anchored to a phrasing a person says out loud:
 //
 //   1. explicit "use the agent" / "just chat" phrasing wins outright
-//   2. writing FOR the user (poem, song, regex, grammar) and negated tool asks
-//      ("don't search, just guess") are chat; changing the machine is rule 5
+//   2. writing FOR the user (poem, song, regex, grammar, an email draft),
+//      hypotheticals ("pretend to search", "if you were a…") and negated tool
+//      asks ("don't search, just guess") are chat; changing the machine is rule 5
 //   3. an explicit reference to the screen ("on my screen", "I'm looking at")
 //      belongs to the agent: it is the only target that can see or touch it
 //   4. an imperative order — including a deictic one ("read this error", "fix
@@ -53,6 +54,17 @@ const LANGUAGE_FIX =
 const NEGATED_TOOL =
   /\b(?:don'?t|do not|no need to|without|stop)\s+(?:search(?:ing)?|look(?:ing)? (?:it|that) up|google|googl(?:e|ing)|brows(?:e|ing)|using (?:the )?(?:tools?|agent|harness))\b/i;
 
+// A hypothetical, a hypothetical tool request, or a description of a system are
+// explanations, not work: "how would you set a timer if you were a kitchen
+// assistant", "pretend to search the web", "what would a reminder system store".
+const HYPOTHETICAL =
+  /\b(?:if you (?:were|are)|pretend(?:ing)? (?:to|that|you)|hypotheticall?y|in theory|theoretically|imagine (?:that|you)|what would (?:you|a|an|the|it|happen)|how would you\b(?!\s+(?:like|you)))\b/i;
+
+// Composing text for the user (a draft, an email body, a note) is a writing
+// task; SENDING it is rule 4/5.
+const WRITE_TEXT =
+  /\b(?:draft|write|compose|polish|rewrite|edit)\b[^.]{0,25}\b(?:e?mail|message|reply|note|letter|apology|invitation|caption|bio|resume|cover letter|text)\b/i;
+
 // Rule 3: the user is pointing at their screen. Only the agent can see it, so a
 // description of WHAT is on screen must never come from the chat model's
 // imagination.
@@ -61,12 +73,12 @@ const NEGATED_TOOL =
 // the user is describing — so it counts when the same sentence asks for an
 // ACTION on it (see DEICTIC_ACTION); otherwise the knowledge/advice rules win.
 const ON_SCREEN =
-  /\b(?:on my screen|on the screen|on my display|in front of me|what am i looking at|what'?s on my screen|highlighted (?:text|code)|this window|that window|error dialog on my screen)\b|\bi(?:'m| am) looking at\b[^.]{0,40}\b(?:fix|click|copy|read|edit|paste|open|close)\b/i;
+  /\b(?:on my screen|on the screen|on my display|in front of me|what am i looking at|what'?s on my screen|highlighted (?:text|code)|this window|that window|error dialog on my screen)\b|\bi(?:'m| am) looking at\b[^.]{0,40}\b(?:fix|click|copy|read|edit|paste|open|close)\b|\bwhat does (?:this|that) say\b|^(?:please |can you )?(?:summari[sz]e|read|explain|translate|fix|check|look at) (?:this|that|it)\b[^.]{0,25}$|\bread (?:me )?(?:that|this|it|the last part)\b[^.]{0,20}\b(?:out loud|aloud|again)\b/i;
 
 // Rule 4: imperative orders at the start of the message. Start-anchored so a
 // noun mid-sentence can't trigger it, with a bounded action-verb vocabulary.
 const ACTION =
-  /^\s*(?:please\s+|can you\s+|could you\s+|would you\s+|go ahead and\s+|hey aria[,\s]+)*(open|launch|play|pause|resume|skip|mute|unmute|turn|set|send|text|email|call|remind|schedule|book|order|buy|reserve|navigate|download|install|uninstall|update|upgrade|enable|disable|check|find|search|look up|lookup|google|bing|search the web|show me|get me|pull up|bring up|take a|start|stop|go to|switch|toggle|change|adjust|raise|lower|increase|decrease|run|re-?run|execute|build|re-?build|compile|deploy|commit|push|pull|merge|rebase|revert|edit|rename|delete|create|write|add|save|copy|paste|move|grep|click|press|type|select|scroll|compute|calculate|fix|patch|refactor|kill|restart|shut down|lock|clear|wipe|screenshot|cancel|dismiss|connect|disconnect|undo)\b/i;
+  /^\s*(?:please\s+|can you\s+|could you\s+|would you\s+|go ahead and\s+|hey aria[,\s]+)*(open|launch|play|pause|resume|skip|mute|unmute|turn|set|send|text|email|call|remind|schedule|book|order|buy|reserve|navigate|download|install|uninstall|update|upgrade|enable|disable|check|find|search|look up|lookup|google|bing|search the web|show me|get me|pull up|bring up|take a|start|stop|go to|switch|toggle|change|adjust|raise|lower|increase|decrease|run|re-?run|execute|build|re-?build|compile|deploy|commit|push|pull|merge|rebase|revert|edit|rename|delete|create|write|add|save|copy|paste|move|grep|click|press|type|select|scroll|compute|calculate|fix|patch|refactor|kill|restart|shut down|lock|clear|wipe|screenshot|cancel|dismiss|connect|disconnect|undo|dim|brighten|warm|douse|put)\b/i;
 
 // Rule 4 (deictic): a verb applied to "this/that <thing>", which only makes
 // sense as an instruction about something the machine is showing.
@@ -80,7 +92,7 @@ const MACHINE_CHANGE =
 
 // Rule 6: knowledge framing — the user wants to understand something.
 const CHAT_KNOWLEDGE =
-  /^\s*(?:can you |could you |could you please |please |quick question[,\s]*|so )*(?:explain|describe|teach me|walk me through|talk me through|help me understand|define|summari[sz]e|tell me about|give me (?:an? )?(?:overview|summary) of)\b|\bwhat does (?:the )?(?:word|term|phrase|acronym) .{1,40}\bmean\b|\bwhat does .{1,40}\b(?:do|return|mean|set|use|stand for)\b|\bwhat(?:'s| is) the difference between\b|\bwhat are the differences\b|\bwhy (?:is|are|does|do|did|can'?t)\b|\bhow (?:does|do|did) \w+|\bwho (?:invented|wrote|discovered|created|was the)\b|\bteach me (?:about|how)\b|\bexplain (?:to me )?(?:how|why|what)\b/i;
+  /^\s*(?:can you |could you |could you please |please |quick question[,\s]*|so )*(?:explain|describe|teach me|walk me through|talk me through|help me understand|define|summari[sz]e|tell me about|give me (?:an? )?(?:overview|summary) of)\b|\bwhat does (?:the )?(?:word|term|phrase|acronym) .{1,40}\bmean\b|\bwhat does .{1,40}\b(?:do|return|mean|set|use|stand for)\b|\bwhat(?:'s| is) the difference between\b|\bwhat are the differences\b|\bwhy (?:is|are|does|do|did|can'?t)\b|\bwhen (?:was|were|did)\b|\bwhat (?:was|were)\b|\bhow (?:does|do|did) \w+|\bwho (?:invented|wrote|discovered|created|was the)\b|\bteach me (?:about|how)\b|\bexplain (?:to me )?(?:how|why|what)\b/i;
 
 // Rule 6 exception: the question is about a failure or result of MY system, so
 // answering it means looking at the machine, not reciting knowledge.
@@ -97,6 +109,14 @@ const LIVE_DATA =
   /\b(?:weather|forecast|temperature|humidity|raining|rain|snowing|snow|sunny|cloudy|windy|storm|umbrella|sunrise|sunset|uv index|air quality|pollen|news|headlines|breaking news|stock price|stock market|share price|scores?|standings|who'?s winning|who is winning|who won|exchange rate|bitcoin|ethereum|crypto|price of|how much is|market cap|this week|this weekend|right now|currently|the latest|most recent|newest|up[- ]?to[- ]?date|current version|latest version|what'?s happening|what'?s going on in the world)\b/i;
 
 // Rule 7: navigation / proximity / place lookups.
+// A question about a specific place's opening/reservation behaviour is a live
+// lookup ("does that place take reservations").
+const PLACE_LOOKUP =
+  /\b(?:does|do|is|are) (?:that|this|the) (?:\w+ )?(?:place|restaurant|store|shop|hotel|gym|clinic|venue|cafe|bar)\b[^.]{0,25}\b(?:open|take|accept|have|allow|serve|close|deliver|book)\b/i;
+
+// Habits and replays: "do the usual" repeats a routine, which needs the agent.
+const REPEAT_ROUTINE = /\b(?:do the usual|same as (?:last time|before|always|usual)|like last time|the usual please)\b/i;
+
 const NAVIGATE =
   /\b(?:directions? to|take me to|drive me to|route to|how (?:do i|can i|do you) get to|how far (?:is|away|to|from)|nearest|closest|near me|nearby|around here|in my area|open now|open today|store hours|business hours|is .{1,30} open)\b/i;
 
@@ -152,7 +172,7 @@ const AGENTIC = new RegExp(
     // news / finance / sports (live)
     'news', 'headlines', 'stock', 'stocks', 'shares', 'market', 'crypto',
     'bitcoin', 'ethereum', 'price of', 'how much is', 'exchange rate', 'currency',
-    'score', 'scores', 'who won', 'standings', 'who is winning', 'latest score',
+    'score', 'scores', 'standings', 'latest score', 'final score',
     // search / web / research
     'search', 'search for', 'look up', 'lookup', 'google', 'bing', 'wikipedia',
     'browse', 'website', 'on the internet',
@@ -175,7 +195,7 @@ const AGENTIC = new RegExp(
 
 // The previous reply's subject is still live ("what about tomorrow?").
 const REALTIME =
-  /\b(?:right now|currently|the latest|most recent|newest|up[- ]?to[- ]?date|current version|latest version|near me|nearby|around here|in my area|my area|local events?|open now|open today|store hours|business hours|this (week|weekend|month|year)|what time|what'?s the time|what day|what'?s the date|what is the (weather|time|forecast|date|temperature|score|price)|events? (today|tonight|tomorrow|yesterday|last night|near me|in my area)|fireworks? (show|shows|event|events|happened|near|tonight|tomorrow|yesterday|last night)|happened (yesterday|last night)|(did|has|have) .{1,60}\b(win|won|beat|lose|lost)\b (today|tonight|yesterday|last night))\b/i;
+  /\b(?:right now|currently|the latest|most recent|newest|up[- ]?to[- ]?date|current version|latest version|near me|nearby|around here|in my area|my area|local events?|open now|open today|store hours|business hours|this (week|weekend|month|year)|what time|what'?s the time|what day|what'?s the date|what is the (weather|time|forecast|date|temperature|score|price)|events? (today|tonight|tomorrow|yesterday|last night|near me|in my area)|fireworks? (show|shows|event|events|happened|near|tonight|tomorrow|yesterday|last night)|happened (yesterday|last night)|(did|has|have) .{1,60}\b(win|won|beat|lose|lost)\b (today|tonight|yesterday|last night)|who (?:won|is winning|'s winning|are they playing)\b[^.]{0,40}\b(last night|tonight|today|yesterday|right now|currently|just now|the (?:game|match|series)|this (?:week|evening|afternoon|season)))\b/i;
 
 // Device state read as a request rather than an imperative ("what's my battery
 // at", "how much space is left").
@@ -185,7 +205,7 @@ const DEVICE_STATE =
 // Timers / alarms / reminders — anchored at the start, so a question ABOUT
 // reminders ("should I set a reminder for…") isn't captured.
 const TIMER_COMMAND =
-  /^\s*(?:please\s+|can you\s+|could you\s+)*(?:set|start|cancel|stop|clear|remove|delete|kill|snooze|dismiss)\b[^.]{0,30}\b(timer|alarm|reminder|countdown)\b|^\s*(?:please\s+)?remind me\b|^\s*(?:what|which|any|list)\b[^.]{0,20}\b(timers|alarms|reminders)\b/i;
+  /^\s*(?:please\s+|can you\s+|could you\s+)*(?:set|start|cancel|stop|clear|remove|delete|kill|snooze|dismiss)\b[^.]{0,30}\b(timer|alarm|reminder|countdown)\b|^\s*(?:please\s+)?remind me\b(?!\s+(?:what|when|where|who|why|how|if|whether|about|of|that))|^\s*(?:what|which|any|list)\b[^.]{0,20}\b(timers|alarms|reminders)\b/i;
 
 // Screen-share vision detail. The OpenAI-compatible `image_url.detail` controls
 // how hard the vision model works: "high" tiles the image into 512px tiles (many
@@ -239,6 +259,10 @@ export function route(message: string, cfg: RouteConfig): Target {
   // 2. Writing something FOR the user (poem, regex, grammar fix, text) is chat,
   // whatever nouns it contains; and a negated tool request is not a tool request.
   if (CREATIVE_WRITE.test(text) || LANGUAGE_FIX.test(text) || NEGATED_TOOL.test(text)) return 'llm';
+  if (HYPOTHETICAL.test(text)) return 'llm';
+  // "just draft me an apology" is writing; the same sentence WITH a send verb is
+  // caught by the imperative rule above ("send the apology I drafted").
+  if (WRITE_TEXT.test(text) && !/\b(?:send|post|publish|mail|deliver|submit|reply all)\b/i.test(text)) return 'llm';
 
   // 3. Anything the user points at on screen belongs to the agent, which is the
   // only target that can see or touch it ("summarize the document I'm looking at"
@@ -256,9 +280,14 @@ export function route(message: string, cfg: RouteConfig): Target {
 
   // 6. Knowledge framing is chat — unless the question is about my own system
   // failing (that needs the agent to look), or asks for NOW data.
+  // A live-data word inside a question about habits, history or another world is
+  // still knowledge: "what's the weather usually like in Denver in May",
+  // "what is the weather like on Jupiter", "when was the kitchen timer invented".
+  const TIMELESS = /\b(?:usually|typically|generally|normally|on average|in general|these days|at this time of year|historically|in \d{4}|on (?:mars|jupiter|venus|saturn|the moon)|in (?:space|history)|centur(?:y|ies)|ancient|medieval|invented|history of)\b/i;
   if (CHAT_KNOWLEDGE.test(text) && !MY_SYSTEM_TROUBLE.test(text) && !KNOWLEDGE_LIVE_OVERRIDE.test(text) && !NAVIGATE.test(text)) {
     return 'llm';
   }
+  if (LIVE_DATA.test(text) && TIMELESS.test(text) && !KNOWLEDGE_LIVE_OVERRIDE.test(text)) return 'llm';
   if (MY_SYSTEM_TROUBLE.test(text)) return 'harness';
 
   // 7. Proximity / navigation and device-state questions are live lookups.
@@ -268,10 +297,17 @@ export function route(message: string, cfg: RouteConfig): Target {
   // weather. A question ABOUT doing something ("how do I take a screenshot",
   // "how would I check the weather from a shell script") is advice, not an order
   // — someone who wants it done says "take a screenshot".
-  if (CHAT_ADVICE.test(text) && !(LIVE_DATA.test(text) && KNOWLEDGE_LIVE_OVERRIDE.test(text))) return 'llm';
+  // Advice framing loses to a live lookup that asks about now or about what is
+  // about to happen ("is it going to rain, or should I bring the umbrella"),
+  // but keeps it when the user asks HOW one would do it ("how would I check the
+  // weather from a shell script").
+  const liveNow = LIVE_DATA.test(text)
+    && (KNOWLEDGE_LIVE_OVERRIDE.test(text) || /\b(?:is it|will it|going to|tonight|this (?:evening|afternoon|morning))\b/i.test(text));
+  if (CHAT_ADVICE.test(text) && !liveNow) return 'llm';
 
   // 9. Remaining live-data lookups: time, weather, news, prices.
   if (TIME_DATE.test(text) || LIVE_DATA.test(text)) return 'harness';
+  if (PLACE_LOOKUP.test(text) || REPEAT_ROUTINE.test(text)) return 'harness';
   if (CURRENCY_CONVERT.test(text) || SHOPPING_COMPARE.test(text)) return 'harness';
 
   // 10. Implicit asks — a described state plus an expected action.

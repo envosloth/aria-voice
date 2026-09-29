@@ -1,0 +1,364 @@
+{
+  "cases": [
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Explain how a search engine ranks pages.",
+      "why": "'search' looks like a tool call but this is general knowledge."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Tell me about the history of email protocols.",
+      "why": "'email' noun reads as mailbox access; it is a history question."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What was a calendar year in the Mayan system?",
+      "why": "'calendar' fires the calendar tool on a pure knowledge question."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Why do files get corrupted on old hard drives?",
+      "why": "'files' plural looks like filesystem access, it is a why-question."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What's the difference between a shell and a terminal?",
+      "why": "'shell' triggers shell execution; answer is a definition."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What is the weather like on Jupiter?",
+      "why": "'weather' triggers a live lookup for a non-Earth question."
+    },
+    {
+      "cat": "chat-explain-code",
+      "expect": "llm",
+      "text": "What does a try except block do in Python?",
+      "why": "Code nouns but no artifact is requested or changed."
+    },
+    {
+      "cat": "chat-explain-code",
+      "expect": "llm",
+      "text": "Why does my flexbox not center this div vertically?",
+      "why": "'my' and 'this' read as file work; it is a conceptual why."
+    },
+    {
+      "cat": "chat-explain-code",
+      "expect": "llm",
+      "text": "Explain the difference between threads and processes.",
+      "why": "'threads' can parse as starting a process, it is teaching."
+    },
+    {
+      "cat": "chat-explain-code",
+      "expect": "llm",
+      "text": "How do I write a regex that matches email addresses?",
+      "why": "'write ... regex' looks like a coding task; it is advice."
+    },
+    {
+      "cat": "chat-explain-code",
+      "expect": "llm",
+      "text": "What does the git reset flag do?",
+      "why": "'git' triggers the code agent; this asks for documentation."
+    },
+    {
+      "cat": "chat-explain-code",
+      "expect": "llm",
+      "text": "Explain Big O notation with one small example.",
+      "why": "'example' looks like a request to run code; it is explanation."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "If a train leaves at noon at sixty miles an hour, when does it arrive?",
+      "why": "Word problem, no live schedule; math stays with the chat model."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "Which is heavier, a pound of feathers or a pound of lead?",
+      "why": "Reasoning riddle, no measurement tool needed."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "Brainstorm ten names for a cozy coffee shop.",
+      "why": "Creative generation, nothing to fetch or change."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "If all roses are flowers, are some flowers roses?",
+      "why": "Formal logic, not a search query."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "What's seventeen times twenty four minus eleven?",
+      "why": "Arithmetic looks like a calculator tool but is pure reasoning."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "Rewrite this sentence so it sounds less formal.",
+      "why": "Deictic 'this sentence' with no screen artifact; it is writing."
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Turn off the kitchen lights.",
+      "why": "Imperative device control, no tool keyword at all."
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Set a timer for ten minutes.",
+      "why": "Bare imperative; 'timer' here is a real action."
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Add milk and eggs to my shopping list.",
+      "why": "Possessive list edit that must persist somewhere."
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Pause the music in the living room.",
+      "why": "Device command phrased softly, no verb like 'play'."
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Lock the front door.",
+      "why": "Short imperative with zero tool-ish nouns."
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Take a screenshot and save it to my desktop.",
+      "why": "Implies screen capture plus a filesystem write."
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What's the score of the game right now?",
+      "why": "'right now' makes a plain question require live data."
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "How much is one bitcoin worth today?",
+      "why": "Lookup phrased as casual small talk."
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Will it rain here tomorrow morning?",
+      "why": "'here' needs location plus live forecast."
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Who won the election last night?",
+      "why": "Past-tense news question no matcher keyword catches."
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Is the train to the airport delayed?",
+      "why": "Status question needing a real-time feed."
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What time does the pharmacy near me close?",
+      "why": "'near me' plus hours require live external lookup."
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "Fix the failing test in my project.",
+      "why": "'test' as a verb-object, not a question about testing."
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "Rename the variable temp in my script to total.",
+      "why": "Implies reading and editing a real file."
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "Run the test suite and tell me what broke.",
+      "why": "Imperative execution, not an explanation request."
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "Commit these changes with a clear message.",
+      "why": "'these changes' deictic pointing at real repo state."
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "Delete the duplicate rows in my CSV and save it.",
+      "why": "'save it' means a real write to disk."
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "Refactor my helper function to drop the magic number.",
+      "why": "Editing an existing artifact the user owns."
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Find the cheapest flight to Denver next month and book it.",
+      "why": "Two dependent steps ending in a real booking."
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Research three laptops and email me a comparison.",
+      "why": "Search plus compose-and-send, not just advice."
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Download the report, pull the totals, and update my sheet.",
+      "why": "Three-step chain a single answer cannot satisfy."
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Check my calendar, find a free hour, and invite the team.",
+      "why": "Reads state, decides, then writes an invitation."
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Look up the recipe and add the ingredients to my list.",
+      "why": "Fetch then persist, chained by 'and'."
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Read the PDF in my downloads and summarize each section.",
+      "why": "Local file access first, summarization second."
+    },
+    {
+      "cat": "trap-chat",
+      "expect": "llm",
+      "text": "How would you set a timer if you were a kitchen assistant?",
+      "why": "Hypothetical 'if you were', no timer is to be set."
+    },
+    {
+      "cat": "trap-chat",
+      "expect": "llm",
+      "text": "Pretend to search the web and tell me what you'd expect.",
+      "why": "'Pretend' means simulate; no real search allowed."
+    },
+    {
+      "cat": "trap-chat",
+      "expect": "llm",
+      "text": "Explain the steps you'd take to debug a memory leak, no need to do it.",
+      "why": "Explicit 'no need to do it' cancels the action."
+    },
+    {
+      "cat": "trap-chat",
+      "expect": "llm",
+      "text": "I don't need you to send anything, just draft an apology email.",
+      "why": "Negation blocks sending; drafting is writing."
+    },
+    {
+      "cat": "trap-chat",
+      "expect": "llm",
+      "text": "Walk me through how smart home devices usually connect.",
+      "why": "Device nouns inside a teaching request."
+    },
+    {
+      "cat": "trap-chat",
+      "expect": "llm",
+      "text": "What would a reminder system need to store, in theory?",
+      "why": "'store' reads as file write; it is design reasoning."
+    },
+    {
+      "cat": "trap-harness",
+      "expect": "harness",
+      "text": "Don't just explain the error, fix it in my file.",
+      "why": "'Don't just' flips a chat-looking ask into an edit."
+    },
+    {
+      "cat": "trap-harness",
+      "expect": "harness",
+      "text": "I know how git works already, just push my changes.",
+      "why": "Preamble sounds like knowledge talk; the ask is an action."
+    },
+    {
+      "cat": "trap-harness",
+      "expect": "harness",
+      "text": "Never mind the theory, actually check my inbox for the invoice.",
+      "why": "'never mind the theory' cancels chat, keeps the lookup."
+    },
+    {
+      "cat": "trap-harness",
+      "expect": "harness",
+      "text": "Forget the explanation, just do it on my laptop.",
+      "why": "Refusal of explanation leaves only a device action."
+    },
+    {
+      "cat": "trap-harness",
+      "expect": "harness",
+      "text": "That reminder you said you set, did it actually save?",
+      "why": "Question form, but only the system can answer it."
+    },
+    {
+      "cat": "trap-harness",
+      "expect": "harness",
+      "text": "Stop explaining and show me today's real numbers.",
+      "why": "'stop explaining' pushes it off the chat path."
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "What's in my downloads folder?",
+      "why": "Possessive question still needs live filesystem state."
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "Summarize this.",
+      "why": "Bare deictic pointing at on-screen content to be read."
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "What does this say?",
+      "why": "'this' means read the screen, not recall knowledge."
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "Turn it down a bit.",
+      "why": "'it' resolves to a device in on-screen context."
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "Do the usual.",
+      "why": "No keywords at all, yet it is a habitual action chain."
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "Remind me later.",
+      "why": "Vague and polite, but still a timer to be created."
+    }
+  ]
+}

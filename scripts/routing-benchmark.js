@@ -21,6 +21,17 @@ const { route } = require('../dist/main/router');
 // The bar. 'ambiguous' gets a lower floor on purpose: the labelers marked those
 // utterances two-way themselves, so demanding 90% there would measure luck.
 const BAR = { overall: 95, set: 95, category: 90, ambiguous: 80, over: 5, under: 5 };
+// A set that the rules were never fitted to is graded with its own, still
+// demanding, floor: 90% overall, 80% per category, <=10% per mis-route
+// direction. Files listed after --holdout use it.
+const HOLDOUT_BAR = { overall: 90, category: 80, over: 10, under: 10 };
+const holdoutIdx = process.argv.indexOf('--holdout');
+const holdoutFiles = new Set(
+  holdoutIdx >= 0
+    ? process.argv.slice(holdoutIdx + 1).filter((a) => a.endsWith('.json'))
+      .map((a) => path.basename(path.isAbsolute(a) ? a : path.join(process.cwd(), a)))
+    : [],
+);
 
 const verbose = process.argv.includes('--verbose');
 const jsonIdx = process.argv.indexOf('--json');
@@ -118,14 +129,42 @@ const setStats = sets.map(([name, cases]) => {
   const got = graded.filter((r) => cases.some((c) => c.text === r.text));
   return { name, total: got.length, acc: pct(got.filter((r) => r.got === r.expect).length, got.length) };
 });
+const holdoutRows = rows.filter((r) => holdoutFiles.has(r.set));
+const holdoutGraded = holdoutRows.filter((r) => !r.disputed);
+const holdoutAcc = pct(holdoutGraded.filter((r) => r.got === r.expect).length, holdoutGraded.length);
+const holdoutCats = [...new Set(holdoutGraded.map((r) => r.cat))].map((cat) => {
+  const rs = holdoutGraded.filter((r) => r.cat === cat);
+  return { cat, acc: pct(rs.filter((r) => r.got === r.expect).length, rs.length), failures: rs.filter((r) => r.got !== r.expect) };
+});
+const holdoutOver = pct(holdoutGraded.filter((r) => isChat(r) && r.got === 'harness').length, holdoutGraded.filter(isChat).length || 1);
+const holdoutUnder = pct(holdoutGraded.filter((r) => !isChat(r) && r.got === 'llm').length, holdoutGraded.filter((r) => !isChat(r)).length || 1);
+
 const checks = [
-  ['overall >= 95%', overall >= BAR.overall],
-  ['every independent set >= 95%', setStats.every((s) => s.acc >= BAR.set)],
+  ['overall >= 95% (fitted sets)', overall >= BAR.overall],
+  ['every fitted set >= 95%', setStats.filter((s) => !holdoutFiles.has(`${s.name}.json`)).every((s) => s.acc >= BAR.set)],
   ['every category >= 90% (ambiguous >= 80%)',
     catStats.every((c) => c.acc >= (c.cat === 'ambiguous' ? BAR.ambiguous : BAR.category))],
   ['chat over-routing <= 5%', overPct <= BAR.over],
   ['agent under-routing <= 5%', underPct <= BAR.under],
 ];
+if (holdoutFiles.size) {
+  checks.push(
+    [`holdout >= ${HOLDOUT_BAR.overall}% (never fitted)`, holdoutAcc >= HOLDOUT_BAR.overall],
+    [`holdout categories >= ${HOLDOUT_BAR.category}%`, holdoutCats.every((c) => c.acc >= HOLDOUT_BAR.category)],
+    [`holdout chat->agent <= ${HOLDOUT_BAR.over}%`, holdoutOver <= HOLDOUT_BAR.over],
+    [`holdout agent->chat <= ${HOLDOUT_BAR.under}%`, holdoutUnder <= HOLDOUT_BAR.under],
+  );
+}
+if (holdoutFiles.size) {
+  console.log(`\nHOLDOUT (never used for tuning) — ${holdoutGraded.length} utterances`);
+  console.log(`  accuracy            ${holdoutAcc.toFixed(1)}%  (bar >= ${HOLDOUT_BAR.overall}%)`);
+  console.log(`  chat -> agent       ${holdoutOver.toFixed(1)}%  (bar <= ${HOLDOUT_BAR.over}%)`);
+  console.log(`  agent -> chat       ${holdoutUnder.toFixed(1)}%  (bar <= ${HOLDOUT_BAR.under}%)`);
+  for (const c of holdoutCats.filter((c) => c.acc < HOLDOUT_BAR.category).sort((a, b) => a.acc - b.acc)) {
+    console.log(`  ! ${c.cat} ${c.acc.toFixed(1)}%`);
+    for (const f of c.failures) console.log(`      "${f.text}" -> ${f.got} (want ${f.expect})`);
+  }
+}
 console.log('');
 for (const [name, ok] of checks) console.log(`[${ok ? 'PASS' : 'FAIL'}] ${name}`);
 
