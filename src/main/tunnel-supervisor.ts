@@ -30,7 +30,7 @@
 //     ssh encrypts it on the wire, and the remote harness receives it
 //     as if the user were running the harness on localhost.
 
-import { ChildProcess, spawn } from 'child_process';
+import { ChildProcess, spawn, spawnSync } from 'child_process';
 import { EventEmitter } from 'events';
 import net from 'net';
 import { config } from './config';
@@ -51,6 +51,36 @@ function freePort(): Promise<number> {
       srv.close(() => (port ? resolve(port) : reject(new Error('no free port'))));
     });
   });
+}
+
+const KILL_GRACE_MS = 2000;
+
+// Terminate the tunnel's whole process tree. ssh is spawned detached (its own
+// process group) on POSIX, so signal the group — a rawCommand wrapper such as
+// `sshpass ssh …` must not leave its ssh orphaned. SIGKILL follows after a
+// grace period if the group leader is still around. Windows has no groups;
+// taskkill /T walks the tree.
+export function killProcessTree(proc: ChildProcess, graceMs = KILL_GRACE_MS): void {
+  const pid = proc.pid;
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    try {
+      spawnSync('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+    } catch {
+      try { proc.kill(); } catch { /* already dead */ }
+    }
+    return;
+  }
+  const signalGroup = (sig: NodeJS.Signals): boolean => {
+    try { process.kill(-pid, sig); return true; } catch { /* no such group */ }
+    try { return proc.kill(sig); } catch { return false; }
+  };
+  if (!signalGroup('SIGTERM')) return;
+  const timer = setTimeout(() => {
+    // Group may outlive its leader; -pid still addresses it until empty.
+    signalGroup('SIGKILL');
+  }, graceMs);
+  timer.unref?.();
 }
 
 export type TunnelState =
@@ -159,10 +189,10 @@ export class TunnelSupervisor extends EventEmitter {
     this.startGate.cancel();
     if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
     if (this.connectPollTimer) { clearTimeout(this.connectPollTimer); this.connectPollTimer = null; }
-    if (this.child && !this.child.killed) {
-      try { this.child.kill('SIGTERM'); } catch { /* already dead */ }
-    }
+    const proc = this.child;
+    // Detach first so the dying process's exit/error/stderr are recognised as stale.
     this.child = null;
+    if (proc) killProcessTree(proc);
     this.actualPort = null;
     this.attempts = 0;
     this.setState('stopped', 'tunnel stopped');
@@ -239,7 +269,12 @@ export class TunnelSupervisor extends EventEmitter {
       this.pollConnected(knownPort, r);
     }
 
+    // Every handler below is bound to THIS proc. After stop()/restart a late
+    // event from an older process must not touch the current child's state.
+    const isCurrent = (): boolean => this.child === proc;
+
     proc.stderr?.on('data', (b: Buffer) => {
+      if (!isCurrent()) return;
       const text = b.toString();
       this.lastStderr = text.trim().split('\n').filter(Boolean).pop() || this.lastStderr;
       // rawCommand path only: we don't know the port, so still try to parse it.
@@ -254,6 +289,7 @@ export class TunnelSupervisor extends EventEmitter {
     proc.stdout?.on('data', () => { /* ssh -N is silent; ignore */ });
 
     proc.on('exit', (code, signal) => {
+      if (!isCurrent()) return;
       if (this.connectPollTimer) { clearTimeout(this.connectPollTimer); this.connectPollTimer = null; }
       const wasClean = code === 0 || signal === 'SIGTERM' || signal === 'SIGKILL';
       const wasManual = this.state === 'stopped';
@@ -267,6 +303,7 @@ export class TunnelSupervisor extends EventEmitter {
     });
 
     proc.on('error', (err) => {
+      if (!isCurrent()) return;
       if (this.connectPollTimer) { clearTimeout(this.connectPollTimer); this.connectPollTimer = null; }
       // Spawn-level failure (ssh binary not on PATH, permission denied, etc.).
       const isMissing = /ENOENT/.test(err.message);
@@ -291,7 +328,8 @@ export class TunnelSupervisor extends EventEmitter {
     const giveUp = (): void => {
       if (!this.child) return;
       this.lastStderr = `remote service did not answer on ${r.remoteHost}:${r.remotePort}`;
-      try { this.child.kill('SIGTERM'); } catch { /* already dead */ }
+      // Keep this.child set: the exit handler (still current) drives reconnect.
+      killProcessTree(this.child);
     };
     const retryOrGiveUp = (): void => {
       if (++tries < 40 && this.child) {

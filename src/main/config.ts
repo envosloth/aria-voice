@@ -94,6 +94,8 @@ interface AppConfig {
     // for the host; 'custom' = the user changed an individual setting by hand.
     // See hardware.ts/resolveProfile.
     perfPreset: 'auto' | 'power-saver' | 'balanced' | 'max-performance' | 'custom';
+    // Renderer-owned flag: onboarding finished without a working connection.
+    'setup-needed': boolean;
   };
   debug: {
     // When true, emit [ARIA_PERF] latency stage marks (see perf.ts). Off by
@@ -165,6 +167,7 @@ const defaults: AppConfig = {
     // CPU/GPU headroom that Windows laptops and weaker Linux desktops don't hitch.
     gpuCap: 30,
     perfPreset: 'power-saver',
+    'setup-needed': false,
   },
   debug: {
     perf: false,
@@ -172,3 +175,107 @@ const defaults: AppConfig = {
 };
 
 export const config = new JsonStore<AppConfig>('aria-config', defaults);
+
+// ---------------------------------------------------------------------------
+// Renderer write validation (CONFIG_SET). The renderer is untrusted input: it
+// may only write known LEAF keys (derived from `defaults`), with a value of the
+// default's type. Whole subtrees (`remote`, `llm`, …) are never writable.
+
+// Closed string unions: reject values outside the set the code understands.
+const ENUMS: Record<string, readonly string[]> = {
+  'stt.backend': ['vulkan', 'cpu'],
+  'tts.engine': ['piper', 'kokoro'],
+  'routing.mode': ['auto', 'llm', 'harness'],
+  'remote.target': ['harness', 'llm', 'custom'],
+  'ui.theme': ['midnight', 'nord', 'solarized', 'synthwave', 'forest', 'light'],
+  'ui.perfPreset': ['auto', 'power-saver', 'balanced', 'max-performance', 'custom'],
+};
+
+// Inclusive numeric bounds (and integer-ness) for leaves where an out-of-range
+// value would break a consumer (ports, gain, rate).
+const RANGES: Record<string, { min: number; max: number; int?: boolean }> = {
+  'tts.speed': { min: 0.25, max: 4 },
+  'wakeword.threshold': { min: 0, max: 1 },
+  'remote.sshPort': { min: 1, max: 65535, int: true },
+  'remote.remotePort': { min: 1, max: 65535, int: true },
+  'remote.localPort': { min: 0, max: 65535, int: true },
+  'audio.volume': { min: 0, max: 1 },
+  'ui.gpuCap': { min: 1, max: 100 },
+};
+
+type LeafKind = 'string' | 'number' | 'boolean' | 'nullable-string' | 'array' | 'object';
+
+function leafKinds(): Map<string, LeafKind> {
+  const out = new Map<string, LeafKind>();
+  const walk = (obj: Record<string, unknown>, prefix: string) => {
+    for (const k of Object.keys(obj)) {
+      const v = obj[k];
+      const key = prefix ? `${prefix}.${k}` : k;
+      if (v === null || v === undefined) out.set(key, 'nullable-string');
+      else if (Array.isArray(v)) out.set(key, 'array');
+      else if (typeof v === 'object') walk(v as Record<string, unknown>, key);
+      else out.set(key, typeof v as LeafKind);
+    }
+  };
+  walk(defaults as unknown as Record<string, unknown>, '');
+  return out;
+}
+const LEAVES = leafKinds();
+
+export type ConfigSetValidation = { ok: true; value: unknown } | { ok: false; error: string };
+
+/**
+ * Validate a renderer-originated CONFIG_SET. `opts.rejectRawCommand` refuses a
+ * non-empty `remote.rawCommand` (an arbitrary argv ARIA will spawn). NOTE: the
+ * Settings UI currently writes `remote.rawCommand` from a text field, so the
+ * default keeps accepting it as a plain string; flip the option once the UI no
+ * longer offers that field.
+ */
+export function validateConfigSet(
+  key: string,
+  value: unknown,
+  opts: { rejectRawCommand?: boolean } = {},
+): ConfigSetValidation {
+  if (typeof key !== 'string' || !LEAVES.has(key)) {
+    return { ok: false, error: `Unknown or non-writable config key: ${String(key)}` };
+  }
+  const kind = LEAVES.get(key)!;
+  switch (kind) {
+    case 'number':
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return { ok: false, error: `${key} must be a finite number` };
+      }
+      break;
+    case 'boolean':
+      if (typeof value !== 'boolean') return { ok: false, error: `${key} must be a boolean` };
+      break;
+    case 'string':
+      if (typeof value !== 'string') return { ok: false, error: `${key} must be a string` };
+      break;
+    case 'nullable-string':
+      if (value !== null && typeof value !== 'string') return { ok: false, error: `${key} must be a string or null` };
+      break;
+    case 'array':
+      if (!Array.isArray(value)) return { ok: false, error: `${key} must be an array` };
+      break;
+    default:
+      return { ok: false, error: `${key} is not writable` };
+  }
+  const allowed = ENUMS[key];
+  if (allowed && !allowed.includes(value as string)) {
+    return { ok: false, error: `${key} must be one of: ${allowed.join(', ')}` };
+  }
+  const range = RANGES[key];
+  if (range && typeof value === 'number') {
+    if (value < range.min || value > range.max || (range.int && !Number.isInteger(value))) {
+      return { ok: false, error: `${key} must be ${range.int ? 'an integer ' : ''}between ${range.min} and ${range.max}` };
+    }
+  }
+  if (typeof value === 'string' && value.length > 4096) {
+    return { ok: false, error: `${key} is too long` };
+  }
+  if (key === 'remote.rawCommand' && opts.rejectRawCommand && typeof value === 'string' && value.trim()) {
+    return { ok: false, error: 'remote.rawCommand cannot be set from the renderer' };
+  }
+  return { ok: true, value };
+}

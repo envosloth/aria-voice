@@ -96,6 +96,32 @@ function firstVar(env: Record<string, string>, names: string[]): string | undefi
   return undefined;
 }
 
+// A gateway's BIND host is not a connect host: 0.0.0.0 / :: (or blank) mean
+// "all interfaces", which a client must reach via loopback. IPv6 literals need
+// brackets in a URL; building through the URL API keeps the result well-formed.
+export function connectHost(bindHost: string | undefined, fallback: string): string {
+  let h = (bindHost || '').trim();
+  if (h.startsWith('[') && h.endsWith(']')) h = h.slice(1, -1);
+  if (!h || h === '0.0.0.0' || h === '::' || h === '0:0:0:0:0:0:0:0' || h === '*') return fallback;
+  return h.includes(':') ? `[${h}]` : h;
+}
+
+export function buildEndpoint(
+  host: string | undefined, port: string | undefined,
+  defaultHost: string, defaultPort: number, chatPath: string,
+): string {
+  const fallbackUrl = `http://${defaultHost}:${defaultPort}${chatPath}`;
+  try {
+    const url = new URL(fallbackUrl);
+    url.hostname = connectHost(host, defaultHost);
+    const p = Number(port);
+    url.port = Number.isInteger(p) && p > 0 && p <= 65535 ? String(p) : String(defaultPort);
+    return url.toString();
+  } catch {
+    return fallbackUrl;
+  }
+}
+
 function isFalsy(v: string | undefined): boolean {
   if (v === undefined) return false;
   return /^(false|0|no|off)$/i.test(v.trim());
@@ -151,7 +177,7 @@ export function detectHarness(id: string): HarnessDetection {
 
   const host = firstVar(merged, det.hostVars) || det.defaultHost;
   const port = firstVar(merged, det.portVars) || String(det.defaultPort);
-  const endpoint = `http://${host}:${port}${det.chatPath}`;
+  const endpoint = buildEndpoint(host, port, det.defaultHost, det.defaultPort, det.chatPath);
   const model = firstVar(merged, det.modelVars);
   const disabled = det.enabledVars.some((n) => isFalsy(merged[n]));
 

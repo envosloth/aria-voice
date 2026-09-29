@@ -18,6 +18,17 @@ export interface CoordinatorCallbacks extends LlmCallbacks {
 
 const TARGET_NAMES: Record<Target, string> = { llm: 'LLM', harness: 'Agent' };
 
+// Session persistence is best-effort: a full disk, read-only userData, or a
+// corrupt store must never block streaming a reply or delivering onDone.
+function persistSafely(what: string, fn: () => void): void {
+  try {
+    fn();
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error(`[coordinator] session persistence failed (${what}): ${(error as Error).message}`);
+  }
+}
+
 // Text length of a chat message's content (image_url/vision parts skipped) —
 // used only for the ~chars/4 token estimate when a server doesn't report usage.
 function textLength(content: ChatMessage['content']): number {
@@ -192,7 +203,16 @@ function harnessSessionApiUrl(rawEndpoint: string, sessionId: string): URL | nul
   return url;
 }
 
-function deleteHarnessSession(harnessId: string): Promise<{ deleted: boolean; error?: string }> {
+const DELETE_BODY_CAP = 64 * 1024;       // bytes of error body we will buffer
+const DELETE_DEADLINE_MS = 10_000;       // wall clock for the whole DELETE
+
+// Settle-once DELETE of the harness-side session. Every terminal path (request
+// error/timeout, response aborted/error/premature close, body cap, overall
+// deadline) funnels through finish(), which also tears the transport down.
+export function deleteHarnessSession(
+  harnessId: string,
+  opts: { deadlineMs?: number } = {},
+): Promise<{ deleted: boolean; error?: string }> {
   const url = harnessSessionApiUrl(config.get('harness.endpoint') as string, harnessId);
   if (!url) return Promise.resolve({ deleted: false, error: 'No valid agent harness endpoint configured' });
   let apiKey: string | null;
@@ -203,16 +223,23 @@ function deleteHarnessSession(harnessId: string): Promise<{ deleted: boolean; er
   }
   const transportSecurityError = credentialedEndpointSecurityError(url, !!apiKey);
   if (transportSecurityError) return Promise.resolve({ deleted: false, error: transportSecurityError });
+  const deadlineMs = opts.deadlineMs && opts.deadlineMs > 0 ? opts.deadlineMs : DELETE_DEADLINE_MS;
   return new Promise((resolve) => {
     const isHttps = url.protocol === 'https:';
     const transport = isHttps ? https : http;
-    let req: http.ClientRequest;
+    let req: http.ClientRequest | null = null;
+    let response: http.IncomingMessage | null = null;
     let settled = false;
+    let deadline: NodeJS.Timeout | null = null;
     const finish = (deleted: boolean, error?: string) => {
       if (settled) return;
       settled = true;
-      resolve({ deleted, error });
+      if (deadline) { clearTimeout(deadline); deadline = null; }
+      try { if (response && !response.destroyed) response.destroy(); } catch { /* already closed */ }
+      try { if (req && !req.destroyed) req.destroy(); } catch { /* already closed */ }
+      resolve(error === undefined ? { deleted } : { deleted, error });
     };
+    deadline = setTimeout(() => finish(false, 'Timed out deleting harness session'), deadlineMs);
     try {
       req = transport.request(
         {
@@ -227,22 +254,38 @@ function deleteHarnessSession(harnessId: string): Promise<{ deleted: boolean; er
           timeout: 8000,
         },
         (res) => {
+          response = res;
           let body = '';
-          res.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+          let bytes = 0;
+          let ended = false;
+          res.on('data', (chunk: Buffer) => {
+            if (settled) return;
+            bytes += chunk.length;
+            if (bytes > DELETE_BODY_CAP) {
+              finish(false, `Harness returned ${res.statusCode || 'unknown'} with an oversized body`);
+              return;
+            }
+            body += chunk.toString();
+          });
           res.on('end', () => {
+            ended = true;
             if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) finish(true);
             else if (res.statusCode === 404) finish(false);
             else finish(false, `Harness returned ${res.statusCode || 'unknown'}${body ? `: ${body.slice(0, 160)}` : ''}`);
           });
+          res.on('aborted', () => finish(false, 'Harness response was aborted'));
+          res.on('error', (e) => finish(false, `Harness response failed: ${e.message}`));
+          res.on('close', () => { if (!ended) finish(false, 'Harness response closed before completion'); });
         },
       );
     } catch (e) {
       finish(false, (e as Error).message);
       return;
     }
-    req.on('error', (e) => finish(false, e.message));
-    req.on('timeout', () => { try { req.destroy(); } catch { /* ignore */ } finish(false, 'Timed out deleting harness session'); });
-    req.end();
+    const r = req;
+    r.on('error', (e) => finish(false, e.message));
+    r.on('timeout', () => finish(false, 'Timed out deleting harness session'));
+    r.end();
   });
 }
 
@@ -306,9 +349,15 @@ function runLocalIntent(intent: LocalIntent): string | null {
       return `You have ${parts.join('; ')}.`;
     }
     case 'timer_cancel': {
+      const cancelled = intent.what === 'all'
+        ? timers.listTimers()
+        : timers.listTimers().filter((r) => r.kind === intent.what);
       const n = timers.cancelTimers(intent.what);
       const what = intent.what === 'all' ? 'timers, alarms, and reminders' : `${intent.what}s`;
-      return n ? `Cancelled ${n === 1 ? 'your' : `${n}`} ${n === 1 ? intent.what : what}.` : `You don't have any ${what} set.`;
+      if (!n) return `You don't have any ${what} set.`;
+      if (n > 1) return `Cancelled ${n} ${what}.`;
+      // Exactly one: name its actual kind ("Cancelled your alarm."), never "your all".
+      return `Cancelled your ${intent.what === 'all' ? (cancelled[0]?.kind || 'timer') : intent.what}.`;
     }
     default:
       return null;
@@ -391,14 +440,14 @@ export async function coordinate(
     const reply = intent ? runLocalIntent(intent) : null;
     if (reply) {
       history.push({ role: 'user', content: userMessage });
-      sessions.recordTurn('user', userMessage);
+      persistSafely('record user turn', () => sessions.recordTurn('user', userMessage));
       cb.onRoute?.({ target: 'llm', name: 'Local' });
       perfMark(turnId, 'llm_request', { target: 'local' });
       perfMark(turnId, 'first_token');
       cb.onToken(reply);
       history.push({ role: 'assistant', content: reply });
       if (history.length > MAX_TURNS) history = history.slice(-MAX_TURNS);
-      sessions.recordTurn('assistant', reply);
+      persistSafely('record assistant turn', () => sessions.recordTurn('assistant', reply));
       perfMark(turnId, 'llm_done', { chars: reply.length, local: 1 });
       cb.onDone(reply);
       return;
@@ -415,7 +464,7 @@ export async function coordinate(
   // size — the image is attached to this request alone.
   history.push({ role: 'user', content: userMessage });
   if (history.length > MAX_TURNS) history = history.slice(-MAX_TURNS);
-  sessions.recordTurn('user', userMessage); // persist for the "past sessions" list
+  persistSafely('record user turn', () => sessions.recordTurn('user', userMessage)); // "past sessions" list
 
   // Did the previous reply end with a question? (it's the message just before the
   // user turn we pushed above) — used to keep an answer on the same target. The
@@ -521,11 +570,16 @@ export async function coordinate(
 
     perfMark(turnId, 'llm_request', { target, model });
     let sawFirstToken = false;
+    // Any user-visible output from this run: a streamed token OR a forwarded
+    // tool chip. Once set, a retry/fallback would duplicate or contradict what
+    // the user already saw (and possibly re-run side-effecting tools).
+    let sawActivity = false;
     const markFirstToken = () => { if (!sawFirstToken) { sawFirstToken = true; perfMark(turnId, 'first_token'); } };
     let turnUsage: TokenUsage | null = null;
     const emitToken = (token: string) => {
       if (!isCurrent()) return;
       markFirstToken();
+      sawActivity = true;
       cb.onToken(token);
     };
 
@@ -539,7 +593,7 @@ export async function coordinate(
           ? `\n\n[agent tools used: ${agentActions.join(', ')}]`
           : '';
         history.push({ role: 'assistant', content: fullText + note });
-        sessions.recordTurn('assistant', fullText);
+        persistSafely('record assistant turn', () => sessions.recordTurn('assistant', fullText));
       }
       if (history.length > MAX_TURNS) history = history.slice(-MAX_TURNS);
       // Attribute tokens spent to the current session, split by target. Prefer the
@@ -548,7 +602,7 @@ export async function coordinate(
       const spent = turnUsage
         ? (turnUsage.total || turnUsage.prompt + turnUsage.completion)
         : Math.round((messages.reduce((n, m) => n + textLength(m.content), 0) + (fullText || '').length) / 4);
-      sessions.addSessionTokens(target, spent);
+      persistSafely('add session tokens', () => sessions.addSessionTokens(target, spent));
       perfMark(turnId, 'llm_done', { chars: (fullText || '').length });
       cb.onDone(fullText);
     };
@@ -560,7 +614,7 @@ export async function coordinate(
     let harnessHeaders: Record<string, string> | undefined;
     if (target === 'harness') {
       const sid = harnessSession();
-      sessions.setCurrentHarnessSession(sid);
+      persistSafely('pin harness session', () => sessions.setCurrentHarnessSession(sid));
       harnessHeaders = { 'X-Hermes-Session-Id': sid };
     }
     const timeoutMs = target === 'harness' ? 120000 : 30000;
@@ -570,22 +624,25 @@ export async function coordinate(
       onToken: emitToken,
       // The harness streams its own server-side tool calls as UI chips via onTool;
       // their names are also captured for the history note (see finishWith).
+      // The direct LLM has no tools: any tool event it emits is ignored — not
+      // forwarded as a chip and not recorded as an agent action.
       onTool: (info) => {
-        if (!isCurrent()) return;
-        if (target === 'harness' && info.name && !agentActions.includes(info.name)) agentActions.push(info.name);
+        if (!isCurrent() || target !== 'harness') return;
+        sawActivity = true;
+        if (info.name && !agentActions.includes(info.name)) agentActions.push(info.name);
         cb.onTool?.(info);
       },
       onUsage: (u) => { turnUsage = u; },
       onDone: (fullText) => finishWith(fullText),
       onError: (err) => {
         if (!isCurrent()) return;
-        // Invariant: never retry or fall back once reply TEXT has streamed to the
-        // renderer. A second stream would concatenate onto the partial reply
+        // Invariant: never retry or fall back once reply TEXT or a tool event has
+        // reached the renderer. A second stream would concatenate onto the partial reply
         // already shown (and re-spoken by TTS) — e.g. a harness that drops the
         // socket mid-answer. Past this point, surface the error instead. (The
         // retry cases below normally fire before any token, so this only guards
         // the mid-stream-drop edge.)
-        if (!sawFirstToken) {
+        if (!sawActivity) {
           // This target can't accept the screen image — retry it WITHOUT the image
           // so the user still gets a text answer instead of a hard 400.
           if (withImage && isVisionUnsupportedError(err)) {
