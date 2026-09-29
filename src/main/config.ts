@@ -6,6 +6,9 @@ interface AppConfig {
     model: string;
     backend: 'vulkan' | 'cpu';
     prewarm: boolean;
+    // Speculative early endpointing: transcribe during a pause and end a
+    // finished-sounding request ~350ms sooner. Off restores the fixed 850ms hang.
+    speculative: boolean;
   };
   tts: {
     engine: 'piper' | 'kokoro';
@@ -137,6 +140,7 @@ const defaults: AppConfig = {
     model: DEFAULT_STT_MODEL,
     backend: 'vulkan',
     prewarm: true,
+    speculative: true,
   },
   tts: {
     engine: 'kokoro',

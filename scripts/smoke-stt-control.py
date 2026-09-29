@@ -120,5 +120,49 @@ fallback_sidecar._emit_status = lambda *_args, **_kwargs: None
 fallback_sidecar.initialize()
 check("warm-server-keeps-cli-fallback", fallback_sidecar._cli_bin == "/tmp/whisper-cli")
 
+# Speculative transcription: transcribes the audio so far WITHOUT consuming it,
+# emits a correlated stt_partial, and lets the final pass reuse that text when the
+# only audio added since is silence (the pause that triggered the speculation).
+spec = SttSidecar()
+spec_out = []
+spec_calls = []
+spec.emit = spec_out.append
+spec._emit_status = lambda *_a, **_k: None
+spec._transcribe = lambda pcm: spec_calls.append(len(pcm)) or "turn off the lights"
+loud = (b"\x00\x40" * 1600)          # 100ms at ~0.5 FS
+quiet = (b"\x02\x00" * 3200)         # 200ms near-silence
+spec.on_control({"type": "start", "utterance_id": "s-1"})
+spec.on_pcm(loud)
+spec.on_control({"type": "speculate", "utterance_id": "s-1", "audio_bytes": len(loud)})
+check("speculate-emits-partial", spec_out[-1] == {"type": "stt_partial", "utterance_id": "s-1",
+      "text": "turn off the lights", "audio_bytes": len(loud)}, f"got {spec_out[-1]!r}")
+check("speculate-keeps-buffer", len(spec._audio_buffer) == len(loud))
+spec.on_control({"type": "speculate", "utterance_id": "stale", "audio_bytes": 2})
+check("speculate-ignores-stale-turn", len(spec_calls) == 1)
+spec.on_pcm(quiet)
+spec.on_control({"type": "transcribe", "utterance_id": "s-1", "audio_bytes": len(loud) + len(quiet)})
+check("final-reuses-speculation-over-silent-tail", len(spec_calls) == 1
+      and spec_out[-1].get("text") == "turn off the lights" and spec_out[-1].get("reused") is True,
+      f"calls={spec_calls} out={spec_out[-1]!r}")
+
+spec2 = SttSidecar()
+spec2_out = []
+spec2_calls = []
+spec2.emit = spec2_out.append
+spec2._emit_status = lambda *_a, **_k: None
+spec2._transcribe = lambda pcm: spec2_calls.append(len(pcm)) or ("turn off" if len(spec2_calls) == 1 else "turn off the lights")
+spec2.on_control({"type": "start", "utterance_id": "s-2"})
+spec2.on_pcm(loud)
+spec2.on_control({"type": "speculate", "utterance_id": "s-2", "audio_bytes": len(loud)})
+spec2.on_pcm(loud)  # user kept talking after the speculation
+spec2.on_control({"type": "transcribe", "utterance_id": "s-2", "audio_bytes": 2 * len(loud)})
+check("final-retranscribes-when-tail-has-speech", len(spec2_calls) == 2
+      and spec2_out[-1].get("text") == "turn off the lights" and not spec2_out[-1].get("reused"),
+      f"calls={spec2_calls} out={spec2_out[-1]!r}")
+spec2.on_control({"type": "start", "utterance_id": "s-3"})
+spec2.on_pcm(quiet)
+spec2.on_control({"type": "transcribe", "utterance_id": "s-3", "audio_bytes": len(quiet)})
+check("new-turn-drops-old-speculation", len(spec2_calls) == 3)
+
 print(f"\n=== RESULT: {'PASS' if not failures else 'FAIL'} ===")
 raise SystemExit(0 if not failures else 1)

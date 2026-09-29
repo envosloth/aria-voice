@@ -47,6 +47,8 @@ class SttSidecar(BaseSidecar):
         self._buffer_lock = threading.Lock()
         self._audio_ready = threading.Condition(self._buffer_lock)
         self._utterance_id = ""
+        # Speculative partial for the current utterance: (byte_count, text).
+        self._spec: tuple[int, str] | None = None
         self._server_proc: subprocess.Popen | None = None
         self._server_port = 0
         self._cli_bin = ""  # fallback
@@ -85,7 +87,10 @@ class SttSidecar(BaseSidecar):
             with self._audio_ready:
                 self._audio_buffer.clear()
                 self._utterance_id = utterance_id
+                self._spec = None
             self.emit({"type": "stt_started", "utterance_id": utterance_id})
+        elif mtype == "speculate":
+            self._speculate(msg)
         elif mtype == "transcribe":
             utterance_id = str(msg.get("utterance_id", self._utterance_id))
             try:
@@ -105,6 +110,18 @@ class SttSidecar(BaseSidecar):
                 usable = len(self._audio_buffer) & ~1
                 pcm = bytes(self._audio_buffer[:usable])
                 del self._audio_buffer[:usable]
+                spec = self._spec if utterance_id == self._utterance_id else None
+                self._spec = None
+            reused = self._reusable_speculation(spec, pcm)
+            if reused is not None:
+                # The only audio since the speculation is the silence that ended
+                # the turn: re-running whisper would return the same words.
+                self._emit_status("info", "transcribe 0ms (reused speculative partial)")
+                self.emit({
+                    "type": "stt_result", "utterance_id": utterance_id,
+                    "text": reused, "transcribe_ms": 0, "reused": True,
+                })
+                return
             t0 = time.time()
             try:
                 text = self._transcribe(pcm) if pcm else ""
@@ -127,6 +144,61 @@ class SttSidecar(BaseSidecar):
         elif mtype == "reset":
             with self._buffer_lock:
                 self._audio_buffer.clear()
+                self._spec = None
+
+    # ---- speculative (early-endpoint) transcription ----
+    # A tail counts as silence when its RMS stays under this (int16 units,
+    # ~-40 dBFS). Deliberately strict: a false "silent" verdict would reuse a
+    # partial that misses the user's last word, so marginal tails re-transcribe.
+    _SILENT_TAIL_RMS = 330
+
+    def _speculate(self, msg: dict) -> None:
+        utterance_id = str(msg.get("utterance_id", ""))
+        try:
+            want = max(0, int(msg.get("audio_bytes", 0)))
+        except (TypeError, ValueError):
+            want = 0
+        deadline = time.monotonic() + 0.12  # same cross-transport barrier as transcribe
+        with self._audio_ready:
+            if not utterance_id or utterance_id != self._utterance_id:
+                return
+            while len(self._audio_buffer) < want:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                self._audio_ready.wait(remaining)
+            usable = min(want or len(self._audio_buffer), len(self._audio_buffer)) & ~1
+            pcm = bytes(self._audio_buffer[:usable])  # copy; the buffer is NOT consumed
+        if not pcm:
+            return
+        try:
+            text = self._transcribe(pcm)
+        except Exception as exc:
+            self._emit_status("warning", f"speculative transcribe failed ({exc})")
+            return
+        with self._audio_ready:
+            if utterance_id != self._utterance_id:
+                return  # superseded while whisper was running
+            self._spec = (len(pcm), text)
+        self.emit({"type": "stt_partial", "utterance_id": utterance_id,
+                   "text": text, "audio_bytes": len(pcm)})
+
+    def _reusable_speculation(self, spec, pcm: bytes):
+        if not spec or not spec[1].strip():
+            return None
+        spec_bytes, text = spec
+        if spec_bytes > len(pcm):
+            return None
+        tail = pcm[spec_bytes:]
+        if len(tail) < 2:
+            return text
+        import array
+        samples = array.array("h")
+        samples.frombytes(tail[: len(tail) & ~1])
+        if sys.byteorder != "little":
+            samples.byteswap()
+        energy = sum(s * s for s in samples) / len(samples)
+        return text if energy ** 0.5 < self._SILENT_TAIL_RMS else None
 
     def _transcribe(self, pcm_data: bytes) -> str:
         if self._server_proc and self._server_proc.poll() is None:

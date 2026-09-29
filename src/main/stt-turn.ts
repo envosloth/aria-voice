@@ -71,6 +71,16 @@ export class SttTurnGate {
     return { chunks, transcribe };
   }
 
+  /**
+   * Speculative (early-endpoint) transcription of the audio captured so far.
+   * Allowed only while capture is open and the sidecar owns the turn; unlike
+   * end() it does not consume the turn's one-shot final transcription.
+   */
+  speculate(turnId: string): TranscribeRequest | null {
+    if (!this.isCurrent(turnId) || !this.captureOpen || !this.started || this.endRequested) return null;
+    return { turnId, audioBytes: this.audioBytes };
+  }
+
   /** Closes capture and returns a request only when the sidecar is ready. */
   end(): TranscribeRequest | null {
     if (!this.turnId || this.endRequested) return null;

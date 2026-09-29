@@ -686,6 +686,14 @@ function setupIpcHandlers(): void {
     })();
   });
 
+  on(IPC.STT_SPECULATE, (_e, turnId?: unknown) => {
+    if (!isNonEmptyString(turnId, 128) || config.get('stt.speculative') === false) return;
+    const request = sttGate.speculate(turnId);
+    if (!request) return;
+    perfMark(turnId, 'stt_speculate_req', { bytes: request.audioBytes });
+    supervisor.sendToSidecar('stt', { type: 'speculate', utterance_id: request.turnId, audio_bytes: request.audioBytes });
+  });
+
   on(IPC.STT_END, (_e, turnId?: unknown) => {
     if (typeof turnId !== 'string') return;
     if (turnId && !sttGate.isCurrent(turnId)) return;
@@ -1722,14 +1730,17 @@ function routeSidecarMessage(name: SidecarName, msg: Record<string, unknown>): v
         if (sttActiveTurn === turnId) sttActiveTurn = null;
         const waiter = sttWaiters.get(turnId);
         if (waiter) { sttWaiters.delete(turnId); waiter.resolve(typeof msg.text === 'string' ? msg.text : ''); break; }
-        perfMark(turnId, 'stt_result', { chars: typeof msg.text === 'string' ? msg.text.length : 0 });
+        perfMark(turnId, 'stt_result', { chars: typeof msg.text === 'string' ? msg.text.length : 0, reused: msg.reused === true });
         mainWindow?.webContents.send(IPC.STT_RESULT, { text: msg.text, turnId });
       }
       break;
     case 'stt_partial':
       {
         const turnId = typeof msg.utterance_id === 'string' ? msg.utterance_id : '';
-        if (sttGate.isCurrent(turnId)) mainWindow?.webContents.send(IPC.STT_PARTIAL, { text: msg.text, turnId });
+        if (sttGate.isCurrent(turnId) && typeof msg.text === 'string') {
+          perfMark(turnId, 'stt_partial', { chars: msg.text.length });
+          mainWindow?.webContents.send(IPC.STT_PARTIAL, { text: msg.text, turnId });
+        }
       }
       break;
     case 'stt_failed':

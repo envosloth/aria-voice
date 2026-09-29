@@ -103,6 +103,13 @@
     let silenceMs = 0;
     let ended = false;
     let noiseFloor = seedFloor ? 0 : -1; // ambient RMS estimate
+    // Speculative early end: `epoch` counts speech segments (bumped whenever
+    // speech resumes after a pause), so a transcript of the audio-so-far is
+    // tied to the exact pause it was taken in. allowEarlyEnd(epoch, ms) lowers
+    // this pause's hang only if no speech has arrived since; any new word voids
+    // the grant and the normal hang applies again.
+    let epoch = 0;
+    let earlyHangMs = 0;
 
     // Returns true exactly once, on the frame that ends the utterance.
     this.pushRms = function (frameRms) {
@@ -127,7 +134,10 @@
         // not make a resumed speaker re-qualify before clearing a brief pause:
         // follow-up turns need 240ms to open, but a mid-sentence word after a
         // pause must reset the endpoint timer immediately.
-        if (sawSpeech) silenceMs = 0;
+        if (sawSpeech) {
+          if (silenceMs > 0) { epoch++; earlyHangMs = 0; }
+          silenceMs = 0;
+        }
       } else {
         speechMs = 0;
         if (!seedFloor) noiseFloor = noiseFloor * 0.95 + frameRms * 0.05;
@@ -137,7 +147,8 @@
             && totalSpeechMs >= shortSpeechMinMs && totalSpeechMs <= shortSpeechMaxMs
             ? shortSpeechHangMs
             : hangMs;
-          if (silenceMs >= activeHangMs) {
+          const effectiveHangMs = earlyHangMs > 0 ? Math.min(earlyHangMs, activeHangMs) : activeHangMs;
+          if (silenceMs >= effectiveHangMs) {
             ended = true;
             return true;
           }
@@ -146,8 +157,18 @@
       return false;
     };
     this.pushFrame = function (float32) { return this.pushRms(rms(float32)); };
-    this.reset = function () { sawSpeech = false; speechMs = 0; totalSpeechMs = 0; silenceMs = 0; ended = false; noiseFloor = seedFloor ? 0 : -1; };
+    this.reset = function () { sawSpeech = false; speechMs = 0; totalSpeechMs = 0; silenceMs = 0; ended = false; noiseFloor = seedFloor ? 0 : -1; epoch = 0; earlyHangMs = 0; };
     this.hasSpeech = function () { return sawSpeech; };
+    // Trailing silence of the current pause (0 while speaking / before speech).
+    this.pauseMs = function () { return sawSpeech ? silenceMs : 0; };
+    this.speechEpoch = function () { return epoch; };
+    this.speechMs = function () { return sawSpeech ? totalSpeechMs : 0; };
+    // Returns true when the grant applies to the pause that is still ongoing.
+    this.allowEarlyEnd = function (forEpoch, ms) {
+      if (ended || !sawSpeech || forEpoch !== epoch || silenceMs <= 0 || !(ms > 0)) return false;
+      earlyHangMs = ms;
+      return true;
+    };
   }
 
   // Clean a piece of assistant text so it reads naturally aloud. LLM replies are
@@ -341,7 +362,38 @@
     shortSpeechHangMs: 1300,
   });
 
+  // Speculative early endpointing (roadmap: low-latency voice). After
+  // `speculateAfterMs` of trailing silence the renderer asks STT to transcribe
+  // the audio so far; if that partial reads as a finished request
+  // (looksComplete) the turn ends at `earlyHangMs` instead of the normal hang,
+  // and the sidecar reuses the partial so the final pass costs ~0ms. Incomplete
+  // or hesitant partials keep the normal/short-speech hang untouched.
+  const SPECULATIVE_ENDPOINT_OPTS = Object.freeze({
+    speculateAfterMs: 300,
+    earlyHangMs: 500,
+    minSpeechMs: 400,     // never speculate on a fragment this short
+  });
+
+  // Words that leave a request grammatically open when they end it.
+  const OPEN_ENDINGS = new Set([
+    'and', 'or', 'but', 'so', 'because', 'if', 'then', 'than', 'that', 'which', 'who',
+    'to', 'at', 'in', 'on', 'of', 'for', 'from', 'with', 'about', 'into', 'onto', 'by',
+    'the', 'a', 'an', 'my', 'your', 'our', 'their', 'his', 'her', 'its', 'this', 'these', 'those',
+    'um', 'uh', 'er', 'erm', 'hmm', 'like', 'maybe', 'also', 'is', 'are',
+    'was', 'can', 'could', 'would', 'should', 'will', 'do', 'does', 'me', 'what', 'where', 'when',
+  ]);
+  function looksComplete(text) {
+    const raw = String(text || '').trim();
+    if (!raw || /^\[[^\]]*\]$|^\([^)]*\)$/.test(raw)) return false; // [BLANK_AUDIO], (music)
+    if (/(\.\.\.|…|[,;:\-–—])$/.test(raw)) return false;          // trailing-off punctuation
+    const words = raw.toLowerCase().replace(/[^a-z0-9'\s]/g, ' ').split(/\s+/).filter(Boolean);
+    if (words.length < 2) return false;                            // "Hey." / "Um."
+    if (OPEN_ENDINGS.has(words[words.length - 1])) return false;
+    return true;
+  }
+
   const api = {
+    SPECULATIVE_ENDPOINT_OPTS, looksComplete,
     TARGET_RATE, HANDSFREE_ENDPOINT_OPTS, downsampleTo16k, floatToInt16, micFrameToPcm16k, rms, VadEndpointer,
     SttDiscardGate, sanitizeForSpeech, collapseRepeats,
   };

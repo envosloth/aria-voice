@@ -271,5 +271,55 @@ check('san-keeps-ring-fire', S('the ring of fire is beautiful') === 'the ring of
 // "caret" is part of the user's actual ask and should be kept.
 check('san-keeps-caret-standalone', /\bcaret\b/i.test(S('put the caret at the end of the line')), `got "${S('put the caret at the end of the line')}"`);
 
+// 10. Speculative early endpointing: a pause long enough to speculate reports a
+//     stable speech epoch; allowEarlyEnd() for THAT epoch ends the turn at the
+//     early hang instead of the normal one, and resumed speech voids it.
+{
+  const v = new A.VadEndpointer({ threshold: 0.1, hangMs: 850, frameMs: 20 });
+  for (let i = 0; i < 20; i++) v.pushRms(0.5); // 400ms speech
+  let ended = false;
+  for (let i = 0; i < 15; i++) ended = v.pushRms(0) || ended; // 300ms pause
+  check('spec-pause-ms-tracked', v.pauseMs() === 300, `got ${v.pauseMs()}`);
+  const epoch = v.speechEpoch();
+  check('spec-no-end-before-grant', !ended);
+  check('spec-stale-epoch-rejected', v.allowEarlyEnd(epoch + 1, 500) === false);
+  check('spec-grant-accepted', v.allowEarlyEnd(epoch, 500) === true);
+  let endFrame = -1;
+  for (let i = 0; i < 40 && endFrame < 0; i++) if (v.pushRms(0)) endFrame = i;
+  // 300ms already elapsed, 500ms early hang -> 10 more 20ms frames (index 9).
+  check('spec-early-end-at-500ms', endFrame === 9, `ended at frame ${endFrame}`);
+}
+{
+  const v = new A.VadEndpointer({ threshold: 0.1, hangMs: 850, frameMs: 20 });
+  for (let i = 0; i < 20; i++) v.pushRms(0.5);
+  for (let i = 0; i < 15; i++) v.pushRms(0);
+  const epoch = v.speechEpoch();
+  v.pushRms(0.5); // user keeps talking: the speculated transcript is now stale
+  check('spec-resume-bumps-epoch', v.speechEpoch() !== epoch);
+  check('spec-resume-voids-grant', v.allowEarlyEnd(epoch, 500) === false);
+  let endFrame = -1;
+  for (let i = 0; i < 60 && endFrame < 0; i++) if (v.pushRms(0)) endFrame = i;
+  check('spec-resume-uses-normal-hang', endFrame === 42, `ended at frame ${endFrame}`); // 850ms/20
+}
+// 11. looksComplete: only a syntactically finished request earns the early end.
+{
+  const L = A.looksComplete;
+  check('lc-command', L('What time is it?') === true);
+  check('lc-request', L('Turn off the kitchen lights.') === true);
+  check('lc-polite', L('Turn off the lights please') === true);
+  check('lc-trailing-conjunction', L('Open Spotify and') === false);
+  check('lc-trailing-preposition', L('Remind me to call Mom at') === false);
+  check('lc-trailing-article', L('Play the') === false);
+  check('lc-filler', L('Um,') === false);
+  check('lc-ellipsis', L('So I was thinking...') === false);
+  check('lc-trailing-comma', L('Hey, can you,') === false);
+  check('lc-too-short', L('Hey.') === false);
+  check('lc-blank-annotation', L('[BLANK_AUDIO]') === false);
+  check('lc-empty', L('') === false);
+  check('lc-spec-opts-frozen', Object.isFrozen(A.SPECULATIVE_ENDPOINT_OPTS)
+    && A.SPECULATIVE_ENDPOINT_OPTS.speculateAfterMs < A.SPECULATIVE_ENDPOINT_OPTS.earlyHangMs
+    && A.SPECULATIVE_ENDPOINT_OPTS.earlyHangMs < A.HANDSFREE_ENDPOINT_OPTS.hangMs);
+}
+
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

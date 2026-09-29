@@ -977,8 +977,28 @@ const sttDiscardGate = new window.AriaAudio.SttDiscardGate();
 const FOLLOWUP_NO_SPEECH_MS = 6000;
 try { aria.config.get('conversation.enabled').then((v) => { conversationMode = !!v; }); } catch (e) {}
 
+// Speculative early endpointing (window.AriaAudio.SPECULATIVE_ENDPOINT_OPTS):
+// once a hands-free turn pauses for ~300ms, STT transcribes the audio so far.
+// If that reads as a finished request the VAD ends the turn at 500ms instead of
+// 850ms and the sidecar reuses the partial, so the final STT pass is ~free. Any
+// resumed speech bumps the VAD's speech epoch and voids the grant.
+let speculativeEndpoint = true;
+let specEpoch = -1;       // VAD speech epoch the in-flight speculation belongs to
+try { aria.config.get('stt.speculative').then((v) => { speculativeEndpoint = v !== false; }); } catch (e) {}
+
+function maybeSpeculate() {
+  if (!speculativeEndpoint || !vad || !currentVoiceTurnId || !aria.stt.speculate) return;
+  const S = window.AriaAudio.SPECULATIVE_ENDPOINT_OPTS;
+  const epoch = vad.speechEpoch();
+  if (epoch === specEpoch || vad.pauseMs() < S.speculateAfterMs || vad.speechMs() < S.minSpeechMs) return;
+  specEpoch = epoch;
+  aria.stt.speculate(currentVoiceTurnId);
+}
+
 function updateVad(samples) {
-  if (vad && vad.pushFrame(samples)) endUtterance();
+  if (!vad) return;
+  if (vad.pushFrame(samples)) { endUtterance(); return; }
+  maybeSpeculate();
 }
 
 // Drive the orb's visual state through the conversation pipeline. `orbStateName`
@@ -1198,6 +1218,7 @@ async function beginUtterance(opts) {
   // frames seed an adaptive noise floor (see VadEndpointer). Wake-word turns
   // keep the permissive gate: the user deliberately invoked those.
   const endpointOpts = window.AriaAudio.HANDSFREE_ENDPOINT_OPTS;
+  specEpoch = -1;
   vad = vadActive
     ? new window.AriaAudio.VadEndpointer(
       opts && opts.followup
@@ -1333,6 +1354,13 @@ aria.stt.onResult((result) => {
 aria.stt.onPartial((result) => {
   if (!result || result.turnId !== currentVoiceTurnId) return;
   partialEl.textContent = result.text || '';
+  // Only the pause that produced this partial may end early; allowEarlyEnd
+  // refuses if the user has spoken since (epoch moved on).
+  if (listening && vad && specEpoch >= 0 && window.AriaAudio.looksComplete(result.text)) {
+    if (vad.allowEarlyEnd(specEpoch, window.AriaAudio.SPECULATIVE_ENDPOINT_OPTS.earlyHangMs)) {
+      perf.mark(currentVoiceTurnId, 'early_endpoint_granted');
+    }
+  }
 });
 
 aria.stt.onState((event) => {

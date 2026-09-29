@@ -37,7 +37,14 @@ question carries no history, no tools, and nothing the user did not just say.
 2. Wake word (or the mic button / global shortcut) opens an utterance
    (`STT_START`). The renderer runs energy-based endpointing (`VadEndpointer`) for
    hands-free turns; ~850 ms of trailing silence ends it (`STT_END`), or 1.3 s
-   when only a brief 200–500 ms opening fragment has been spoken so far. If the
+   when only a brief 200–500 ms opening fragment has been spoken so far.
+   **Speculative early endpoint** (`stt.speculative`, default on): after 300 ms
+   of pause (≥400 ms of speech), the renderer sends `STT_SPECULATE`; the sidecar
+   transcribes the audio so far without consuming it and returns `STT_PARTIAL`.
+   If `looksComplete()` accepts it and the user has not spoken since (VAD speech
+   epoch unchanged), the hang drops to 500 ms, and the final `transcribe` reuses
+   the partial when the added tail is silent (`reused: true`, ~0 ms). Resumed
+   speech voids the grant and the final re-transcribes. If the
    STT sidecar dies with a turn in flight, main fails that turn (`STT_STATE`
    `stt_failed`) so the renderer never waits on a result that cannot arrive.
 3. The **stt** sidecar (warm `whisper-server`, Vulkan) returns text (`STT_RESULT`).

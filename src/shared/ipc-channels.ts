@@ -12,7 +12,8 @@ export const IPC = {
   STT_START: 'stt:start',       // renderer -> main: begin an utterance (route mic to STT)
   STT_END: 'stt:end',           // renderer -> main: end utterance, trigger transcription
   STT_RESULT: 'stt:result',     // main -> renderer: { text, turnId } exactly once
-  STT_PARTIAL: 'stt:partial',
+  STT_SPECULATE: 'stt:speculate', // renderer -> main: transcribe audio-so-far during a pause (early endpoint)
+  STT_PARTIAL: 'stt:partial',   // main -> renderer: { text, turnId } speculative transcript of the open turn
   STT_STATE: 'stt:state',
 
   TTS_PLAY: 'tts:play',     // renderer -> main: request synthesis of text

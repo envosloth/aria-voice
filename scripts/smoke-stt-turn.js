@@ -47,5 +47,23 @@ const wakeBody = appSource.match(/aria\.wakeword\.onDetected\([^=]*=> \{([\s\S]*
 check('duplicate-wake-does-not-chime', !!wakeBody
   && wakeBody[1].indexOf('if (listening) return;') < wakeBody[1].indexOf('playWakeChime()'));
 
+// Speculative transcription: allowed only while capture is open and the sidecar
+// has acknowledged the turn; it carries the bytes captured so far and never
+// consumes the one-shot final transcription.
+{
+  const g = new SttTurnGate(1024);
+  g.begin('turn-s');
+  g.pushAudio(Buffer.alloc(8));
+  check('speculate-blocked-before-ack', g.speculate('turn-s') === null);
+  g.ackStarted('turn-s');
+  g.pushAudio(Buffer.alloc(4));
+  const s = g.speculate('turn-s');
+  check('speculate-reports-bytes', !!s && s.turnId === 'turn-s' && s.audioBytes === 12, JSON.stringify(s));
+  check('speculate-stale-turn-rejected', g.speculate('turn-x') === null);
+  const fin = g.end();
+  check('final-after-speculate', !!fin && fin.audioBytes === 12);
+  check('speculate-after-end-rejected', g.speculate('turn-s') === null);
+}
+
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);
