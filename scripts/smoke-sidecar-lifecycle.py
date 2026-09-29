@@ -160,6 +160,9 @@ class SilentServer:
     def terminate(self):
         pass
 
+    def wait(self, timeout=None):
+        return 0
+
 
 stt = stt_module.SttSidecar()
 stt.model_path = "/tmp/fake-model.bin"
@@ -290,6 +293,9 @@ class QuietServer:
 
     def terminate(self):
         self.terminated = True
+
+    def wait(self, timeout=None):
+        return 0
 
 
 stt_port = stt_module.SttSidecar()

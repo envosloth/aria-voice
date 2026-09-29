@@ -92,6 +92,12 @@ class FakeProc:
     def poll(self):
         return None
 
+    def terminate(self):
+        pass
+
+    def wait(self, timeout=None):
+        return 0
+
 
 startup_sidecar = SttSidecar()
 startup_sidecar.model_path = "/tmp/model.bin"

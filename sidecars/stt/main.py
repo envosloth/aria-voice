@@ -283,11 +283,7 @@ class SttSidecar(BaseSidecar):
             ready = False
         if not ready:
             self._emit_status("warning", "whisper-server readiness timed out; will use CLI fallback")
-            try:
-                self._server_proc.terminate()
-            except Exception:
-                pass
-            self._server_proc = None
+            self._stop_server()
 
     def _server_identity_ok(self) -> bool:
         """True only when the listener on our port is our whisper-server child.
@@ -487,17 +483,32 @@ class SttSidecar(BaseSidecar):
                 return p
         raise FileNotFoundError(f"Whisper model '{model_file}' not found. Run the model download script first.")
 
-    def cleanup(self) -> None:
-        if self._server_proc:
+    def _stop_server(self) -> None:
+        proc = self._server_proc
+        if proc is None:
+            return
+        if proc.poll() is None:
             try:
-                self._server_proc.terminate()
-                self._server_proc.wait(timeout=3)
-            except Exception:
-                try:
-                    self._server_proc.kill()
-                except OSError:
-                    pass
-        super().cleanup()
+                proc.terminate()
+            except ProcessLookupError:
+                pass
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            # Keep ownership if even forced cleanup fails; do not start a second
+            # inference process alongside a server we have failed to reap.
+            proc.wait(timeout=3)
+        self._server_proc = None
+
+    def cleanup(self) -> None:
+        try:
+            self._stop_server()
+        finally:
+            super().cleanup()
 
 
 if __name__ == "__main__":
