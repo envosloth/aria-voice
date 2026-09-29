@@ -48,6 +48,15 @@ interface AppConfig {
     jevEndpoint: string;
     jevModel: string;
   };
+  context: {
+    // Desktop context ARIA may read when you point at it ("summarize this",
+    // "what did I copy", "what app am I in"). Each source is opt-in; nothing
+    // is read unless an utterance refers to it, and every read is shown on
+    // the reply as a chip.
+    activeApp: boolean;
+    selection: boolean;
+    clipboard: boolean;
+  };
   memory: {
     // Include relevant remembered facts in each turn's prompt. Voice commands
     // ("remember that…", "forget…") and the Memory panel work either way.
@@ -186,6 +195,11 @@ const defaults: AppConfig = {
     coordinator: 'builtin',
     jevEndpoint: 'https://api.typesafe.ai/v1/systemone',
     jevModel: 'jev-latest',
+  },
+  context: {
+    activeApp: false,
+    selection: false,
+    clipboard: false,
   },
   memory: {
     enabled: true,

@@ -403,6 +403,10 @@
     .route-badge { display: inline-block; font: 700 9px var(--mono); text-transform: uppercase; letter-spacing: .06em; padding: 3px 8px; border-radius: 6px; margin-right: 8px; vertical-align: middle; color: #fff; }
     .route-llm { background: rgba(255,255,255,.16); }
     .route-harness { background: var(--accent-active); color: #06131c; }
+    .context-indicator { margin-left: 10px; font: 600 11px var(--sans, inherit); padding: 3px 9px; border-radius: 999px; color: var(--text); background: color-mix(in srgb, var(--accent-active) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent-active) 35%, transparent); cursor: pointer; }
+    .context-indicator:focus-visible { outline: 2px solid var(--accent-active); outline-offset: 2px; }
+    .context-chip { background: color-mix(in srgb, var(--success, #3c9) 12%, transparent); border-color: color-mix(in srgb, var(--success, #3c9) 35%, transparent); }
+    .context-chip.withheld { background: color-mix(in srgb, var(--error) 12%, transparent); border-color: color-mix(in srgb, var(--error) 35%, transparent); }
     .msg-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
     .tool-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; line-height: 1; padding: 5px 9px; border-radius: 7px; background: color-mix(in srgb, var(--accent-active) 14%, transparent); border: 1px solid color-mix(in srgb, var(--accent-active) 30%, transparent); color: var(--text); transition: all .2s cubic-bezier(.16,1,.3,1); }
     .tool-chip:hover { background: color-mix(in srgb, var(--accent-active) 24%, transparent); border-color: var(--accent-active); transform: translateY(-1px); box-shadow: 0 4px 12px -2px var(--glow); }
@@ -819,6 +823,9 @@
       <div class="chat-head">
         <div class="chat-title">Current conversation</div>
         <div class="chat-sub" id="chat-sub">aria · voice</div>
+        <button type="button" id="context-indicator" class="context-indicator" hidden
+          title="What ARIA is allowed to read when you point at it — click to change"
+          aria-label="Desktop context ARIA can read"></button>
         <div style="margin-left:auto" class="state-badge" aria-hidden="true"></div>
         <div class="compact-actions" aria-label="Conversation controls">
           <button id="compact-new-session-btn" class="compact-action" title="Start a new conversation" aria-label="Start a new conversation">
@@ -908,6 +915,7 @@
         <div class="settings-title" id="settings-dialog-title">Settings</div>
         <button class="snav-item active" id="settings-tab-connections" data-tab="connections" role="tab" aria-controls="settings-connections" aria-selected="true">Connections</button>
         <button class="snav-item" id="settings-tab-voice" data-tab="voice" role="tab" aria-controls="settings-voice" aria-selected="false" tabindex="-1">Voice</button>
+        <button class="snav-item" id="settings-tab-context" data-tab="context" role="tab" aria-controls="settings-context" aria-selected="false" tabindex="-1">Context</button>
         <button class="snav-item" id="settings-tab-memory" data-tab="memory" role="tab" aria-controls="settings-memory" aria-selected="false" tabindex="-1">Memory</button>
         <button class="snav-item" id="settings-tab-appearance" data-tab="appearance" role="tab" aria-controls="settings-appearance" aria-selected="false" tabindex="-1">Appearance</button>
         <button class="snav-item" id="settings-tab-performance" data-tab="performance" role="tab" aria-controls="settings-performance" aria-selected="false" tabindex="-1">Performance</button>
@@ -1173,6 +1181,23 @@
         interrupts itself, lower the volume or use a headset.</p>
       </section>
       </div><!-- /voice -->
+
+      <div class="tab-panel" id="settings-context" data-panel="context" role="tabpanel" aria-labelledby="settings-tab-context">
+      <section>
+        <h3>What ARIA can see</h3>
+        <p class="hint">When you point at something — “summarize this”, “what did I copy”, “what app
+        am I in” — ARIA reads just that, just then, and shows a chip on its reply saying what it read.
+        Nothing is read in the background. Anything that looks like a key or token is never sent.</p>
+        <label class="checkbox-label"><input type="checkbox" id="cfg-context-selection"> Selected text
+          <span class="hint" id="ctx-support-selection"></span></label>
+        <label class="checkbox-label"><input type="checkbox" id="cfg-context-clipboard"> Clipboard
+          <span class="hint" id="ctx-support-clipboard"></span></label>
+        <label class="checkbox-label"><input type="checkbox" id="cfg-context-active-app"> Active app and window title (also the page title in your browser)
+          <span class="hint" id="ctx-support-active-app"></span></label>
+        <p class="hint">Screen sharing (the screen button) is separate and still asks each time.
+        You can also drop a text file onto the message box to attach it to one message.</p>
+      </section>
+      </div><!-- /context -->
 
       <div class="tab-panel" id="settings-memory" data-panel="memory" role="tabpanel" aria-labelledby="settings-tab-memory">
       <section>

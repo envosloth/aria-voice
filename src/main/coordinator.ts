@@ -14,9 +14,12 @@ import { perfMark } from './perf';
 import * as sessions from './sessions';
 import { findForgetTarget, renderMemoryBlock, selectMemories, MemoryItem } from './user-memory';
 import { memoryStore } from './user-memory-app';
+import { buildContextBlock, detectContextRefs, isTextWorkOnContext, UsedContext } from './context-refs';
+import { captureContext } from './context-capture';
 
 export interface CoordinatorCallbacks extends LlmCallbacks {
   onRoute?: (info: { target: Target; name: string }) => void;
+  onContext?: (used: UsedContext[]) => void;
 }
 
 const TARGET_NAMES: Record<Target, string> = { llm: 'LLM', harness: 'Agent' };
@@ -479,6 +482,7 @@ function isAuthError(msg: string): boolean {
  */
 export interface CoordinateOptions {
   image?: string | null; // a data: URL screen-share frame, attached to this turn
+  files?: { name: string; text: string }[]; // text files dropped on the composer for this turn
   turnId?: string;        // latency-harness correlation id (see perf.ts)
   // Main-process IPC owns this guard. Superseded streams must not mutate shared
   // history or publish into a newer renderer turn.
@@ -601,10 +605,45 @@ export async function coordinate(
   const prevUser = history.length >= 3 ? history[history.length - 3] : null;
   const prevUserText = prevUser && prevUser.role === 'user' && typeof prevUser.content === 'string' ? prevUser.content : '';
 
+  // Desktop context (roadmap P0.3): only when the utterance points at it and
+  // only from sources the user enabled. The block rides on THIS request only
+  // (never stored in shared history), and the renderer shows what was read.
+  let contextBlock = '';
+  const refs = detectContextRefs(userMessage);
+  const files = opts.files || [];
+  if (files.length) {
+    // Dropped files are an explicit hand-over: always attached, no toggle needed.
+    const built = buildContextBlock({ files }, []);
+    contextBlock = built.text;
+    if (built.used.length) cb.onContext?.(built.used);
+  } else if (refs.length) {
+    const sources = {
+      activeApp: config.get('context.activeApp') === true,
+      selection: config.get('context.selection') === true,
+      clipboard: config.get('context.clipboard') === true,
+    };
+    if (sources.activeApp || sources.selection || sources.clipboard) {
+      try {
+        const snap = await captureContext(refs, sources);
+        if (!isCurrent()) return;
+        const built = buildContextBlock(snap, refs);
+        contextBlock = built.text;
+        if (built.used.length) cb.onContext?.(built.used);
+      } catch (error) {
+        console.error(`[coordinator] context capture failed: ${(error as Error).message}`);
+      }
+    }
+  }
+  // Text work on text the user just handed over ("summarize this", "translate
+  // what I copied") needs no tools: keep it on the fast chat path.
+  const contextIsTextWork = !!contextBlock && !opts.image && (isTextWorkOnContext(userMessage) || files.length > 0 && !/\b(?:open|run|execute|install|save|move|rename|delete|commit)\b/i.test(userMessage));
+
   // A screen-share frame is visual context for the agent: prefer the harness
   // (the agent that can see + act on the screen) when one is configured.
   let primary: Target;
-  if (opts.image && hasHarness) {
+  if (contextIsTextWork && hasLlm && mode === 'auto') {
+    primary = 'llm';
+  } else if (opts.image && hasHarness) {
     primary = 'harness';
   } else {
     const decision = routeDetailed(userMessage, {
@@ -690,7 +729,8 @@ export async function coordinate(
     // Routing contract: router.ts chooses the harness before an agentic turn is
     // sent. The conversational model receives no delegation tool or sentinel.
     // History records a compact note for tools the harness itself ran.
-    const systemContent = (target === 'harness' ? HARNESS_SYSTEM_PROMPT : LLM_SYSTEM_PROMPT) + memoryContext(userMessage);
+    const systemContent = (target === 'harness' ? HARNESS_SYSTEM_PROMPT : LLM_SYSTEM_PROMPT)
+      + memoryContext(userMessage) + contextBlock;
     // The "voice output" hint is appended to the LAST user message because
     // LLMs reliably follow user-message instructions but inconsistently
     // follow system-prompt rules. This is a small per-turn nudge that

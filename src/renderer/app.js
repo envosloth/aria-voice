@@ -612,7 +612,8 @@ async function submitUserMessage(rawText, existingTurnId) {
   const image = shouldAttachScreen(text) ? await captureScreenFrame() : null;
   if (turnId !== currentTurnId || generationId !== currentGenerationId) return;
   perf.mark(turnId, 'dispatch', image ? { image: 1 } : undefined);
-  aria.llm.send(text, image, turnId, generationId);
+  const files = takeAttachedFiles();
+  aria.llm.send(text, image, turnId, generationId, files);
   armThinkingHold(text);
 }
 
@@ -1498,6 +1499,112 @@ function ensureAssistantMsg() {
   streamTextNode = document.createTextNode('');
   currentAssistantMsg.appendChild(streamTextNode);
 }
+
+// Desktop context attached to this reply (roadmap P0.3): one chip per source,
+// so the user always sees exactly what ARIA read. Shown above the answer, in
+// the same row as tool chips.
+aria.llm.onContext((info) => {
+  if (!info || info.turnId !== currentTurnId || info.generationId !== currentGenerationId) return;
+  ensureAssistantMsg();
+  if (!currentToolsEl) return;
+  currentToolsEl.style.display = '';
+  for (const u of info.used || []) {
+    const chip = document.createElement('span');
+    chip.className = 'tool-chip context-chip' + (u.withheld ? ' withheld' : '');
+    chip.textContent = (u.withheld ? '⛔ ' : '👁 ') + String(u.label || u.kind).slice(0, 80) + (u.truncated ? ' (trimmed)' : '');
+    chip.title = u.withheld ? 'Not sent: it looked like a password, key, or token.' : 'ARIA read this for this reply only.';
+    currentToolsEl.appendChild(chip);
+  }
+});
+
+// --- Context sources: settings, platform support, header indicator --------
+const CONTEXT_SOURCES = [
+  { key: 'selection', cfg: 'context.selection', input: 'cfg-context-selection', support: 'ctx-support-selection', label: 'selection' },
+  { key: 'clipboard', cfg: 'context.clipboard', input: 'cfg-context-clipboard', support: 'ctx-support-clipboard', label: 'clipboard' },
+  { key: 'activeApp', cfg: 'context.activeApp', input: 'cfg-context-active-app', support: 'ctx-support-active-app', label: 'active app' },
+];
+let contextSupport = null;
+async function refreshContextIndicator() {
+  const el = document.getElementById('context-indicator');
+  if (!el) return;
+  const on = [];
+  for (const s of CONTEXT_SOURCES) if ((await aria.config.get(s.cfg)) === true) on.push(s.label);
+  el.hidden = on.length === 0;
+  el.textContent = on.length ? `ARIA can read: ${on.join(', ')}` : '';
+}
+async function loadContextSettings() {
+  try { contextSupport = contextSupport || await aria.context.status(); } catch (e) { contextSupport = {}; }
+  for (const s of CONTEXT_SOURCES) {
+    const input = document.getElementById(s.input);
+    const hint = document.getElementById(s.support);
+    if (!input) continue;
+    const supported = !!(contextSupport && contextSupport[s.key]);
+    input.checked = supported && (await aria.config.get(s.cfg)) === true;
+    input.disabled = !supported;
+    if (hint) hint.textContent = supported ? `(${contextSupport[s.key]})` : '(not supported on this desktop yet)';
+  }
+}
+for (const s of CONTEXT_SOURCES) {
+  const input = document.getElementById(s.input);
+  // Saved on toggle (like the Memory panel): a privacy switch should take
+  // effect the moment it is flipped, not after a separate Save.
+  if (input) input.addEventListener('change', async () => {
+    await aria.config.set(s.cfg, input.checked);
+    refreshContextIndicator();
+  });
+}
+const contextIndicatorBtn = document.getElementById('context-indicator');
+if (contextIndicatorBtn) contextIndicatorBtn.addEventListener('click', () => openSettingsTab('context'));
+const contextTab = document.getElementById('settings-tab-context');
+if (contextTab) contextTab.addEventListener('click', loadContextSettings);
+refreshContextIndicator();
+
+// --- Drop a text file on the composer to attach it to the next message -----
+let attachedFiles = [];
+const FILE_MAX_CHARS = 20000;
+function renderAttachedFiles() {
+  let bar = document.getElementById('attached-files');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'attached-files';
+    bar.className = 'msg-tools';
+    bar.setAttribute('aria-live', 'polite');
+    textInput.parentElement.insertBefore(bar, textInput.parentElement.firstChild);
+  }
+  bar.replaceChildren();
+  bar.style.display = attachedFiles.length ? '' : 'none';
+  attachedFiles.forEach((f, i) => {
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.className = 'tool-chip context-chip';
+    chip.textContent = `📄 ${f.name} ✕`;
+    chip.setAttribute('aria-label', `Remove attached file ${f.name}`);
+    chip.addEventListener('click', () => { attachedFiles.splice(i, 1); renderAttachedFiles(); });
+    bar.appendChild(chip);
+  });
+}
+function takeAttachedFiles() {
+  const out = attachedFiles;
+  attachedFiles = [];
+  renderAttachedFiles();
+  return out;
+}
+async function attachFiles(fileList) {
+  for (const file of Array.from(fileList || []).slice(0, 3 - attachedFiles.length)) {
+    if (file.size > 2 * 1024 * 1024) { showError(`${file.name} is too big to attach (2 MB max).`); continue; }
+    const text = await file.text();
+    if (text.slice(0, 2000).includes(String.fromCharCode(0))) { showError(`${file.name} isn't a text file.`); continue; }
+    attachedFiles.push({ name: file.name, text: text.slice(0, FILE_MAX_CHARS) });
+  }
+  renderAttachedFiles();
+  textInput.focus();
+}
+textInput.addEventListener('dragover', (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) e.preventDefault(); });
+textInput.addEventListener('drop', (e) => {
+  if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+  e.preventDefault();
+  attachFiles(e.dataTransfer.files);
+});
 
 // Show (or bump the count on) a chip for a tool the harness just used.
 function addToolChip(info) {

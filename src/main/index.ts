@@ -17,6 +17,7 @@ import { initTimers } from './timers';
 import * as sessions from './sessions';
 import { MAX_MEMORY_CHARS, MEMORY_KINDS, MemoryItem, MemoryKind } from './user-memory';
 import { memoryStore } from './user-memory-app';
+import { activeWindowBackend, selectionBackend } from './context-capture';
 import * as sessionImport from './session-import';
 import { buildManifest, missingOrInvalidModels, downloadModel } from './model-manager';
 import { perfEnabled, setPerfEnabled, perfMark, perfMarkExternal } from './perf';
@@ -382,6 +383,11 @@ function setupIpcHandlers(): void {
     return memoryStore().remove(id);
   });
   handle(IPC.MEMORY_CLEAR, () => memoryStore().clear());
+  handle(IPC.CONTEXT_STATUS, () => ({
+    activeApp: activeWindowBackend(),
+    selection: selectionBackend(),
+    clipboard: process.platform === 'linux' && process.env.WAYLAND_DISPLAY ? 'wayland' : 'system',
+  }));
 
   handle(IPC.SESSIONS_LIST, () => sessions.listSessions());
   handle(IPC.SESSIONS_GET, (_e, id: unknown) => (isNonEmptyString(id) ? sessions.getSession(id) : null));
@@ -530,7 +536,7 @@ function setupIpcHandlers(): void {
       }
       return;
     }
-    const { message, image, turnId, generationId } = request;
+    const { message, image, turnId, generationId, files } = request;
     const generation = llmGenerationGate.begin(turnId, generationId);
     // Abort the prior stream before starting this generation. Its callbacks can
     // still arrive, so every callback below also checks the generation gate.
@@ -542,11 +548,12 @@ function setupIpcHandlers(): void {
     };
     coordinate(message, {
       onRoute: (info) => send(IPC.LLM_ROUTE, info),
+      onContext: (used) => send(IPC.LLM_CONTEXT, { used }),
       onToken: (token) => send(IPC.LLM_TOKEN, { token }),
       onTool: (info) => send(IPC.LLM_TOOL, info),
       onDone: (text) => send(IPC.LLM_DONE, { text }),
       onError: (error) => send(IPC.LLM_ERROR, { error }),
-    }, { image, turnId: generation.turnId, isCurrent }).catch((e: unknown) => {
+    }, { image, files, turnId: generation.turnId, isCurrent }).catch((e: unknown) => {
       // A rejection escaping the coordinator must still settle this generation
       // in the renderer (otherwise the orb/turn stays pending forever).
       console.error('[ARIA] coordinate failed:', e);

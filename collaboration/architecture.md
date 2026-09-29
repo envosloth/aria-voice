@@ -56,6 +56,22 @@ question carries no history, no tools, and nothing the user did not just say.
    stdout (`TTS_STATE`), bytes arrive as `TTS_AUDIO`, and Web Audio schedules them
    gaplessly while the **orb** reacts to the RMS envelope.
 
+**Desktop context** (`context-refs.ts`, pure; `context-capture.ts`, desktop):
+`detectContextRefs()` decides whether an utterance points at something —
+selection, clipboard, active app, browser page — and returns nothing for
+"this morning", "check it out", "tell me a joke". Only then, and only for
+sources enabled in Settings → Context (`context.selection|clipboard|activeApp`,
+all off by default), `captureContext()` reads them with 400 ms-bounded probes
+(Hyprland `hyprctl clients` focus history so ARIA's own window is skipped,
+Sway, X11 xdotool; `wl-paste` for selection and clipboard on Wayland because
+Electron's clipboard reads "" there while another app has focus).
+`buildContextBlock()` renders it for this one request's system prompt (never
+stored in shared history), framed as data not instructions, withholding
+anything that looks like a key/token. `LLM_CONTEXT` sends the renderer one chip
+per source read. Text work on handed-over text ("summarize this") stays on the
+chat path. Text files dropped on the composer ride on `LLM_SEND.files` for one
+message. The header shows "ARIA can read: …" while any source is enabled.
+
 **User memory** (`user-memory.ts`, pure; `user-memory-app.ts`, Electron
 binding): durable facts in `userData/aria-memory.json`, encrypted with
 `safeStorage` when the keyring backend is safe (else owner-only plaintext, shown

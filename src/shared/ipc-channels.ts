@@ -41,6 +41,8 @@ export const IPC = {
   // Auto-detect a local harness's endpoint + API key from the config it wrote on
   // disk (e.g. Hermes' ~/.hermes/.env), so users don't have to find the key.
   LLM_DETECT_HARNESS: 'llm:detect-harness',
+  LLM_CONTEXT: 'llm:context',  // main -> renderer: desktop context attached to this turn [{kind,label,…}]
+  CONTEXT_STATUS: 'context:status', // renderer -> main (invoke): which context sources this desktop supports
   LLM_ROUTE: 'llm:route',      // main -> renderer: which target answered (llm|harness)
 
   TIMER_FIRED: 'timer:fired', // main -> renderer: a timer/alarm/reminder fired — show + speak it

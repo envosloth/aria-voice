@@ -73,8 +73,8 @@ const api = {
   },
 
   llm: {
-    send: (message: string, image?: string | null, turnId?: string, generationId?: number) =>
-      ipcRenderer.send(IPC.LLM_SEND, { message, image: image || null, turnId: turnId || '', generationId: generationId || 0 }),
+    send: (message: string, image?: string | null, turnId?: string, generationId?: number, files?: { name: string; text: string }[]) =>
+      ipcRenderer.send(IPC.LLM_SEND, { message, image: image || null, turnId: turnId || '', generationId: generationId || 0, files: files || [] }),
     cancel: (turnId?: string, generationId?: number) => ipcRenderer.send(IPC.LLM_CANCEL, { turnId: turnId || '', generationId: generationId || 0 }),
     reset: () => ipcRenderer.send(IPC.LLM_RESET),
     test: (opts: { endpoint: string; model: string; apiKey?: string }) =>
@@ -100,6 +100,12 @@ const api = {
       ipcRenderer.on(IPC.LLM_ERROR, (_e, info) => cb(info)),
     onRoute: (cb: (info: { target: string; name: string; turnId: string; generationId: number }) => void) =>
       ipcRenderer.on(IPC.LLM_ROUTE, (_e, info) => cb(info)),
+    onContext: (cb: (info: { used: { kind: string; label: string; truncated?: boolean; withheld?: boolean }[]; turnId: string; generationId: number }) => void) =>
+      ipcRenderer.on(IPC.LLM_CONTEXT, (_e, info) => cb(info)),
+  },
+
+  context: {
+    status: () => ipcRenderer.invoke(IPC.CONTEXT_STATUS),
   },
 
   // Timers/alarms/reminders (see src/main/timers.ts): main schedules and

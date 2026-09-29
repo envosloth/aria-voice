@@ -66,7 +66,13 @@ export interface LlmSendRequest {
   image: string | null;
   turnId: string;
   generationId: number;
+  /** Text files the user dropped on the composer for this one message. */
+  files: { name: string; text: string }[];
 }
+
+export const LLM_MAX_FILES = 3;
+export const LLM_FILE_MAX_CHARS = 20000;
+export const LLM_FILE_NAME_MAX_CHARS = 200;
 
 /** Returns a normalized request, or null when the payload must be dropped. */
 export function parseLlmSendPayload(payload: unknown): LlmSendRequest | null {
@@ -86,7 +92,7 @@ export function validateLlmSendPayload(payload: unknown): {
 } {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return { request: null, error: 'Invalid request' };
   const p = payload as Record<string, unknown>;
-  const { message, image, turnId, generationId } = p;
+  const { message, image, turnId, generationId, files } = p;
   const gen = Number(generationId);
   const correlation = typeof turnId === 'string' && turnId && turnId.length <= LLM_TURN_ID_MAX_CHARS
     ? { turnId, generationId: Number.isFinite(gen) && gen > 0 ? gen : Date.now() }
@@ -103,7 +109,19 @@ export function validateLlmSendPayload(payload: unknown): {
     if (!/^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(image)) return reject('Screen image too large or invalid');
     img = image;
   }
-  return { request: { message, image: img, ...correlation } };
+  const outFiles: { name: string; text: string }[] = [];
+  if (files !== undefined && files !== null) {
+    if (!Array.isArray(files) || files.length > LLM_MAX_FILES) return reject(`Attach at most ${LLM_MAX_FILES} files`);
+    for (const f of files) {
+      const rec = f as Record<string, unknown>;
+      if (!rec || typeof rec.name !== 'string' || typeof rec.text !== 'string' || !rec.name.trim()
+          || rec.name.length > LLM_FILE_NAME_MAX_CHARS || rec.text.length > LLM_FILE_MAX_CHARS) {
+        return reject(`Attached file invalid or larger than ${LLM_FILE_MAX_CHARS} characters`);
+      }
+      outFiles.push({ name: rec.name.replace(/[\r\n"]/g, ' ').trim(), text: rec.text });
+    }
+  }
+  return { request: { message, image: img, ...correlation, files: outFiles } };
 }
 
 /**

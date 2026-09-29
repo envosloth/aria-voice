@@ -45,7 +45,7 @@ function harness() {
     },
     perf: { newTurn: () => `turn-${++serial}`, mark() {} },
     resetTurnMarkers() {}, addMessage() {}, handleScreenCommand: async () => false,
-    shouldAttachScreen: () => false, captureScreenFrame: async () => null,
+    shouldAttachScreen: () => false, captureScreenFrame: async () => null, takeAttachedFiles: () => [],
     orbState: (s) => { ctx.state = s; }, armThinkingHold() {}, cancelThinkingHold() {},
     stopPlayback() { calls.stopped++; }, resetTtsStream() { ctx.ttsStreamBuf = ''; },
     flushStream() {}, renderSessionList: async () => {}, showError() {}, playDoneListeningChime() {},
