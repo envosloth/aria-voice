@@ -914,6 +914,7 @@ async function createMicGraph() {
         const pcm = window.AriaAudio.micFrameToPcm16k(samples, rate);
         aria.mic.sendAudio(pcm);
         if (vadActive) updateVad(samples);
+        else checkVoiceBargeIn(samples, pcm);
       } catch (err) {
         if (!startMicCapture._warned) {
           console.error('[ARIA] mic frame dropped:', err && err.message);
@@ -943,6 +944,50 @@ async function createMicGraph() {
     if (stream) for (const track of stream.getTracks()) track.stop();
     try { if (ctx) await ctx.close(); } catch (e) {}
     throw error;
+  }
+}
+
+// --- Voice barge-in (conversation.voiceBargeIn) ---------------------------
+// While ARIA's audio is playing, every mic frame is compared with what ARIA is
+// emitting right now (TTS analyser RMS × output volume). The echo-aware detector
+// (AriaAudio.EchoAwareBargeDetector) fires only on sustained energy that ARIA's
+// own speaker bleed cannot explain, then we open a hands-free utterance exactly
+// like a wake-word interruption. A ~320ms pre-roll of mic PCM is handed to STT
+// so the syllables spoken before detection are not clipped.
+let voiceBargeIn = false;
+try { aria.config.get('conversation.voiceBargeIn').then((v) => { voiceBargeIn = !!v; }); } catch (e) {}
+const bargeDetector = new window.AriaAudio.EchoAwareBargeDetector({ frameMs: 20 });
+const BARGE_PREROLL_FRAMES = 16;
+let bargePreroll = [];
+let bargeArmed = false;
+const _bargeRefBuf = new Float32Array(1024);
+
+function ttsReferenceRms() {
+  if (!ttsAnalyser || !ttsSources.length) return 0;
+  ttsAnalyser.getFloatTimeDomainData(_bargeRefBuf);
+  let sum = 0;
+  for (let i = 0; i < _bargeRefBuf.length; i++) sum += _bargeRefBuf[i] * _bargeRefBuf[i];
+  return Math.sqrt(sum / _bargeRefBuf.length) * (ttsGain ? ttsGain.gain.value : 1);
+}
+
+function checkVoiceBargeIn(samples, pcm) {
+  const playing = speechActive && ttsSources.length > 0 && !listening;
+  if (!voiceBargeIn || !playing) {
+    if (bargeArmed) { bargeArmed = false; bargePreroll = []; }
+    return;
+  }
+  if (!bargeArmed) { bargeArmed = true; bargeDetector.reset(); bargePreroll = []; }
+  bargePreroll.push(pcm);
+  if (bargePreroll.length > BARGE_PREROLL_FRAMES) bargePreroll.shift();
+  // Latched: after firing, stay quiet until this playback run ends (bargeArmed
+  // resets only when `playing` goes false). beginUtterance is async, so
+  // `listening` can lag several frames behind the detection.
+  if (bargeDetector.fired()) return;
+  if (bargeDetector.push(window.AriaAudio.rms(samples), ttsReferenceRms())) {
+    const preroll = bargePreroll;
+    bargePreroll = [];
+    perf.mark(currentTurnId, 'voice_barge_in');
+    beginUtterance({ vad: true, preroll });
   }
 }
 
@@ -1204,6 +1249,10 @@ async function beginUtterance(opts) {
   // pause left by an abandoned prior transcription.
   try { window.AriaOrb && window.AriaOrb.beginStt && window.AriaOrb.beginStt(); } catch (e) {}
   aria.stt.start(turnId);
+  // Voice barge-in: replay the audio captured just before detection (the start
+  // of the user's interruption). Same IPC channel as live frames, so ordering
+  // after STT_START is preserved.
+  if (opts && Array.isArray(opts.preroll)) for (const frame of opts.preroll) aria.mic.sendAudio(frame);
   // VAD endpointing only for hands-free (wake-word) turns; push-to-talk ends on
   // button release.
   vadActive = !!(opts && opts.vad);
@@ -2002,6 +2051,7 @@ const cfg = {
   wwEnabled: document.getElementById('cfg-ww-enabled'),
   wwPhrase: document.getElementById('cfg-ww-phrase'),
   conversationEnabled: document.getElementById('cfg-conversation-enabled'),
+  voiceBargeIn: document.getElementById('cfg-voice-barge-in'),
   theme: document.getElementById('cfg-theme'),
   perfPreset: document.getElementById('cfg-perf-preset'),
   // Remote access (SSH tunnel) — see src/main/tunnel-supervisor.ts.
@@ -2709,6 +2759,7 @@ async function loadSettings() {
   cfg.wwEnabled.checked = !!(await aria.config.get('wakeword.enabled'));
   cfg.wwPhrase.value = (await aria.config.get('wakeword.phrase')) || 'hey_jarvis';
   if (cfg.conversationEnabled) cfg.conversationEnabled.checked = !!(await aria.config.get('conversation.enabled'));
+  if (cfg.voiceBargeIn) cfg.voiceBargeIn.checked = !!(await aria.config.get('conversation.voiceBargeIn'));
   // Legacy/free-text values (e.g. "hey jarvis" with a space, or an unsupported
   // "aria") won't match a dropdown option -> fall back to the reliable default so
   // the control never shows blank and always reflects a model that actually loads.
@@ -3412,6 +3463,10 @@ settingsSave.addEventListener('click', async () => {
     if (cfg.conversationEnabled) {
       conversationMode = cfg.conversationEnabled.checked;
       await aria.config.set('conversation.enabled', conversationMode);
+    }
+    if (cfg.voiceBargeIn) {
+      voiceBargeIn = cfg.voiceBargeIn.checked;
+      await aria.config.set('conversation.voiceBargeIn', voiceBargeIn);
     }
     await aria.config.set('ui.theme', cfg.theme.value);
     applyTheme(cfg.theme.value);

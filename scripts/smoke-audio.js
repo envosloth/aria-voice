@@ -342,5 +342,53 @@ check('san-keeps-caret-standalone', /\bcaret\b/i.test(S('put the caret at the en
     && C('word '.repeat(30), true) > 0);
 }
 
+// 13. EchoAwareBargeDetector: interrupts on the USER's voice during playback,
+//     not on ARIA's own voice leaking from the speakers into the mic.
+{
+  const D = A.EchoAwareBargeDetector;
+  // Echo only: mic tracks the reference at a fixed coupling (speaker bleed).
+  const echo = new D({ frameMs: 20 });
+  let fired = false;
+  for (let i = 0; i < 500; i++) {
+    const ref = 0.2 + 0.15 * Math.sin(i / 3);         // speech-like envelope
+    fired = echo.push(ref * 0.4 + 0.003, ref) || fired;
+  }
+  check('barge-ignores-echo', !fired);
+  // Echo reverb tail: reference stops, mic decays for ~200ms.
+  let tail = false;
+  for (let i = 0; i < 10; i++) tail = echo.push(0.08 * Math.pow(0.7, i), 0) || tail;
+  check('barge-ignores-reverb-tail', !tail);
+  // User starts talking over the echo: fires within ~250ms, once.
+  const talk = new D({ frameMs: 20 });
+  for (let i = 0; i < 100; i++) { const ref = 0.2 + 0.15 * Math.sin(i / 3); talk.push(ref * 0.4, ref); }
+  let at = -1; let count = 0;
+  for (let i = 0; i < 40; i++) {
+    const ref = 0.2 + 0.15 * Math.sin(i / 3);
+    if (talk.push(ref * 0.4 + 0.25, ref)) { count++; if (at < 0) at = i; }
+  }
+  check('barge-detects-user-over-echo', at >= 0 && at * 20 <= 260, `fired at ${at * 20}ms`);
+  check('barge-fires-once', count === 1);
+  // A cough/clap (one loud 40ms transient) does not interrupt.
+  const cough = new D({ frameMs: 20 });
+  for (let i = 0; i < 100; i++) cough.push(0.08, 0.2);
+  let coughed = cough.push(0.6, 0.2) || cough.push(0.6, 0.2);
+  for (let i = 0; i < 20; i++) coughed = cough.push(0.08, 0.2) || coughed;
+  check('barge-ignores-transient', !coughed);
+  // Loud speakers (coupling ~1.0) must still not self-interrupt once learned.
+  const loud = new D({ frameMs: 20 });
+  let loudFired = false;
+  for (let i = 0; i < 500; i++) { const ref = 0.3 + 0.2 * Math.sin(i / 4); loudFired = loud.push(ref * 1.0, ref) || loudFired; }
+  check('barge-loud-speakers-no-self-interrupt', !loudFired);
+  // Speech in a gap between sentences (reference silent, reverb gone) fires.
+  const gap = new D({ frameMs: 20 });
+  for (let i = 0; i < 100; i++) gap.push(0.08, 0.2);
+  for (let i = 0; i < 20; i++) gap.push(0.004, 0);
+  let gapAt = -1;
+  for (let i = 0; i < 30 && gapAt < 0; i++) if (gap.push(0.12, 0)) gapAt = i;
+  check('barge-detects-speech-in-gap', gapAt >= 0 && gapAt * 20 <= 260, `fired at ${gapAt * 20}ms`);
+  gap.reset();
+  check('barge-reset-rearms', gap.fired() === false);
+}
+
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

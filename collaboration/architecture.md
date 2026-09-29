@@ -56,6 +56,14 @@ question carries no history, no tools, and nothing the user did not just say.
    stdout (`TTS_STATE`), bytes arrive as `TTS_AUDIO`, and Web Audio schedules them
    gaplessly while the **orb** reacts to the RMS envelope.
 
+**Voice barge-in** (`conversation.voiceBargeIn`, default off): while TTS is
+playing, each mic frame's RMS and the TTS analyser RMS × volume feed
+`AriaAudio.EchoAwareBargeDetector` (peak-held reference, learned speaker→mic
+coupling, vote over 200 ms, 500 ms warm-up). On fire it latches for the rest of
+that playback run and calls `beginUtterance({ vad: true, preroll })`, which
+replays ≤320 ms of pre-detection PCM after `STT_START`. Energy-only: the user
+must be ≥ ~4 dB above ARIA's echo at the mic (see `smoke:barge-in`).
+
 The orb's state machine (`idle → listening → processing → speaking`) is driven from
 `app.js` via `orbState()`.
 

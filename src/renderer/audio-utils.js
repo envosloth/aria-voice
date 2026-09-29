@@ -443,8 +443,71 @@
     return -1;
   }
 
+  // --- Echo-aware voice barge-in ------------------------------------------
+  // While ARIA speaks, the mic hears ARIA too (speaker bleed that Chromium's AEC
+  // may not fully cancel for WebAudio playback). Feed this detector each mic
+  // frame's RMS plus the RMS ARIA is emitting at that moment (post-volume).
+  //   - The reference is peak-held (~120ms) to cover output latency + reverb.
+  //   - Speaker→mic coupling is learned as a running ~85th percentile of
+  //     mic/reference on echo-looking frames, so ordinary echo peaks stay under
+  //     the gate on loud speakers while quiet speakers do not mask the user.
+  //   - Real speech over ARIA shows up as scattered frames the echo model can't
+  //     explain (ARIA's syllables keep interleaving), so it fires on a vote:
+  //     `votes` of the last `window` frames above the gate, not a solid run.
+  // Pure + frame-driven so smoke-audio / smoke-barge-in test the shipped logic.
+  function EchoAwareBargeDetector(opts) {
+    opts = opts || {};
+    const frameMs = opts.frameMs || 20;
+    const windowFrames = opts.window != null ? opts.window : Math.round(200 / frameMs);
+    const votes = opts.votes != null ? opts.votes : Math.ceil(windowFrames * 0.5);
+    const margin = opts.margin != null ? opts.margin : 1.8;
+    const absFloor = opts.absFloor != null ? opts.absFloor : 0.03;
+    const initCoupling = opts.initCoupling != null ? opts.initCoupling : 1.0; // assume loud until learned
+    const release = opts.release != null ? opts.release : 0.8;
+    const q = 0.85;
+    // Until this much of ARIA's audio has been heard, only learn — never fire.
+    // The learned coupling persists across replies (reset() keeps it), so this
+    // costs only the first ~0.5s of the first reply on a new speaker setup.
+    const warmupMs = opts.warmupMs != null ? opts.warmupMs : 500;
+    let learnedMs = 0;
+    let refEnv = 0;
+    let coupling = initCoupling;
+    let noise = 0;
+    let hist = [];
+    let done = false;
+    this.push = function (micRms, refRms) {
+      if (done) return false;
+      refEnv = Math.max(refRms || 0, refEnv * release);
+      const predicted = coupling * refEnv;
+      const gate = Math.max(absFloor, noise * 3, predicted * margin);
+      const above = micRms > gate;
+      hist.push(above ? 1 : 0);
+      if (hist.length > windowFrames) hist.shift();
+      let n = 0;
+      for (let i = 0; i < hist.length; i++) n += hist[i];
+      // A lone 40ms transient (cough/clap) can't reach the vote on its own.
+      if (n >= votes && above && learnedMs >= warmupMs) { done = true; return true; }
+      if (refEnv > 0.02) {
+        learnedMs += frameMs;
+        const ratio = micRms / refEnv;
+        // Quantile tracking, excluding frames that are clearly not echo.
+        if (ratio < coupling * margin * 1.5) {
+          const step = 0.02 * Math.max(coupling, 0.05);
+          coupling += ratio > coupling ? step * q : -step * (1 - q) * 4;
+          coupling = Math.min(2, Math.max(0.05, coupling));
+        }
+      } else if (!above) {
+        noise = noise * 0.95 + micRms * 0.05;
+      }
+      return false;
+    };
+    this.fired = function () { return done; };
+    this.coupling = function () { return coupling; };
+    this.reset = function () { refEnv = 0; hist = []; done = false; }; // keeps learned coupling/noise
+  }
+
   const api = {
-    nextTtsCut,
+    nextTtsCut, EchoAwareBargeDetector,
     SPECULATIVE_ENDPOINT_OPTS, looksComplete,
     TARGET_RATE, HANDSFREE_ENDPOINT_OPTS, downsampleTo16k, floatToInt16, micFrameToPcm16k, rms, VadEndpointer,
     SttDiscardGate, sanitizeForSpeech, collapseRepeats,

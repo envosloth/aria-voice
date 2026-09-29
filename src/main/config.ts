@@ -52,6 +52,10 @@ interface AppConfig {
     // After a spoken reply to a voice turn, re-open the mic for a few seconds so
     // the user can keep talking without re-saying the wake word. Off by default.
     enabled: boolean;
+    // Interrupt ARIA by simply talking over it (no wake word). An echo-aware
+    // detector ignores ARIA's own voice from the speakers. Off until tuned on
+    // the user's speakers/mic.
+    voiceBargeIn: boolean;
   };
   // Remote access to the harness (or any endpoint) over SSH. When
   // `enabled` is true, ARIA spawns `ssh -N -L <localPort>:remoteHost:
@@ -177,6 +181,7 @@ const defaults: AppConfig = {
   },
   conversation: {
     enabled: false,
+    voiceBargeIn: false,
   },
   remote: {
     enabled: false,
