@@ -26,8 +26,24 @@ const CONCURRENCY = 4;
 
 interface Case { text: string; expect: string; cat?: string; ctx?: Record<string, unknown> }
 
+// The case files live next to the sources in dev and inside the packaged app
+// in production, and getAppPath() disagrees between the two, so try the likely
+// roots in order rather than trusting one.
+function scriptsDir(): string | null {
+  const candidates = [
+    path.join(app.getAppPath(), 'scripts'),
+    path.join(__dirname, '..', '..', 'scripts'),
+    path.join(process.cwd(), 'scripts'),
+  ];
+  for (const c of candidates) {
+    try { if (fs.statSync(path.join(c, 'routing-cases.json')).isFile()) return c; } catch { /* next */ }
+  }
+  return null;
+}
+
 function loadCases(): Case[] {
-  const dir = path.join(app.getAppPath(), 'scripts');
+  const dir = scriptsDir();
+  if (!dir) return [];
   const cases: Case[] = [];
   for (const f of CASE_FILES) {
     try {
