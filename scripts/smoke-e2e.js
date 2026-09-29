@@ -54,7 +54,7 @@ function makeLlmServer() {
 }
 
 async function main() {
-  const wavPath = '/tmp/stt_test_16k.wav';
+  const wavPath = require('path').join(require('os').tmpdir(), 'stt_test_16k.wav');
   if (!fs.existsSync(wavPath)) { console.log('FAIL: run gen-test-audio.sh first'); process.exit(1); }
   const pcm = readPcm(wavPath);
 

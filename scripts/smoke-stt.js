@@ -3,7 +3,7 @@
  * over the UDS control channel and verify the transcription comes back over
  * stdout JSON with the expected words.
  *
- * Audio is pre-generated at /tmp/stt_test_16k.wav (Piper TTS of a known phrase,
+ * Audio is pre-generated at $TMPDIR/stt_test_16k.wav (Piper TTS of a known phrase,
  * resampled to 16kHz). Run scripts that create it before this test.
  */
 
@@ -29,7 +29,7 @@ function readPcm(wavPath) {
 }
 
 async function main() {
-  const wavPath = '/tmp/stt_test_16k.wav';
+  const wavPath = require('path').join(require('os').tmpdir(), 'stt_test_16k.wav');
   if (!fs.existsSync(wavPath)) {
     console.log('FAIL: test audio not found at', wavPath);
     process.exit(1);

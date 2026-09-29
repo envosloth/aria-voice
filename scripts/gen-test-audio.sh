@@ -5,6 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MODELS_DIR="${ARIA_MODELS_DIR:-$HOME/.local/share/aria/models}"
+TEST_DIR="${TMPDIR:-/tmp}"
 VOICE="${ARIA_TEST_VOICE:-$MODELS_DIR/en_US-lessac-medium.onnx}"
 PIPER_PY="$ROOT/sidecars/tts/venv/bin/python"
 
@@ -16,6 +17,6 @@ fi
 if [ ! -f "$VOICE" ]; then echo "Voice model missing: $VOICE"; exit 1; fi
 if [ ! -x "$PIPER_PY" ]; then echo "TTS venv missing: $PIPER_PY"; exit 1; fi
 
-echo "Testing one two three four five." | "$PIPER_PY" -m piper -m "$VOICE" -f /tmp/stt_test_22k.wav 2>/dev/null
-ffmpeg -y -i /tmp/stt_test_22k.wav -ar 16000 -ac 1 -f wav /tmp/stt_test_16k.wav 2>/dev/null
-echo "Generated /tmp/stt_test_16k.wav (16kHz mono)"
+echo "Testing one two three four five." | "$PIPER_PY" -m piper -m "$VOICE" -f "$TEST_DIR/stt_test_22k.wav" 2>/dev/null
+ffmpeg -y -i "$TEST_DIR/stt_test_22k.wav" -ar 16000 -ac 1 -f wav "$TEST_DIR/stt_test_16k.wav" 2>/dev/null
+echo "Generated $TEST_DIR/stt_test_16k.wav (16kHz mono)"
