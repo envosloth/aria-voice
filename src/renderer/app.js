@@ -2265,10 +2265,57 @@ async function loadSettings() {
   }
 }
 
+// Status card at the top of Settings → Connections: what is configured, and
+// (for a local Hermes) whether it is actually reachable right now.
+function setConnRow(kind, tone, text) {
+  const dot = document.getElementById(`conn-${kind}-dot`);
+  const st = document.getElementById(`conn-${kind}-state`);
+  if (dot) dot.dataset.tone = tone;
+  if (st) { st.textContent = text; st.dataset.tone = tone; }
+}
+let connSummarySeq = 0;
+async function refreshConnectionSummary() {
+  const seq = ++connSummarySeq;
+  const [llmEp, llmModel, hId, hEp] = await Promise.all([
+    aria.config.get('llm.endpoint'), aria.config.get('llm.model'),
+    aria.config.get('harness.id'), aria.config.get('harness.endpoint'),
+  ]);
+  if (seq !== connSummarySeq) return;
+  const provider = window.AriaHarnesses.providerFromEndpoint ? window.AriaHarnesses.providerFromEndpoint(llmEp) : null;
+  if (llmEp) {
+    const hasKey = await aria.secure.get('llm-api-key').catch(() => null);
+    const local = isLoopbackEndpoint(llmEp);
+    const name = provider ? provider.name.replace(/ \(local\)$/, '') : (local ? 'Local server' : 'Custom endpoint');
+    setConnRow('chat', hasKey || local ? 'ok' : 'warn', hasKey || local ? `${name}${llmModel ? ' · ' + llmModel : ''}` : `${name} — add your API key`);
+  } else {
+    // Under Automatic routing the agent can answer everything, so a missing chat
+    // model is a suggestion, not a fault.
+    setConnRow('chat', hEp ? 'warn' : 'warn', hEp ? 'Optional — the agent answers everything for now' : 'Not set up');
+  }
+  if (seq !== connSummarySeq) return;
+  if (!hEp) { setConnRow('agent', 'warn', 'Not set up'); return; }
+  const h = window.AriaHarnesses.byId(hId) || window.AriaHarnesses.fromEndpoint(hEp);
+  const name = h ? h.name : 'Custom agent';
+  setConnRow('agent', 'warn', `${name} — checking…`);
+  if (h && h.detect && isLoopbackEndpoint(hEp)) {
+    try {
+      const r = await aria.llm.detectHarness(h.id);
+      if (seq !== connSummarySeq) return;
+      if (r.status === 'ready') setConnRow('agent', 'ok', `${name} · connected`);
+      else if (r.status === 'key-rejected' || r.status === 'weak-key') setConnRow('agent', 'bad', `${name} — key problem`);
+      else if (r.status === 'not-running') setConnRow('agent', 'bad', `${name} — not running`);
+      else setConnRow('agent', 'warn', `${name} — ${r.status === 'not-enabled' ? 'not enabled' : 'unverified'}`);
+      return;
+    } catch { /* fall through */ }
+  }
+  setConnRow('agent', 'ok', name);
+}
+
 function openSettings(invoker) {
   settingsReturnFocus = focusTarget(invoker) || focusTarget(document.activeElement);
   savedMsg.textContent = '';
   loadSettings();
+  refreshConnectionSummary();
   // The hardware readout was only rendered on preset *change*, so the panel
   // sat on "Detecting hardware…" forever — render it on every open.
   loadHardwareInfo().then((info) => renderHardware(info));
@@ -2652,6 +2699,7 @@ settingsSave.addEventListener('click', async () => {
     const hasConnection = Boolean(cfg.llmEndpoint.value.trim() || cfg.harnessEndpoint.value.trim());
     await aria.config.set('ui.setup-needed', !hasConnection);
     setSetupNeeded(!hasConnection);
+    refreshConnectionSummary();
     await aria.config.set('stt.model', cfg.sttModel.value);
     await aria.config.set('stt.backend', cfg.sttBackend.value);
     applyOrbSttBackend(cfg.sttBackend.value);

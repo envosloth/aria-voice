@@ -117,7 +117,8 @@ const closed = () => new Promise((r) => { const s = http.createServer(); s.liste
   check('live-not-running', r.status === 'not-running' && r.found === true && /gateway/i.test(r.message), r.message);
 
   // nothing configured, nothing listening -> tell the user how to enable it
-  clear();
+  // (a dead port, not the default: a real Hermes may be listening on 8642 here)
+  clear(); writeYaml(`gateway:\n  api_server:\n    port: ${dead}\n`);
   r = await D.detectHarnessLive('hermes', { fallbackOrigins: [] });
   check('live-not-enabled', r.status === 'not-enabled' && /API_SERVER_KEY/.test(r.message), r.message);
 

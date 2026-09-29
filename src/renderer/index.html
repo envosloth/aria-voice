@@ -468,6 +468,27 @@
     .settings-panel input:focus, .settings-panel select:focus { border-color: color-mix(in srgb, var(--accent-active) 50%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-active) 12%, transparent); }
     .settings-panel input[type="range"] { width: 100%; margin-top: 6px; accent-color: var(--accent-active); }
     .checkbox-label { display: flex !important; align-items: center; gap: 8px; }
+    .settings-panel .hint { color: var(--text-muted); font-size: 12px; line-height: 1.5; margin: 2px 0 12px; display: block; }
+    .settings-panel h3 .hint { display: inline; margin: 0 0 0 6px; text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 12px; }
+    .settings-panel label .hint { display: inline; margin: 0 0 0 4px; }
+    .settings-panel .discover-row + .hint, .settings-panel label > span.hint:not(:empty) { display: block; margin: 6px 0 0; }
+    .settings-panel details.adv { margin: 0 0 12px; }
+    .settings-panel details.adv > summary { cursor: pointer; color: var(--text-muted); font-size: 12px; padding: 6px 0; user-select: none; }
+    .settings-panel details.adv > summary:hover, .settings-panel details.adv[open] > summary { color: var(--text); }
+    .settings-panel details.adv[open] > summary { margin-bottom: 8px; }
+    .conn-summary { padding-bottom: 10px !important; }
+    .conn-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 13px; }
+    .conn-row + .conn-row { border-top: 1px solid var(--border); }
+    .conn-name { flex: 1; font-weight: 600; }
+    .conn-state { color: var(--text-muted); font-size: 12px; text-align: right; }
+    .conn-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-muted); flex: none; opacity: .6; }
+    .conn-dot[data-tone="ok"] { background: var(--success); opacity: 1; box-shadow: 0 0 8px color-mix(in srgb, var(--success) 60%, transparent); }
+    .conn-dot[data-tone="warn"] { background: #f5a524; opacity: 1; }
+    .conn-dot[data-tone="bad"] { background: var(--error); opacity: 1; }
+    .conn-state[data-tone="ok"] { color: var(--success); }
+    .conn-state[data-tone="bad"] { color: var(--error); }
+    .setup-toast { top: 76px !important; bottom: auto !important; transform: translate(-50%, -10px) !important; }
+    .setup-toast.visible { transform: translate(-50%, 0) !important; }
     .checkbox-label input { width: auto !important; margin: 0 !important; }
     .discover-row { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
     .discover-row input { flex: 1; min-width: 0; margin-top: 0; }
@@ -699,10 +720,10 @@
       </div>
       <div class="state-badge"></div>
       <div class="ops-sub"></div>
-      <div class="ops-tokens" id="ops-tokens" title="Tokens spent in this conversation">
-        <div class="ops-tok-cap">TOKENS THIS SESSION</div>
-        <div class="ops-tok-row"><span>Direct LLM</span><b id="ops-tok-llm">0</b></div>
-        <div class="ops-tok-row"><span>Agent harness</span><b id="ops-tok-harness">0</b></div>
+      <div class="ops-tokens" id="ops-tokens" title="Tokens used in this conversation">
+        <div class="ops-tok-cap">Usage this conversation</div>
+        <div class="ops-tok-row"><span>Chat model</span><b id="ops-tok-llm">0</b></div>
+        <div class="ops-tok-row"><span>Agent</span><b id="ops-tok-harness">0</b></div>
       </div>
       <div class="ops-foot"><span class="dot"></span>ARIA · local-first</div>
     </aside>
@@ -733,61 +754,73 @@
       <div class="tab-panel active" id="settings-connections" data-panel="connections" role="tabpanel" aria-labelledby="settings-tab-connections">
       <div class="settings-warning" id="secure-warning"></div>
 
-      <section>
-        <h3>Routing</h3>
-        <label>When you speak, ARIA routes to…
-          <select id="cfg-routing-mode">
-            <option value="auto">Auto — agent for tasks, LLM for chat</option>
-            <option value="llm">Always the conversational LLM</option>
-            <option value="harness">Always the agent harness</option>
-          </select>
-        </label>
-        <p class="hint" style="margin:-6px 0 0;">Auto sends coding/tool/file requests to the agent harness and everyday chat to the LLM. Say "use the agent…" to force the harness.</p>
+      <section class="conn-summary" id="conn-summary" aria-live="polite">
+        <h3>Status</h3>
+        <div class="conn-row"><span class="conn-dot" id="conn-chat-dot"></span><span class="conn-name">Everyday chat</span><span class="conn-state" id="conn-chat-state">Checking…</span></div>
+        <div class="conn-row"><span class="conn-dot" id="conn-agent-dot"></span><span class="conn-name">Agent for tasks</span><span class="conn-state" id="conn-agent-state">Checking…</span></div>
       </section>
 
       <section>
-        <h3>Conversational LLM <span class="hint">(everyday chat)</span></h3>
+        <h3>Who answers</h3>
+        <label>When you speak, ARIA sends it to…
+          <select id="cfg-routing-mode">
+            <option value="auto">Automatic — the agent for tasks, the chat model for everything else</option>
+            <option value="llm">Always the chat model</option>
+            <option value="harness">Always the agent</option>
+          </select>
+        </label>
+        <p class="hint">Say “use the agent…” at any time to hand a single request to the agent.</p>
+      </section>
+
+      <section>
+        <h3>Chat model <span class="hint">answers everyday questions</span></h3>
         <label>Provider
           <select id="cfg-llm-provider"></select>
         </label>
-        <label>Endpoint URL
-          <input type="url" id="cfg-llm-endpoint" placeholder="https://api.deepseek.com/v1/chat/completions">
+        <label>API key <span class="hint">stored in your system keyring</span>
+          <input type="password" id="cfg-llm-key" placeholder="paste your key" autocomplete="off">
         </label>
-        <label>Model
-          <div class="discover-row">
-            <input type="text" id="cfg-llm-model" placeholder="deepseek-chat">
-            <button id="discover-llm" class="ghost-btn" type="button">Discover</button>
-          </div>
-          <span class="hint" id="discover-llm-status"></span>
-        </label>
-        <label>API Key <span class="hint">(OS keyring)</span>
-          <input type="password" id="cfg-llm-key" placeholder="paste your key">
-        </label>
+        <details class="adv">
+          <summary>Endpoint &amp; model</summary>
+          <label>Endpoint URL
+            <input type="url" id="cfg-llm-endpoint" placeholder="https://api.deepseek.com/v1/chat/completions">
+          </label>
+          <label>Model
+            <div class="discover-row">
+              <input type="text" id="cfg-llm-model" placeholder="deepseek-chat">
+              <button id="discover-llm" class="ghost-btn" type="button">Find models</button>
+            </div>
+            <span class="hint" id="discover-llm-status"></span>
+          </label>
+        </details>
       </section>
 
       <section>
-        <h3>Agent harness <span class="hint">(coding / tasks)</span></h3>
-        <label>Harness
+        <h3>Agent <span class="hint">does tasks: files, code, the web</span></h3>
+        <label>Which agent
           <select id="cfg-harness"></select>
         </label>
-        <label>Endpoint URL
-          <input type="url" id="cfg-harness-endpoint" placeholder="http://localhost:8080/v1/chat/completions">
-        </label>
-        <p class="hint" id="cfg-harness-note" style="margin:-6px 0 12px;"></p>
-        <label>Model
+        <p class="hint" id="cfg-harness-note"></p>
+        <label>API key <span class="hint">optional · stored in your system keyring</span>
           <div class="discover-row">
-            <input type="text" id="cfg-harness-model" placeholder="model name">
-            <button id="discover-harness" class="ghost-btn" type="button">Discover</button>
-          </div>
-          <span class="hint" id="discover-harness-status"></span>
-        </label>
-        <label>API Key <span class="hint">(optional, OS keyring)</span>
-          <div class="discover-row">
-            <input type="password" id="cfg-harness-key" placeholder="optional — leave blank to keep existing">
+            <input type="password" id="cfg-harness-key" placeholder="leave blank to keep the saved key" autocomplete="off">
             <button id="detect-harness" class="ghost-btn" type="button" hidden>Auto-detect</button>
           </div>
           <span class="hint" id="detect-harness-status"></span>
         </label>
+        <details class="adv">
+          <summary>Endpoint &amp; model</summary>
+          <label>Endpoint URL
+            <input type="url" id="cfg-harness-endpoint" placeholder="http://localhost:8080/v1/chat/completions">
+          </label>
+          <label>Model
+            <div class="discover-row">
+              <input type="text" id="cfg-harness-model" placeholder="model name">
+              <button id="discover-harness" class="ghost-btn" type="button">Find models</button>
+            </div>
+            <span class="hint" id="discover-harness-status"></span>
+          </label>
+        </details>
       </section>
       </div><!-- /connections -->
 

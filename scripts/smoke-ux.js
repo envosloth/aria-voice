@@ -61,6 +61,13 @@ check('onboarding.keyNotStoredByTest',
 check('onboarding.keyringFlag',
   /password-store', 'gnome-libsecret'/.test(fs.readFileSync(path.join(__dirname, '..', 'src/main/index.ts'), 'utf8')),
   'Linux desktops without a GNOME/KDE session must still select the Secret Service backend');
+check('settings.plainLanguage',
+  /id="conn-summary"/.test(html) && /function refreshConnectionSummary\(/.test(app) &&
+  !/Conversational LLM|Agent harness <span|>Discover</.test(html.slice(html.indexOf('id="settings-connections"'), html.indexOf('id="settings-remote"'))),
+  'Connections must lead with a live status card and use plain names (Chat model / Agent), not LLM/harness jargon');
+check('settings.advancedCollapsed',
+  (html.slice(html.indexOf('id="settings-connections"'), html.indexOf('id="settings-remote"')).match(/<details class="adv">/g) || []).length === 2,
+  'endpoint/model fields belong behind a disclosure so the common path is provider + key');
 check('settings.tabSemantics',
   /role="tablist"/.test(html) && /role="tab"/.test(html) && /setAttribute\('aria-selected'/.test(app),
   'settings navigation needs tab semantics');
