@@ -60,7 +60,7 @@ async function connect(port) {
       document.querySelectorAll('#onboard-overlay').forEach(e => e.classList.remove('visible'));
       document.getElementById('app-shell').inert = false;
       const out = {};
-      out.defaultOff = (await aria.config.get('conversation.voiceBargeIn')) === false;
+      out.defaultOn = (await aria.config.get('conversation.voiceBargeIn')) === true;
       document.getElementById('settings-btn').click();
       await wait(300);
       const box = document.getElementById('cfg-voice-barge-in');
@@ -117,7 +117,7 @@ async function connect(port) {
     ws.close();
     console.log(JSON.stringify(r, null, 2));
     const checks = {
-      defaultOff: r.defaultOff,
+      defaultOn: r.defaultOn,
       settingsCheckbox: r.checkboxPresent,
       settingsSaves: r.saved && r.liveFlag,
       micFramesReachDetector: r.micFramesReachDetector === true,
