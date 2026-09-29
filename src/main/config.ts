@@ -30,6 +30,13 @@ interface AppConfig {
   };
   routing: {
     mode: 'auto' | 'llm' | 'harness';
+    // The regex router matches nouns, so some sentence shapes are simply
+    // unclassifiable by rule (see turn-classifier.ts). 'auto' asks the chat
+    // model for a one-word second opinion on exactly those; 'off' never does.
+    // The classifier is only as useful as it is fast: past this many
+    // milliseconds the turn stops waiting and keeps the heuristic answer.
+    classifier: 'auto' | 'off';
+    classifierTimeoutMs: number;
   };
   conversation: {
     // After a spoken reply to a voice turn, re-open the mic for a few seconds so
@@ -137,6 +144,8 @@ const defaults: AppConfig = {
   },
   routing: {
     mode: 'auto',
+    classifier: 'auto',
+    classifierTimeoutMs: 1500,
   },
   conversation: {
     enabled: false,
@@ -186,6 +195,7 @@ const ENUMS: Record<string, readonly string[]> = {
   'stt.backend': ['vulkan', 'cpu'],
   'tts.engine': ['piper', 'kokoro'],
   'routing.mode': ['auto', 'llm', 'harness'],
+  'routing.classifier': ['auto', 'off'],
   'remote.target': ['harness', 'llm', 'custom'],
   'ui.theme': ['midnight', 'nord', 'solarized', 'synthwave', 'forest', 'light'],
   'ui.perfPreset': ['auto', 'power-saver', 'balanced', 'max-performance', 'custom'],

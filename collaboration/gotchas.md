@@ -4,6 +4,36 @@ The non-obvious stuff. Most of these are here because something crashed, hung, o
 shipped broken. Verified against the code — but if a detail has drifted, trust the
 code and fix this file.
 
+## Routing
+
+The router in `src/main/router.ts` is an ORDERED decision list: explicit requests
+first, then user-text work, then on-screen/deictic, then imperatives, machine
+changes, knowledge framings, live lookups, implicit asks, and only then the broad
+keyword list. Order is load-bearing — the keyword list matches NOUNS anywhere in
+the sentence, so anything broad placed early silently swallows everything after
+it. Two real examples of that failure: putting `translate` in the imperative list
+made "translate this into French" an agent task, and letting a bare `best way to`
+into the navigation rule made "the best way to back up my files" an agent task.
+Both were caught only by the labeled benchmark, never by inspection.
+
+`routeDetailed()` also reports whether a RULE recognised the message. Two cases
+do not: a match on nothing but the broad keyword list, and the final default.
+Those go to `turn-classifier.ts`, which asks the configured chat model one
+non-streaming question with a 6-token answer and a hard deadline, then keeps the
+heuristic answer if the model does not answer usefully (timeout, HTTP error,
+unparseable text, insecure endpoint). Measured on 1,194 labeled utterances, the
+tiebreaker lifts the hardest unseen set from 81.7% to 87.5% — but ONLY when the
+classifier is fast. Pointed at the local Hermes agent (~6s per call) almost every
+call misses the 1.5s budget and the turn falls back, so `routing.classifier`
+exists to turn it off and `routing.classifierTimeoutMs` to bound the cost.
+Never route the classifier at an agent: the point is a cheap one-word answer.
+
+Accuracy is measured, not assumed: `npm run smoke:routing-accuracy` grades 1,060+
+labeled utterances plus the dispute file. Fresh independent sets scored 75-90%
+unseen while the fitted corpus sat at ~99%, which is the honest state of a
+heuristic router. Regenerate a set from a subagent that is forbidden to read
+`router.ts` or the existing case files, or the number means nothing.
+
 ## Stack constraints (don't "fix" these)
 
 - **No ROCm.** Target OS (Ubuntu 26.04 / kernel 7.0) isn't in AMD's ROCm matrix. STT

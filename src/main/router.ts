@@ -182,7 +182,9 @@ const SEND_ARTIFACT = /\b(?:email|send|share|forward|text) (?:it|this|that|them|
 const SKY_EVENT = /\b(?:meteor|eclipse|aurora|comet|fireworks?|planet|stars?)\b[^.]{0,30}\b(?:tonight|today|tomorrow|this (?:evening|weekend)|visible|clear enough)\b|\bsky\b[^.]{0,25}\b(?:clear|cloudy|cloud cover)\b/i;
 
 const NAVIGATE =
-  /\b(?:best|fastest|quickest) (?:route|way) (?:from here|from there|home|to)\b|\b(?:directions? to|take me to|drive me to|route to|how (?:do i|can i|do you) get to|how far (?:is|away|to|from)|nearest|closest|near me|nearby|around here|in my area|open now|open today|store hours|business hours|is .{1,30} open)\b/i;
+  // "best ROUTE from here" only — "the best way to back up my files" is advice,
+  // and letting the bare "best way to" match here silently hijacked it.
+  /\b(?:best|fastest|quickest) (?:route|way) (?:from here|from there|home)\b|\b(?:directions? to|take me to|drive me to|route to|how (?:do i|can i|do you) get to|how far (?:is|away|to|from)|nearest|closest|near me|nearby|around here|in my area|open now|open today|store hours|business hours|is .{1,30} open)\b/i;
 
 // Rule 7: time / date about now.
 const TIME_DATE =
@@ -302,34 +304,51 @@ function isContinuation(text: string): boolean {
   return words.length > 0 && words.length <= 8;
 }
 
+export interface RouteDecision {
+  target: Target;
+  /** False when no rule recognised the message: the broad keyword list matched
+   *  nothing specific, or nothing matched at all. Those are the messages worth a
+   *  second opinion from the chat model (see turn-classifier.ts). */
+  confident: boolean;
+  reason: string;
+}
+
 /**
- * Choose a target for `message` given availability + mode.
- * Falls back to whichever is configured if the preferred one isn't.
+ * Choose a target for `message` given availability + mode, and say how sure the
+ * rules are. Falls back to whichever target is configured if the preferred one
+ * isn't.
  */
-export function route(message: string, cfg: RouteConfig): Target {
+export function routeDetailed(message: string, cfg: RouteConfig): RouteDecision {
   // Honor a hard mode override (still falling back if that one isn't configured).
-  if (cfg.mode === 'llm') return cfg.hasLlm ? 'llm' : 'harness';
-  if (cfg.mode === 'harness') return cfg.hasHarness ? 'harness' : 'llm';
+  if (cfg.mode === 'llm') return { target: cfg.hasLlm ? 'llm' : 'harness', confident: true, reason: 'forced-llm-mode' };
+  if (cfg.mode === 'harness') return { target: cfg.hasHarness ? 'harness' : 'llm', confident: true, reason: 'forced-harness-mode' };
 
   // auto: only one configured -> use it.
-  if (cfg.hasHarness && !cfg.hasLlm) return 'harness';
-  if (cfg.hasLlm && !cfg.hasHarness) return 'llm';
-  if (!cfg.hasLlm && !cfg.hasHarness) return 'llm';
+  if (cfg.hasHarness && !cfg.hasLlm) return { target: 'harness', confident: true, reason: 'only-agent-configured' };
+  if (cfg.hasLlm && !cfg.hasHarness) return { target: 'llm', confident: true, reason: 'only-chat-configured' };
+  if (!cfg.hasLlm && !cfg.hasHarness) return { target: 'llm', confident: true, reason: 'nothing-configured' };
 
   const text = message || '';
 
   // 1. Explicit asks win outright.
-  if (EXPLICIT_LLM.test(text)) return 'llm';
-  if (EXPLICIT_HARNESS.test(text)) return 'harness';
+  if (EXPLICIT_LLM.test(text)) return { target: 'llm', confident: true, reason: 'explicit-chat' };
+  if (EXPLICIT_HARNESS.test(text)) return { target: 'harness', confident: true, reason: 'explicit-agent' };
 
   // 2. Writing something FOR the user (poem, regex, grammar fix, text) is chat,
   // whatever nouns it contains; and a negated tool request is not a tool request.
-  if (CREATIVE_WRITE.test(text) || TEXT_TRANSFORM.test(text)) return 'llm';
+  const machineArtifact = /\b(?:calendar (?:invite|event|entry|appointment)|invite in my calendar|event in my calendar|the (?:file|document|draft) (?:in my|named|on disk|saved)|my (?:drafts|files|documents|downloads))\b/i.test(text);
+  if ((CREATIVE_WRITE.test(text) || TEXT_TRANSFORM.test(text)) && !machineArtifact) {
+    return { target: 'llm', confident: true, reason: 'writing-for-user' };
+  }
   // "Every morning I check the traffic before leaving" describes a habit; it
   // asks for nothing.
-  if (HABIT_STATEMENT.test(text) && !/\?|\b(?:can you|could you|please|remind me|set|add|check if)\b/i.test(text)) return 'llm';
+  if (HABIT_STATEMENT.test(text) && !/\?|\b(?:can you|could you|please|remind me|set|add|check if)\b/i.test(text)) {
+    return { target: 'llm', confident: true, reason: 'habit-statement' };
+  }
   const openDocument = /\b(?:in my (?:drafts|files|documents|folder|downloads)|i have open|attached|saved|in the file|in the document)\b/i.test(text);
-  if (LANGUAGE_FIX.test(text) && !FILE_WORK_FIX.test(text) && !openDocument) return 'llm';
+  if (LANGUAGE_FIX.test(text) && !FILE_WORK_FIX.test(text) && !openDocument) {
+    return { target: 'llm', confident: true, reason: 'language-fix' };
+  }
   // A negation loses when the same sentence also carries a positive instruction
   // ("don't just tell me, actually add it to my calendar", "don't guess, just
   // look it up online") and never covers "don't let me forget" (a reminder).
@@ -339,19 +358,27 @@ export function route(message: string, cfg: RouteConfig): Target {
     && !/\b(?:let me forget|forget to)\b/i.test(text)
     && !/\b(?:clash(?:es)?|conflicts?|double[- ]booked|overlaps?)\b/i.test(text);
   if (NEGATED_TOOL.test(text) || NEGATED_ACTION.test(text) || NEGATED_DEVICE.test(text)) {
-    if (negated) return 'llm';
+    if (negated) return { target: 'llm', confident: true, reason: 'negated-action' };
     // "don't run anything, just tell me" — the second half is the request.
-    if (/\b(?:don'?t|do not|no need to)\b[^.]{0,30}\bjust (?:tell|say|explain|talk|chat|answer)\b/i.test(text)) return 'llm';
+    if (/\b(?:don'?t|do not|no need to)\b[^.]{0,30}\bjust (?:tell|say|explain|talk|chat|answer)\b/i.test(text)
+        && !/\b(?:actually|instead|but)\b/i.test(text)
+        && !/\b(?:clash(?:es)?|conflicts?|overlaps?)\b/i.test(text)) {
+      return { target: 'llm', confident: true, reason: 'negated-then-chat' };
+    }
   }
   // …but a hypothetical that also carries a real request is still a request
   // ("pretend you're my assistant and book a table for two at seven").
   const HYPOTHETICAL_ASK = /\b(?:book|order|buy|reserve|set|create|add|send|schedule|call|email|text|remind|check)\b/i;
-  if (HYPOTHETICAL.test(text) && !(HYPOTHETICAL_ASK.test(text) && !/\b(?:i asked you to|what would you need|what would that take)\b/i.test(text))) return 'llm';
+  if (HYPOTHETICAL.test(text) && !(HYPOTHETICAL_ASK.test(text) && !/\b(?:i asked you to|what would you need|what would that take)\b/i.test(text))) {
+    return { target: 'llm', confident: true, reason: 'hypothetical' };
+  }
   // A word problem with a hypothesis and no live data is arithmetic.
-  if (/\bif i\b/i.test(text) && /\bhow (?:much|many)\b/i.test(text) && !LIVE_DATA.test(text) && !MY_DATA_QUESTION.test(text)) return 'llm';
+  if (/\bif i\b/i.test(text) && /\bhow (?:much|many)\b/i.test(text) && !LIVE_DATA.test(text) && !MY_DATA_QUESTION.test(text)) {
+    return { target: 'llm', confident: true, reason: 'arithmetic' };
+  }
   // Editing text the user has OPEN or saved is machine work; editing prose they
   // pasted or described is chat.
-  if (EDIT_TEXT.test(text) && !/\b(?:in my (?:drafts|files|documents|folder|downloads)|i have open|attached|saved|in the file|in the document)\b/i.test(text)) return 'llm';
+  if (EDIT_TEXT.test(text) && !openDocument) return { target: 'llm', confident: true, reason: 'edit-user-text' };
 
   // 3. Anything the user points at on screen belongs to the agent, which is the
   // only target that can see or touch it ("summarize the document I'm looking at"
@@ -362,20 +389,24 @@ export function route(message: string, cfg: RouteConfig): Target {
       && /^(?:please |can you )?(?:summari[sz]e|read|explain|translate|fix|check|look at)\s+(?:this|that|it)\s*[.!?]?$/i.test(text.trim()))
     || /^(?:please |hey aria )?(?:what'?s|what is|who'?s|who is|what does) (?:this|that)\s*[.!?]?$/i.test(text.trim())
     || /\bis (?:it|that|this) far (?:from here|away)\b/i.test(text);
-  if (ON_SCREEN.test(text) || bareDeictic) return 'harness';
+  if (ON_SCREEN.test(text) || bareDeictic) return { target: 'harness', confident: true, reason: 'on-screen' };
 
   // 4. An imperative is an order, even when the rest of the sentence reads like a
   // question ("google who invented the telescope") or the object is deictic
   // ("fix this regex", "read this error to me").
   const recallAsk = /^\s*(?:please\s+)?remind me\s+(?:how|what|when|where|who|why|if|whether|about|of|that)\b/i.test(text);
-  if ((ACTION.test(text) && !recallAsk) || TIMER_COMMAND.test(text) || DEVICE_STATE.test(text)) return 'harness';
-  if (DEICTIC_ACTION.test(text)) return 'harness';
+  if ((ACTION.test(text) && !recallAsk) || TIMER_COMMAND.test(text) || DEVICE_STATE.test(text)) {
+    return { target: 'harness', confident: true, reason: 'imperative' };
+  }
+  if (DEICTIC_ACTION.test(text)) return { target: 'harness', confident: true, reason: 'deictic-imperative' };
 
   // 5. A machine or account change the chat model cannot perform — including
   // producing a deliverable document, unless the action was negated.
-  if (MACHINE_CHANGE.test(text)) return 'harness';
+  if (MACHINE_CHANGE.test(text)) return { target: 'harness', confident: true, reason: 'machine-change' };
   const howTo = /\bhow (?:do|would|can|should) i\b|\bhow (?:do|would) you\b/i.test(text);
-  if (!howTo && WRITE_DELIVERABLE.test(text) && !NEGATED_ACTION.test(text) && !NEGATED_TOOL.test(text)) return 'harness';
+  if (!howTo && WRITE_DELIVERABLE.test(text) && !NEGATED_ACTION.test(text) && !NEGATED_TOOL.test(text)) {
+    return { target: 'harness', confident: true, reason: 'write-deliverable' };
+  }
 
   // 6. Knowledge framing is chat — unless the question is about my own system
   // failing (that needs the agent to look), or asks for NOW data.
@@ -387,18 +418,22 @@ export function route(message: string, cfg: RouteConfig): Target {
   if (CHAT_KNOWLEDGE.test(text) && !MY_SYSTEM_TROUBLE.test(text) && !KNOWLEDGE_LIVE_OVERRIDE.test(text)
       && !DOCUMENT_ON_MACHINE.test(text)
       && (!NAVIGATE.test(text) || TIMELESS.test(text))) {
-    return 'llm';
+    return { target: 'llm', confident: true, reason: 'knowledge-framing' };
   }
-  if (LIVE_DATA.test(text) && TIMELESS.test(text) && !KNOWLEDGE_LIVE_OVERRIDE.test(text)) return 'llm';
-  if (MY_SYSTEM_TROUBLE.test(text)) return 'harness';
+  if (LIVE_DATA.test(text) && TIMELESS.test(text) && !KNOWLEDGE_LIVE_OVERRIDE.test(text)) {
+    return { target: 'llm', confident: true, reason: 'timeless-knowledge' };
+  }
+  if (MY_SYSTEM_TROUBLE.test(text)) return { target: 'harness', confident: true, reason: 'my-system-trouble' };
 
   // Hypothesised arithmetic ("if I double the recipe, how much is three quarter
   // cups") is maths, even though it contains "how much is".
   if (/\bif i\b/i.test(text) && /\bhow (?:much|many)\b/i.test(text)
-      && !MY_DATA_QUESTION.test(text) && !/\b(?:price|cost|worth|rate|dollars?|euros?|pounds?)\b/i.test(text)) return 'llm';
+      && !MY_DATA_QUESTION.test(text) && !/\b(?:price|cost|worth|rate|dollars?|euros?|pounds?)\b/i.test(text)) {
+    return { target: 'llm', confident: true, reason: 'arithmetic' };
+  }
 
   // 7. Proximity / navigation and device-state questions are live lookups.
-  if (NAVIGATE.test(text)) return 'harness';
+  if (NAVIGATE.test(text)) return { target: 'harness', confident: true, reason: 'navigation' };
 
   // 8. Advice framing is chat even when it names a device, a file, or the
   // weather. A question ABOUT doing something ("how do I take a screenshot",
@@ -413,37 +448,73 @@ export function route(message: string, cfg: RouteConfig): Target {
   // A phrasing question that happens to contain a first-person status line is
   // not a task ("what's a polite way to say I'm running late").
   const phrasingQuestion = /\b(?:way to (?:say|phrase|word|put)|how (?:do|would) i (?:say|tell|phrase|word)|how to say)\b/i.test(text);
-  if (CAPABILITY_QUESTION.test(text) || TEXTBOOK_QUESTION.test(text)) return 'llm';
-  if ((CHAT_ADVICE.test(text) || phrasingQuestion) && !liveNow) return 'llm';
+  if (CAPABILITY_QUESTION.test(text) || TEXTBOOK_QUESTION.test(text)) {
+    return { target: 'llm', confident: true, reason: 'knowledge-question' };
+  }
+  if ((CHAT_ADVICE.test(text) || phrasingQuestion) && !liveNow) {
+    return { target: 'llm', confident: true, reason: 'advice' };
+  }
 
   // 9. Remaining live-data lookups: time, weather, news, prices.
-  if (TIME_DATE.test(text) || LIVE_DATA.test(text) || SKY_EVENT.test(text)) return 'harness';
-  if (PLACE_LOOKUP.test(text) || REPEAT_ROUTINE.test(text)) return 'harness';
-  if (CHECK_MY_STUFF.test(text) || GET_STARTED.test(text)) return 'harness';
-  if (SEE_IF.test(text) || READ_FILE.test(text) || SEND_ARTIFACT.test(text) || MY_DATA_QUESTION.test(text) || CALENDAR_CHECK.test(text)) return 'harness';
+  if (TIME_DATE.test(text) || LIVE_DATA.test(text) || SKY_EVENT.test(text)) {
+    return { target: 'harness', confident: true, reason: 'live-data' };
+  }
+  if (PLACE_LOOKUP.test(text) || REPEAT_ROUTINE.test(text)) {
+    return { target: 'harness', confident: true, reason: 'place-or-routine' };
+  }
+  if (CHECK_MY_STUFF.test(text) || GET_STARTED.test(text)) {
+    return { target: 'harness', confident: true, reason: 'check-my-stuff' };
+  }
+  if (SEE_IF.test(text) || READ_FILE.test(text) || SEND_ARTIFACT.test(text) || MY_DATA_QUESTION.test(text) || CALENDAR_CHECK.test(text)) {
+    return { target: 'harness', confident: true, reason: 'live-state-lookup' };
+  }
   // "is that still on for tomorrow" continues an earlier booking question.
-  if (/\b(?:still (?:on|happening|going ahead)|on for (?:tomorrow|today|tonight))\b/i.test(text)) return 'harness';
-  if (FOLLOWUP_STATUS.test(text)) return 'harness';
-  if (CURRENCY_CONVERT.test(text) || SHOPPING_COMPARE.test(text)) return 'harness';
+  if (/\b(?:still (?:on|happening|going ahead)|on for (?:tomorrow|today|tonight))\b/i.test(text)) {
+    return { target: 'harness', confident: true, reason: 'followup-live' };
+  }
+  if (FOLLOWUP_STATUS.test(text)) return { target: 'harness', confident: true, reason: 'followup-status' };
+  if (CURRENCY_CONVERT.test(text) || SHOPPING_COMPARE.test(text)) {
+    return { target: 'harness', confident: true, reason: 'money-or-shopping' };
+  }
 
   // 10. Implicit asks — a described state plus an expected action.
-  if (IMPLICIT_DEVICE.test(text) || IMPLICIT_MESSAGE.test(text) || IMPLICIT_REMIND.test(text)) return 'harness';
-  if (IMPLICIT_BROKEN.test(text) && ASK_CUE.test(text)) return 'harness';
+  if (IMPLICIT_DEVICE.test(text) || IMPLICIT_MESSAGE.test(text) || IMPLICIT_REMIND.test(text)) {
+    return { target: 'harness', confident: true, reason: 'implicit-ask' };
+  }
+  if (IMPLICIT_BROKEN.test(text) && ASK_CUE.test(text)) {
+    return { target: 'harness', confident: true, reason: 'broken-device-ask' };
+  }
   // Lights, music, fans: an ask phrased around the device.
   const deviceAsk = /\b(?:lights?|lamps?|fan|music|tv|volume|thermostat|heat|air conditioning)\b/i.test(text)
     && /\b(?:turn(?:ing)?|switch(?:ing)?|shut(?:ting)?|dim(?:ming)?|lower(?:ing)?|raise|raising|off|down|on)\b/i.test(text);
-  if ((ASK_CUE.test(text) && /\b(?:turn(?:ing)?|switch(?:ing)?|shut(?:ting)?|dim(?:ming)?|lower(?:ing)?|raise|raising)\b[^.]{0,25}\b(?:lights?|lamp|fan|music|tv|volume|screen|heat)\b/i.test(text)) || deviceAsk) return 'harness';
-  if (GET_STARTED.test(text)) return 'harness';
-  if (IMPLICIT_ORDER.test(text) || IMPLICIT_LOOKUP.test(text)) return 'harness';
+  if ((ASK_CUE.test(text) && /\b(?:turn(?:ing)?|switch(?:ing)?|shut(?:ting)?|dim(?:ming)?|lower(?:ing)?|raise|raising)\b[^.]{0,25}\b(?:lights?|lamp|fan|music|tv|volume|screen|heat)\b/i.test(text)) || deviceAsk) {
+    return { target: 'harness', confident: true, reason: 'device-ask' };
+  }
+  if (GET_STARTED.test(text)) return { target: 'harness', confident: true, reason: 'get-started' };
+  if (IMPLICIT_ORDER.test(text) || IMPLICIT_LOOKUP.test(text)) {
+    return { target: 'harness', confident: true, reason: 'implicit-order-or-lookup' };
+  }
 
   // 11. Broad agentic / tool keyword list.
-  if (AGENTIC.test(text) || REALTIME.test(text)) return 'harness';
+  // The broad keyword list matches NOUNS; a hit here is a hint, not a decision,
+  // so the caller is invited to double-check these with the chat model.
+  if (AGENTIC.test(text) || REALTIME.test(text)) {
+    return { target: 'harness', confident: false, reason: 'keyword-only' };
+  }
 
   // 12. Stickiness: if the agent handled the previous turn, keep this turn on the
   // agent when it's a continuation — a short follow-up OR an answer to a question
   // the agent just asked. Explicit "just chat" above already escapes this.
-  if (cfg.lastTarget === 'harness' && (cfg.lastWasQuestion || isContinuation(text))) return 'harness';
+  if (cfg.lastTarget === 'harness' && (cfg.lastWasQuestion || isContinuation(text))) {
+    return { target: 'harness', confident: true, reason: 'sticky-continuation' };
+  }
 
-  // 13. Default: chat.
-  return 'llm';
+  // 13. Default: chat — nothing recognised the message, which is exactly the
+  // case worth a second opinion.
+  return { target: 'llm', confident: false, reason: 'no-rule-matched' };
+}
+
+/** Choose a target. Thin wrapper over routeDetailed for callers that only need it. */
+export function route(message: string, cfg: RouteConfig): Target {
+  return routeDetailed(message, cfg).target;
 }

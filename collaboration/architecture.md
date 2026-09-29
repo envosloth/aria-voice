@@ -4,6 +4,26 @@ Three process tiers: **Electron main** (privileged, TypeScript), **renderer**
 (sandboxed UI, vanilla JS), **Python sidecars** (frozen, single-purpose). Plus a
 **remote** OpenAI-compatible LLM/agent you configure.
 
+## Turn routing
+
+`main/coordinator.ts` picks one target per turn at router time — a direct chat
+model with NO tools, or the agent harness. There is no mid-turn handoff.
+
+1. `router.routeDetailed()` runs an ordered rule list and returns the target plus
+   a `confident` flag.
+2. If no rule recognised the message and both targets are configured,
+   `turn-classifier.classifyTarget()` asks the chat model one short, non-streaming
+   question (bounded prompt, 6-token answer, `routing.classifierTimeoutMs`
+   deadline) and uses that answer. Any failure keeps the heuristic answer, so a
+   dead or slow chat model degrades to the old behavior instead of blocking.
+3. `routing.mode` (auto | llm | harness) still overrides everything, and an
+   attached screen frame is always the agent's job.
+
+Nothing in this path can send a credential anywhere but loopback or https
+(`endpoint-security.credentialedEndpointSecurityError`), and the classifier's
+question carries no history, no tools, and nothing the user did not just say.
+
+
 ## Data flow (a voice turn)
 
 1. A persistent `getUserMedia` stream feeds an **AudioWorklet** (`mic-worklet.js`).

@@ -733,6 +733,20 @@ function sendSttTranscribe(request: TranscribeRequest): void {
 }
 
 app.whenReady().then(async () => {
+  // Measurement hook: with ARIA_VERIFY_CLASSIFIER=1 the app runs the turn
+  // classifier against the unclassifiable utterances using the configured chat
+  // model, prints the report, and quits. See src/main/classifier-check.ts.
+  if (process.env.ARIA_VERIFY_CLASSIFIER === '1') {
+    try {
+      const { runClassifierCheck } = await import('./classifier-check');
+      await runClassifierCheck();
+    } catch (e) {
+      console.log('[classifier-check] failed:', e instanceof Error ? e.message : String(e));
+    }
+    app.exit(0);
+    return;
+  }
+
   // Wire the SSH tunnel supervisor to the renderer BEFORE we instantiate
   // the sidecar supervisor, so the tunnel status (connected / error)
   // can flow to the UI as soon as it's up. The tunnel supervisor is

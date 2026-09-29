@@ -6,7 +6,8 @@ import { config } from './config';
 import { getSecret } from './secure-storage';
 import { streamChat, LlmCallbacks, ChatMessage, ChatHandle, TokenUsage } from './llm-stream';
 import { credentialedEndpointSecurityError } from './endpoint-security';
-import { route, visionDetailFor, Target } from './router';
+import { routeDetailed, visionDetailFor, Target } from './router';
+import { classifyTarget } from './turn-classifier';
 import { matchLocalIntent, answerFor, nextOccurrence, humanizeMs, formatClock, LocalIntent } from './local-intents';
 import * as timers from './timers';
 import { perfMark } from './perf';
@@ -364,6 +365,12 @@ function runLocalIntent(intent: LocalIntent): string | null {
   }
 }
 
+// The turn classifier is best-effort: a locked keyring or an unreadable secret
+// must never break a voice turn, so its key is read defensively.
+function readSecretSafely(name: string): string | null {
+  try { return getSecret(name) || null; } catch { return null; }
+}
+
 interface Endpoint { endpoint: string; model: string; apiKeyName: string; }
 
 async function resolve(target: Target): Promise<Endpoint> {
@@ -478,9 +485,36 @@ export async function coordinate(
 
   // A screen-share frame is visual context for the agent: prefer the harness
   // (the agent that can see + act on the screen) when one is configured.
-  const primary: Target = opts.image && hasHarness
-    ? 'harness'
-    : route(userMessage, { mode, hasLlm, hasHarness, lastTarget, lastWasQuestion });
+  let primary: Target;
+  if (opts.image && hasHarness) {
+    primary = 'harness';
+  } else {
+    const decision = routeDetailed(userMessage, { mode, hasLlm, hasHarness, lastTarget, lastWasQuestion });
+    primary = decision.target;
+    // The rules recognised this message with a specific cue (an imperative, a
+    // knowledge framing, a live lookup, …) — no need to ask anyone else. When
+    // they only matched a broad noun or nothing at all, ask the chat model for a
+    // one-word second opinion. See turn-classifier.ts.
+    // Only for 'auto' mode with both targets configured: a forced target is a
+    // user instruction, not a guess.
+    const classifierOn = (config.get('routing.classifier') as string) !== 'off';
+    if (!decision.confident && classifierOn && mode === 'auto' && hasLlm && hasHarness) {
+      const started = Date.now();
+      const second = await classifyTarget(userMessage, {
+        endpoint: llmEndpoint,
+        model: (config.get('llm.model') as string) || undefined,
+        apiKey: readSecretSafely('llm-api-key'),
+        timeoutMs: Number(config.get('routing.classifierTimeoutMs')) || 1500,
+      });
+      perfMark(turnId, 'route_classified', { ms: Date.now() - started, heuristic: decision.target, picked: second || decision.target });
+      if (second) {
+        primary = second;
+      }
+      if (second && second !== decision.target) {
+        console.log(`[ARIA] routing: rules said ${decision.target} (${decision.reason}); chat model said ${second} — using ${second}`);
+      }
+    }
+  }
   const fallback: Target | null =
     primary === 'harness' && hasLlm ? 'llm' :
     primary === 'llm' && hasHarness ? 'harness' : null;

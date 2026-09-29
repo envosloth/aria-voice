@@ -29,12 +29,21 @@ function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 }
 
-function llmServer(rec) {
+function llmServer(rec, classifierSays = 'agent') {
   return http.createServer(async (req, res) => {
     const body = JSON.parse(await readBody(req));
     const messages = body.messages || [];
     const system = messages.find((m) => m.role === 'system')?.content || '';
     const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
+    // A non-streaming request on this endpoint is the routing tiebreaker: answer
+    // with its single word instead of a streamed chat reply.
+    if (body.stream === false) {
+      rec.classifyRequests = (rec.classifyRequests || []);
+      rec.classifyRequests.push({ lastUser, tools: body.tools, historyLen: messages.length });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: classifierSays } }] }));
+      return;
+    }
     rec.llmRequests.push({ tools: body.tools, system, lastUser });
     sse(res, String(lastUser).toLowerCase().includes('weather')
       ? 'Forced direct mode answer.'
@@ -80,9 +89,9 @@ function runApp(env) {
   });
 }
 
-async function drive(message, mode) {
-  const rec = { llmRequests: [], harnessTasks: [] };
-  const llm = llmServer(rec);
+async function drive(message, mode, classifierSays = 'agent') {
+  const rec = { llmRequests: [], harnessTasks: [], classifyRequests: [] };
+  const llm = llmServer(rec, classifierSays);
   const harness = harnessServer(rec);
   const llmPort = await listen(llm);
   const harnessPort = await listen(harness);
@@ -139,6 +148,24 @@ async function main() {
   const onScreen = await drive('what is on my screen', 'auto');
   check(checks, 'on-screen reference goes to the agent, not the chat model',
     onScreen.rec.harnessTasks.length === 1 && onScreen.rec.llmRequests.length === 0);
+
+  // The rules cannot classify this on their own (no cue, no keyword), so the
+  // chat model is asked, answers 'agent', and the request reaches the harness.
+  const tiebreakAgent = await drive('how many miles is it to the airport from here', 'auto', 'agent');
+  check(checks, 'unclassifiable request asks the chat model once',
+    (tiebreakAgent.rec.classifyRequests || []).length === 1);
+  check(checks, 'classifier request carries no tools and no history',
+    tiebreakAgent.rec.classifyRequests[0]?.tools === undefined && tiebreakAgent.rec.classifyRequests[0]?.historyLen === 2);
+  check(checks, 'classifier answer routes to the agent',
+    tiebreakAgent.rec.harnessTasks.length === 1 && tiebreakAgent.rec.llmRequests.length === 0);
+
+  const tiebreakChat = await drive('zibble wobble fram', 'auto', 'chat');
+  check(checks, 'classifier answer routes to the chat model',
+    tiebreakChat.rec.llmRequests.length === 1 && tiebreakChat.rec.harnessTasks.length === 0);
+
+  const sure = await drive('run the tests', 'auto', 'chat');
+  check(checks, 'a message with a clear cue never asks the classifier',
+    (sure.rec.classifyRequests || []).length === 0 && sure.rec.harnessTasks.length === 1);
 
   const forced = await drive('what is the weather in austin', 'llm');
   const forcedRequest = forced.rec.llmRequests[0] || {};
