@@ -295,7 +295,27 @@ export interface RouteConfig {
   hasHarness: boolean;   // an agent harness endpoint is configured
   lastTarget?: Target | null; // which target handled the previous turn (for stickiness)
   lastWasQuestion?: boolean;  // the previous reply ended with a question (awaiting an answer)
+  // The previous exchange, so an answer is routed by what the QUESTION was for
+  // (one assistant, not two): a location given for a weather request goes to
+  // the tools even when the chat model was the one that asked for it.
+  prevUserText?: string;
+  prevAssistantText?: string;
 }
+
+// Speech-to-text homophones that hide a live request from every rule below.
+// Only noun-position uses are rewritten ("the whether", "whether forecast"),
+// never the conjunction ("I wonder whether…", "whether or not…").
+export function normalizeSttHomophones(text: string): string {
+  return (text || '')
+    .replace(/\b(the|today'?s|tomorrow'?s|tonight'?s|local|current) whether\b/gi, '$1 weather')
+    .replace(/\bwhether (forecast|report|app|alert|warning|radar)\b/gi, 'weather $1');
+}
+
+const AFFIRMATION = /^(?:yes|yeah|yep|yup|sure|ok(?:ay)?|please|go ahead|do it|do that|sounds good|that'?s right|correct|right)\b/i;
+const DECLINE = /^(?:no|nope|nah|not now|never ?mind|no thanks|don'?t|stop|cancel)\b/i;
+const SELF_CONTAINED_ASK = /\?\s*$|^(?:what|who|whom|why|how|when|where|which|can|could|would|will|is|are|do|does|did|tell|explain|give|show|write|make|help)\b/i;
+// The assistant offered, in the first person, to do something only tools can.
+const TOOL_OFFER = /\b(?:want me to|shall i|should i|would you like me to|i can|i could|let me)\b[^?.]{0,80}\b(?:check|look (?:it |that )?up|search|find|pull up|grab|fetch|open|set|send|book|order|run|install|play|turn (?:on|off)|remind|schedule|add)\b/i;
 
 // A short reply with no fresh intent is treated as a continuation of the current
 // turn (e.g. answering the harness's "where are you?" with "Austin, Texas").
@@ -328,7 +348,7 @@ export function routeDetailed(message: string, cfg: RouteConfig): RouteDecision 
   if (cfg.hasLlm && !cfg.hasHarness) return { target: 'llm', confident: true, reason: 'only-chat-configured' };
   if (!cfg.hasLlm && !cfg.hasHarness) return { target: 'llm', confident: true, reason: 'nothing-configured' };
 
-  const text = message || '';
+  const text = normalizeSttHomophones(message || '');
 
   // 1. Explicit asks win outright.
   if (EXPLICIT_LLM.test(text)) return { target: 'llm', confident: true, reason: 'explicit-chat' };
@@ -507,6 +527,29 @@ export function routeDetailed(message: string, cfg: RouteConfig): RouteDecision 
   // the agent just asked. Explicit "just chat" above already escapes this.
   if (cfg.lastTarget === 'harness' && (cfg.lastWasQuestion || isContinuation(text))) {
     return { target: 'harness', confident: true, reason: 'sticky-continuation' };
+  }
+
+  // 12b. One assistant, one thread: the chat model asked the question, but the
+  // answer is for a request only tools can serve. Route by the request.
+  //   - slot fill: "Long month, Colorado" after "…weather? What's the location?"
+  //     where the original ask ("the whether…") itself routes to the tools;
+  //   - accepted offer: "yes please" after "Want me to check the forecast?".
+  // A decline, or a fresh self-contained question, starts over normally.
+  if (cfg.lastTarget === 'llm' && cfg.lastWasQuestion && isContinuation(text) && !DECLINE.test(text.trim())) {
+    if (AFFIRMATION.test(text.trim()) && cfg.prevAssistantText && TOOL_OFFER.test(cfg.prevAssistantText)) {
+      return { target: 'harness', confident: true, reason: 'accepted-tool-offer' };
+    }
+    if (!SELF_CONTAINED_ASK.test(text.trim())) {
+      // Either the original ask routes to the tools on its own, or the question
+      // the assistant asked names the live thing it needs the detail for
+      // ("For the forecast — which city?").
+      const original = cfg.prevUserText
+        ? routeDetailed(cfg.prevUserText, { mode: cfg.mode, hasLlm: cfg.hasLlm, hasHarness: cfg.hasHarness })
+        : null;
+      if ((original && original.target === 'harness') || (cfg.prevAssistantText && (LIVE_DATA.test(cfg.prevAssistantText) || REALTIME.test(cfg.prevAssistantText)))) {
+        return { target: 'harness', confident: true, reason: 'answer-to-live-request' };
+      }
+    }
   }
 
   // 13. Default: chat — nothing recognised the message, which is exactly the

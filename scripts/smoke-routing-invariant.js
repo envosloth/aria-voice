@@ -29,7 +29,7 @@ function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 }
 
-function llmServer(rec, classifierSays = 'agent') {
+function llmServer(rec, classifierSays = 'agent', llmReply = null) {
   return http.createServer(async (req, res) => {
     const body = JSON.parse(await readBody(req));
     const messages = body.messages || [];
@@ -45,6 +45,7 @@ function llmServer(rec, classifierSays = 'agent') {
       return;
     }
     rec.llmRequests.push({ tools: body.tools, system, lastUser });
+    if (llmReply) { sse(res, llmReply(lastUser)); return; }
     sse(res, String(lastUser).toLowerCase().includes('weather')
       ? 'Forced direct mode answer.'
       : 'A direct explanation from the conversational model.');
@@ -56,6 +57,8 @@ function harnessServer(rec) {
     const body = JSON.parse(await readBody(req));
     const lastUser = [...(body.messages || [])].reverse().find((m) => m.role === 'user');
     rec.harnessTasks.push(lastUser ? String(lastUser.content || '') : '');
+    rec.harnessHistories = rec.harnessHistories || [];
+    rec.harnessHistories.push((body.messages || []).filter((m) => m.role !== 'system').map((m) => `${m.role}: ${String(m.content || '').slice(0, 120)}`));
     sse(res, 'It is 24°C and sunny in Austin.');
   });
 }
@@ -89,15 +92,15 @@ function runApp(env) {
   });
 }
 
-async function drive(message, mode, classifierSays = 'agent') {
+async function drive(message, mode, classifierSays = 'agent', llmReply = null) {
   const rec = { llmRequests: [], harnessTasks: [], classifyRequests: [] };
-  const llm = llmServer(rec, classifierSays);
+  const llm = llmServer(rec, classifierSays, llmReply);
   const harness = harnessServer(rec);
   const llmPort = await listen(llm);
   const harnessPort = await listen(harness);
   const convo = await runApp({
     ARIA_VERIFY_ROUTING_MODE: mode,
-    ARIA_VERIFY_ROUTING_MSG: message,
+    ...(Array.isArray(message) ? { ARIA_VERIFY_ROUTING_MSGS: JSON.stringify(message) } : { ARIA_VERIFY_ROUTING_MSG: message }),
     ARIA_VERIFY_LLM_ENDPOINT: `http://127.0.0.1:${llmPort}/v1/chat/completions`,
     ARIA_VERIFY_HARNESS_ENDPOINT: `http://127.0.0.1:${harnessPort}/v1/chat/completions`,
   });
@@ -166,6 +169,25 @@ async function main() {
   const sure = await drive('run the tests', 'auto', 'chat');
   check(checks, 'a message with a clear cue never asks the classifier',
     (sure.rec.classifyRequests || []).length === 0 && sure.rec.harnessTasks.length === 1);
+
+  // One assistant, one thread (the real Longmont transcript, 2026-09). The STT
+  // homophone "the whether" must reach the tools; and even if the chat model
+  // answers first and asks for the city, the city goes to the tools WITH the
+  // earlier turns — never a second "I can't check the weather" from chat.
+  const garbled = await drive("Can you give me the whether it's the long, long, all right?", 'auto');
+  check(checks, 'STT homophone "the whether" reaches the tools',
+    garbled.rec.harnessTasks.length === 1 && garbled.rec.llmRequests.length === 0);
+  const slot = await drive(['I want to know the forecast, which city should I say?', 'Longmont, Colorado'], 'auto', 'chat',
+    () => "Sure, for the forecast — what's the location?");
+  // Turn 1 is ambiguous for the rules; whichever target answers it, turn 2 must
+  // land on the tools and see turn 1.
+  const slotHist = (slot.rec.harnessHistories || []).pop() || [];
+  check(checks, 'answer to a clarifying question goes to the tools',
+    slot.rec.harnessTasks.includes('Longmont, Colorado') || slot.rec.harnessTasks.some((t) => /Longmont/.test(t)));
+  check(checks, 'the tools see the earlier turns of the same thread',
+    slotHist.some((l) => /forecast/.test(l)));
+  check(checks, 'chat prompt never mentions modes, agents, or harnesses to the model as a handoff',
+    chat.rec.llmRequests.every((r) => !/agent mode can|ask the agent|harness can/i.test(String(r.system || ''))));
 
   const forced = await drive('what is the weather in austin', 'llm');
   const forcedRequest = forced.rec.llmRequests[0] || {};

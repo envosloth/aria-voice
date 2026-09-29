@@ -1272,10 +1272,20 @@ app.whenReady().then(async () => {
         try {
           await wc.executeJavaScript(
             `(function(){document.querySelectorAll('.overlay,#onboard-overlay,#settings-overlay').forEach(function(e){e.classList.remove('visible');});` +
-            `var ti=document.getElementById('text-input');ti.value=${JSON.stringify(process.env.ARIA_VERIFY_ROUTING_MSG || 'what is the weather in austin')};` +
-            `ti.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));})(); true;`,
+            `})(); true;`,
           );
-          await delay(2500); // route -> stream -> final answer
+          // ARIA_VERIFY_ROUTING_MSGS (JSON array) replays a multi-turn exchange,
+          // each turn after the previous reply lands; MSG is the one-turn form.
+          const msgs: string[] = process.env.ARIA_VERIFY_ROUTING_MSGS
+            ? JSON.parse(process.env.ARIA_VERIFY_ROUTING_MSGS)
+            : [process.env.ARIA_VERIFY_ROUTING_MSG || 'what is the weather in austin'];
+          for (const msg of msgs) {
+            await wc.executeJavaScript(
+              `(function(){var ti=document.getElementById('text-input');ti.value=${JSON.stringify(msg)};` +
+              `ti.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));})(); true;`,
+            );
+            await delay(2500); // route -> stream -> final answer
+          }
           const convo = await wc.executeJavaScript(`(function(){return JSON.stringify(Array.from(document.querySelectorAll('#conversation .message')).map(function(m){return {role:m.classList.contains('user')?'user':'assistant',text:(m.textContent||'').trim()};}));})()`);
           console.log('[ARIA_VERIFY] routing-convo=' + convo);
         } catch (e) {

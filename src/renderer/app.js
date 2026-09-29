@@ -1129,13 +1129,12 @@ async function loadWakeConfig() {
 function wakePhraseText() { return activityWakePhrase; }
 function computeActivity() {
   const setupNeeded = document.body.dataset.setupNeeded === 'true';
-  const who = activityRoute ? (activityRoute.target === 'harness' ? 'your agent' : 'the AI') : 'the AI';
   switch (orbStateName) {
     case 'listening':
       return { phase: 'listening', title: 'Listening…', detail: pttActive ? 'Release the mic button when you are done.' : 'Just talk. I will stop when you pause.', busy: true };
     case 'processing': {
       const detail = speechActive && !awaitingFirstToken ? 'Preparing to speak…'
-        : activityTool ? `Using ${activityTool}…` : `Waiting for ${who} to answer.`;
+        : activityTool ? `Using ${activityTool}…` : 'Working on it…';
       return { phase: 'thinking', title: 'Thinking…', detail, busy: true };
     }
     case 'speaking':
@@ -1443,8 +1442,12 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// Which target (LLM vs Agent harness) the coordinator routed to.
+// Which target (LLM vs Agent harness) the coordinator routed to. The badge is
+// a developer affordance (ui.showRouteBadges): by default the transcript reads
+// as ONE assistant, so the backend split is not surfaced per message.
 let pendingRoute = null;
+let showRouteBadges = false;
+try { aria.config.get('ui.showRouteBadges').then((v) => { showRouteBadges = !!v; }); } catch (e) {}
 aria.llm.onRoute((info) => {
   if (!info || info.turnId !== currentTurnId || info.generationId !== currentGenerationId) return;
   pendingRoute = info;
@@ -1477,13 +1480,13 @@ let toolChips = null; // Map<toolName, { el, count, countEl }>
 function ensureAssistantMsg() {
   if (currentAssistantMsg) return;
   currentAssistantMsg = addMessage('assistant', '');
-  if (pendingRoute) {
+  if (pendingRoute && showRouteBadges) {
     const badge = document.createElement('span');
     badge.className = 'route-badge route-' + pendingRoute.target;
     badge.textContent = pendingRoute.name;
     currentAssistantMsg.appendChild(badge);
-    pendingRoute = null;
   }
+  pendingRoute = null;
   // Tools the harness invokes get listed here, ABOVE the answer text. Hidden
   // until the first tool actually arrives so plain chat replies have no empty row.
   currentToolsEl = document.createElement('div');
@@ -2018,6 +2021,7 @@ const secureWarning = document.getElementById('secure-warning');
 
 const cfg = {
   routingMode: document.getElementById('cfg-routing-mode'),
+  showRouteBadges: document.getElementById('cfg-show-route-badges'),
   routerCoordinator: document.getElementById('cfg-router-coordinator'),
   routerNote: document.getElementById('cfg-router-note'),
   jevBlock: document.getElementById('cfg-jev-block'),
@@ -2721,6 +2725,7 @@ aria.updates.onStatus((s) => {
 
 async function loadSettings() {
   cfg.routingMode.value = (await aria.config.get('routing.mode')) || 'auto';
+  if (cfg.showRouteBadges) cfg.showRouteBadges.checked = !!(await aria.config.get('ui.showRouteBadges'));
   cfg.routerCoordinator.value = (await aria.config.get('routing.coordinator')) || 'builtin';
   cfg.jevEndpoint.value = (await aria.config.get('routing.jevEndpoint')) || '';
   cfg.jevModel.value = (await aria.config.get('routing.jevModel')) || '';
@@ -3551,6 +3556,7 @@ settingsSave.addEventListener('click', async () => {
     jk ? await aria.secure.set('jev-api-key', jk) : await aria.secure.delete('jev-api-key');
 
     await aria.config.set('routing.mode', cfg.routingMode.value);
+    if (cfg.showRouteBadges) { showRouteBadges = cfg.showRouteBadges.checked; await aria.config.set('ui.showRouteBadges', showRouteBadges); }
     await aria.config.set('routing.coordinator', cfg.routerCoordinator.value);
     await aria.config.set('routing.jevEndpoint', cfg.jevEndpoint.value.trim());
     await aria.config.set('routing.jevModel', cfg.jevModel.value.trim());

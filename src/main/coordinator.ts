@@ -59,14 +59,16 @@ function textLength(content: ChatMessage['content']): number {
 // run); sharing the persona is what keeps the voice consistent.
 const ARIA_PERSONA =
   'You are ARIA, a local-first voice assistant. You are spoken to and your ' +
-  'reply is read aloud, so be concise and natural. ARIA has two modes that act ' +
-  'as ONE assistant over ONE shared transcript: a fast chat mode, and an agent ' +
-  'mode with live tools (web search, file system, code execution, calendar, ' +
-  'weather, device actions). Whichever mode produced an earlier turn, it was ' +
-  'you — use that shared context and never ask the user to repeat something ' +
-  'already said. Transcript notes like "[agent tools used: ...]" record which ' +
-  'live tools agent mode ran for that reply. Never tell the user to ask another ' +
-  'assistant or open another app; you are the assistant.\n\n';
+  'reply is read aloud, so be concise and natural. You are ONE assistant with ' +
+  'ONE continuous memory of this conversation. Internally some turns are ' +
+  'answered with live tools (web search, files, code, calendar, weather, device ' +
+  'actions) and some without; that is an implementation detail the user must ' +
+  'never hear about. Never mention modes, agents, harnesses, routers, models, ' +
+  '"another assistant", or handing anything off, and never tell the user to ask ' +
+  'someone or something else: you are the one who helps. Every earlier turn in ' +
+  'the transcript was you, so use what was already said and never ask the user ' +
+  'to repeat it. Transcript notes like "[agent tools used: ...]" are private ' +
+  'records of which tools you ran for that reply; never read them aloud.\n\n';
 
 const VOICE_RULES =
   '\n\nVoice-output rules (read aloud text): speak in natural sentences; ' +
@@ -78,11 +80,15 @@ const VOICE_RULES =
   'contractions and short sentences so the voice sounds human.';
 
 const LLM_SYSTEM_PROMPT = ARIA_PERSONA +
-  'You are the fast chat mode. The router sends requests needing live data, ' +
-  'tools, or computer actions to agent mode before they reach you. Answer ' +
-  'self-contained conversational questions from your own knowledge and reasoning. ' +
-  'If a request depends on a detail you do not know, say so or ask one brief ' +
-  'follow-up question.\n\n' +
+  'For this reply you have no live tools. Answer self-contained questions from ' +
+  'your own knowledge and reasoning. If the request needs something only live ' +
+  'tools can give (current weather, news, prices, the time, the user\'s files, ' +
+  'screen, calendar, or any action on the computer), do not explain why you ' +
+  'cannot: in one short sentence, offer to do it yourself in the first person, ' +
+  'naming the exact thing, e.g. "Want me to check the weather in Longmont?" ' +
+  'If a needed detail is missing, ask only for that detail ("Which city?"). If ' +
+  'speech recognition garbled a word, make your best guess and confirm it inside ' +
+  'the same offer rather than asking twice.\n\n' +
   'Critical honesty rules: ' +
   '(1) If asked about anything current (the time, date, weather, news, prices, ' +
   'scores, traffic, local events, what\'s on screen), NEVER guess or invent a value. ' +
@@ -94,7 +100,7 @@ const LLM_SYSTEM_PROMPT = ARIA_PERSONA +
   VOICE_RULES;
 
 const HARNESS_SYSTEM_PROMPT = ARIA_PERSONA +
-  'You are the agent mode: keep your final summary short and natural. ' +
+  'For this reply you have live tools: keep your final summary short and natural. ' +
   'You have access to tools (web search, file system, code ' +
   'execution, calendar, weather, etc.) — you MUST call a tool to get any ' +
   'information you do not already know. ' +
@@ -592,6 +598,8 @@ export async function coordinate(
     ? prevReply.content.replace(/\n\n\[agent tools used: [^\]]*\]$/, '')
     : '';
   const lastWasQuestion = !!(prevReply && prevReply.role === 'assistant' && /\?\s*$/.test(prevText));
+  const prevUser = history.length >= 3 ? history[history.length - 3] : null;
+  const prevUserText = prevUser && prevUser.role === 'user' && typeof prevUser.content === 'string' ? prevUser.content : '';
 
   // A screen-share frame is visual context for the agent: prefer the harness
   // (the agent that can see + act on the screen) when one is configured.
@@ -599,7 +607,9 @@ export async function coordinate(
   if (opts.image && hasHarness) {
     primary = 'harness';
   } else {
-    const decision = routeDetailed(userMessage, { mode, hasLlm, hasHarness, lastTarget, lastWasQuestion });
+    const decision = routeDetailed(userMessage, {
+      mode, hasLlm, hasHarness, lastTarget, lastWasQuestion, prevUserText, prevAssistantText: prevText,
+    });
     primary = decision.target;
     // The rules recognised this message with a specific cue (an imperative, a
     // knowledge framing, a live lookup, …) — no need to ask anyone else. When

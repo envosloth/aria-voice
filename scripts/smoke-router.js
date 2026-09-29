@@ -38,6 +38,33 @@ check('sticky-yes', route('yes go ahead', { ...both, lastTarget: 'harness' }), '
 check('sticky-escape', route('just chat for a sec', { ...both, lastTarget: 'harness' }), 'llm');
 // A long fresh question after a harness turn is NOT treated as a continuation
 check('no-sticky-long', route('what is the capital of France and tell me about its history please', { ...both, lastTarget: 'harness' }), 'llm');
+
+// --- One-agent coherence (the real 2026-09 Longmont transcript) -------------
+// STT homophone: "the whether" is weather.
+check('stt-whether-weather', route("Can you give me the whether it's the long, long, all right?", both), 'harness');
+check('stt-whether-in-city', route('what is the whether in Denver', both), 'harness');
+check('whether-conjunction-stays-chat', route('I wonder whether it is a good idea to learn Rust', both), 'llm');
+check('whether-or-not-stays-chat', route('tell me whether or not I should learn piano', both), 'llm');
+// The chat model asked for a detail a LIVE request needed; the answer belongs
+// to the agent even though the chat model asked.
+const weatherAsk = { prevUserText: "Can you give me the whether it's the long, long, all right?",
+  prevAssistantText: "Sounds like you're asking about the weather? What's the location?" };
+check('slot-fill-after-chat-question', route('Long month, Colorado', { ...both, lastTarget: 'llm', lastWasQuestion: true, ...weatherAsk }), 'harness');
+// The original ask read as advice, but the clarifying question names the live need.
+check('slot-fill-assistant-names-need', route('Longmont, Colorado', { ...both, lastTarget: 'llm', lastWasQuestion: true,
+  prevUserText: 'I want to know the forecast, which city should I say?', prevAssistantText: "Sure, for the forecast — what's the location?" }), 'harness');
+// A first-person offer to act, accepted.
+const offer = { prevUserText: 'is it going to rain', prevAssistantText: 'Want me to check the forecast for Longmont?' };
+check('accept-offer-yes', route('yes please', { ...both, lastTarget: 'llm', lastWasQuestion: true, ...offer }), 'harness');
+check('accept-offer-sure', route('sure, go ahead', { ...both, lastTarget: 'llm', lastWasQuestion: true, ...offer }), 'harness');
+check('decline-offer', route('no thanks', { ...both, lastTarget: 'llm', lastWasQuestion: true, ...offer }), 'llm');
+check('new-topic-after-offer', route('what is the capital of France', { ...both, lastTarget: 'llm', lastWasQuestion: true, ...offer }), 'llm');
+// A chat question about a chat topic keeps its answer on chat.
+check('chat-question-answer-stays-chat', route('Portland, probably', { ...both, lastTarget: 'llm', lastWasQuestion: true,
+  prevUserText: 'I want to write a poem about a city I love', prevAssistantText: 'Lovely — which city?' }), 'llm');
+// An offer the chat model makes about chat work is not a tool action.
+check('chat-offer-stays-chat', route('yes', { ...both, lastTarget: 'llm', lastWasQuestion: true,
+  prevUserText: 'explain recursion', prevAssistantText: 'Want me to give you an example in Python?' }), 'llm');
 // No stickiness when the LLM handled the previous turn
 check('llm-no-sticky', route('Austin, Texas', { ...both, lastTarget: 'llm' }), 'llm');
 // Cross-context: after chatting with the direct LLM, a tool/action request still

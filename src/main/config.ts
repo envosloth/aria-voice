@@ -136,6 +136,9 @@ interface AppConfig {
     fontCustom: string;
     // Sidebar conversation order.
     sessionSort: 'recent' | 'oldest' | 'az' | 'za' | 'longest';
+    // Tag each reply with the backend that produced it (chat model / agent).
+    // Off by default: the conversation should read as ONE assistant.
+    showRouteBadges: boolean;
   };
   debug: {
     // When true, emit [ARIA_PERF] latency stage marks (see perf.ts). Off by
@@ -228,6 +231,7 @@ const defaults: AppConfig = {
     font: 'system',
     fontCustom: '',
     sessionSort: 'recent',
+    showRouteBadges: false,
   },
   debug: {
     perf: false,
