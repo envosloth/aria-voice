@@ -68,6 +68,20 @@
       "router": "harness",
       "other_label": "llm",
       "ruling": "Producing a deliverable is a machine change, but the same class was labeled chat elsewhere ('I don't need you to send anything, just draft an apology'), and the opposite case ('Write the teacher a thank-you note') was labeled harness. Two-way; the router treats composing a new document as work it can save, and only negations or 'rewrite my text' as chat."
+    },
+    {
+      "set": "routing-cases-h5.json",
+      "text": "My laptop keeps freezing lately.",
+      "router": "llm",
+      "other_label": "harness",
+      "ruling": "Bare device statements are two-way: 'My laptop keeps freezing' was labeled harness here, 'why is my laptop so slow these days' was labeled chat elsewhere, and 'My printer has been jammed all morning' was labeled chat. The router treats a statement without an ask as conversation and answers hardware advice in chat."
+    },
+    {
+      "set": "routing-cases-h5.json",
+      "text": "Did it work?",
+      "router": "llm",
+      "other_label": "harness",
+      "ruling": "A bare follow-up depends on the previous turn, which a single-utterance benchmark cannot supply; the app's stickiness rule uses the previous target."
     }
   ]
 }
