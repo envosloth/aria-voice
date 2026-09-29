@@ -25,4 +25,6 @@ for (const f of files) {
 // Remove media left by earlier builds (the retired orb video) so it cannot
 // silently inflate installers.
 fs.rmSync(outAssetsDir, { recursive: true, force: true });
+fs.mkdirSync(outAssetsDir, { recursive: true });
+fs.copyFileSync(path.join(srcDir, '..', '..', 'assets', 'icon.png'), path.join(outAssetsDir, 'icon.png'));
 console.log(`[copy-renderer] copied ${files.length} files -> dist/renderer`);

@@ -235,9 +235,7 @@
     .sidebar > :not(.session-list) { flex-shrink: 0; }
     .sidebar > * { -webkit-app-region: no-drag; }
     .brand { display: flex; align-items: center; gap: 9px; padding: 2px 4px 12px; border-bottom: 1px solid var(--border); }
-    .brand-mark { width: 22px; height: 22px; border-radius: 7px; flex: none;
-      background: linear-gradient(135deg, var(--accent-active), #a06bff);
-      box-shadow: 0 0 12px color-mix(in srgb, var(--accent-active) 50%, transparent); }
+    .brand-mark { width: 26px; height: 26px; flex: none; object-fit: contain; }
     .brand-name { font: 700 12px var(--mono); letter-spacing: .22em; color: var(--text); }
     .side-cap { padding: 12px 4px 4px; }
     #new-session-btn { -webkit-app-region: no-drag; display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 7px; border: 1px solid var(--border); background: rgba(255,255,255,.04); color: var(--text-muted); font-family: var(--mono); font-size: 9px; letter-spacing: .1em; cursor: pointer; transition: color .18s ease, background .18s ease, border-color .18s ease; }
@@ -774,7 +772,7 @@
     <!-- ── Sidebar ── -->
     <aside class="panel strong sidebar">
       <div class="brand">
-        <div class="brand-mark"></div>
+        <img class="brand-mark" src="assets/icon.png" width="26" height="26" alt="ARIA">
         <div class="brand-name">ARIA</div>
       </div>
 
