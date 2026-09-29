@@ -42,6 +42,7 @@
     "smoke:perf-panel": "npm run build && node scripts/smoke-perf-panel.js",
     "smoke:updater": "npm run build && node scripts/smoke-updater.js",
     "smoke:orb": "node scripts/smoke-orb.js",
+    "preview:orb": "node scripts/preview-orb.js",
     "smoke:ui-stability": "node scripts/smoke-ui-stability.js",
     "smoke:ux": "node scripts/smoke-ux.js",
     "smoke:status-dots": "node scripts/smoke-status-dots.js",
