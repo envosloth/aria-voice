@@ -238,7 +238,7 @@ Orb.refreshAccent();
 cssDot = '#1d2433';
 Orb.refreshAccent();
 fillStyles = [];
-run(200);
+run(800); // theme flips cross-fade (~0.6 s) rather than snapping
 check('theme.usesDotToken', fillStyles.some((s) => /rgb\(\s*(2[0-9]|3[0-9]|4[0-9]|5[0-9])\b/.test(String(s))),
   `fillStyles=${[...new Set(fillStyles)].slice(0, 3)}`);
 
@@ -246,6 +246,28 @@ check('theme.usesDotToken', fillStyles.some((s) => /rgb\(\s*(2[0-9]|3[0-9]|4[0-9
 Orb.setState('processing');
 Orb.settle();
 check('adapter.settleJumpsToTarget', m().expansion > 0.99 && Orb.getPhase() === 'thinking');
+
+// Colour changes are eased, not stepped: a state change or a theme/ink flip
+// cross-fades the dot colour over ~0.5 s instead of snapping on one frame.
+const dotRgb = () => { const s = String(fillStyles[fillStyles.length - 1]); const n = s.match(/\d+/g); return n ? n.slice(0, 3).map(Number) : [0, 0, 0]; };
+const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+cssDot = '#e8eef8'; Orb.refreshAccent(); Orb.setState('idle'); run(3000);
+const idleC = dotRgb();
+Orb.setState('speaking'); fillStyles = []; run(34);
+const earlyC = dotRgb();
+run(1500);
+const speakC = dotRgb();
+check('colour.stateChangeEases', dist(idleC, speakC) > 20 && dist(earlyC, idleC) > 0.5 && dist(earlyC, speakC) > dist(idleC, speakC) * 0.5,
+  `idle=${idleC} early=${earlyC} speaking=${speakC}`);
+cssDot = '#1d2433'; Orb.refreshAccent(); fillStyles = []; run(34);
+const inkEarly = dotRgb();
+run(1500);
+const inkEnd = dotRgb();
+check('colour.themeFlipEases', dist(inkEarly, speakC) < dist(inkEarly, inkEnd) && dist(inkEnd, speakC) > 60,
+  `from=${speakC} early=${inkEarly} end=${inkEnd}`);
+Orb.settle();
+check('colour.settleSnaps', dist(dotRgb(), inkEnd) < 2);
+cssDot = '#e8eef8'; Orb.refreshAccent();
 
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

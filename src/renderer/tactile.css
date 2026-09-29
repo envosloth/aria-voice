@@ -1,0 +1,345 @@
+/* ARIA tactile layer — physical-feeling controls over the glass material.
+ *
+ * Appended by tactile.js after the inline sheet and ux.css, so it refines,
+ * not replaces, the glass. Rules of thumb it follows:
+ *   - Raised controls have a lit top edge, a shaded bottom edge and a soft drop
+ *     shadow; pressing sinks them (inset shadow, scale .96) and releases softly.
+ *   - Transitions name exact properties (never `all`) so they stay interruptible.
+ *   - Colour changes driven by state or adaptive ink cross-fade via registered
+ *     custom properties instead of snapping.
+ * tactile.js adds `.tac` to buttons, the pointer-origin press glow, slider fill,
+ * and the Settings nav indicator. */
+
+/* ── Animatable colour tokens ──
+   Registered so a state change or an ink flip (wallpaper change) interpolates.
+   Initial values equal the fallbacks the inline sheet uses. --ink-orb/--orb-dot
+   are deliberately NOT registered: orb.js parses them as hex. */
+@property --text { syntax: '<color>'; inherits: true; initial-value: #e9edf5; }
+@property --text-muted { syntax: '<color>'; inherits: true; initial-value: #8b93a7; }
+@property --ink-scrim { syntax: '<color>'; inherits: true; initial-value: transparent; }
+@property --ink-chip { syntax: '<color>'; inherits: true; initial-value: rgba(255, 255, 255, .055); }
+@property --ink-chip-hover { syntax: '<color>'; inherits: true; initial-value: rgba(255, 255, 255, .11); }
+@property --ink-bubble { syntax: '<color>'; inherits: true; initial-value: rgba(8, 10, 16, .26); }
+@property --orb-glow { syntax: '<color>'; inherits: true; initial-value: rgba(122, 162, 255, .16); }
+@property --activity-c { syntax: '<color>'; inherits: true; initial-value: #10b981; }
+
+:root {
+  --ease-out: cubic-bezier(.2, 0, 0, 1);
+  --ease-press: cubic-bezier(.3, .7, .2, 1);
+  --ink-fade: .6s var(--ease-out);
+  --tac-transition: transform .18s var(--ease-press), box-shadow .22s ease, background-color .2s ease,
+    color .2s ease, filter .2s ease, opacity .2s ease;
+  /* Four shadows in every state so they interpolate instead of swapping. */
+  --tac-raise: inset 0 1px 0 rgba(255, 255, 255, .20), inset 0 -1px 0 rgba(0, 0, 0, .28),
+    0 1px 2px rgba(0, 0, 0, .30), 0 6px 14px -8px rgba(0, 0, 0, .55);
+  --tac-raise-hover: inset 0 1px 0 rgba(255, 255, 255, .28), inset 0 -1px 0 rgba(0, 0, 0, .28),
+    0 2px 4px rgba(0, 0, 0, .30), 0 12px 24px -10px rgba(0, 0, 0, .6);
+  --tac-sunk: inset 0 2px 6px rgba(0, 0, 0, .40), inset 0 0 0 1px rgba(255, 255, 255, .07),
+    0 0 0 rgba(0, 0, 0, 0), 0 0 0 -8px rgba(0, 0, 0, 0);
+  --tac-sheen: linear-gradient(180deg, rgba(255, 255, 255, .09), rgba(255, 255, 255, 0) 58%);
+  --tac-glow: rgba(255, 255, 255, .26);
+  --well: inset 0 1px 3px rgba(0, 0, 0, .38), inset 0 0 0 1px rgba(255, 255, 255, .07);
+  --well-focus: inset 0 1px 3px rgba(0, 0, 0, .38), inset 0 0 0 1px color-mix(in srgb, var(--accent-active) 60%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--accent-active) 20%, transparent);
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23aab2c4' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+html[data-theme="light"], html[data-ink="dark"] .settings-panel {
+  --tac-raise: inset 0 1px 0 rgba(255, 255, 255, .9), inset 0 -1px 0 rgba(10, 20, 40, .08),
+    0 1px 2px rgba(10, 20, 40, .14), 0 6px 14px -8px rgba(10, 20, 40, .28);
+  --tac-raise-hover: inset 0 1px 0 rgba(255, 255, 255, .95), inset 0 -1px 0 rgba(10, 20, 40, .08),
+    0 2px 4px rgba(10, 20, 40, .14), 0 12px 24px -10px rgba(10, 20, 40, .32);
+  --tac-sunk: inset 0 2px 5px rgba(10, 20, 40, .18), inset 0 0 0 1px rgba(10, 20, 40, .08),
+    0 0 0 rgba(0, 0, 0, 0), 0 0 0 -8px rgba(0, 0, 0, 0);
+  --tac-sheen: linear-gradient(180deg, rgba(255, 255, 255, .5), rgba(255, 255, 255, 0) 60%);
+  --tac-glow: rgba(255, 255, 255, .55);
+  --well: inset 0 1px 3px rgba(10, 20, 40, .14), inset 0 0 0 1px rgba(10, 20, 40, .10);
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23566072' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+
+/* ── Smooth colour: ink flips, state tints, orb glow ── */
+.panel, .settings-panel, .onboard-panel, .session-menu, .setup-toast { transition: --text var(--ink-fade), --text-muted var(--ink-fade), --ink-scrim var(--ink-fade),
+  --ink-chip var(--ink-fade), --ink-chip-hover var(--ink-fade), --ink-bubble var(--ink-fade); }
+.orb-slot { transition: --orb-glow .7s var(--ease-out); }
+.orb-slot::before { transition: transform 90ms linear, opacity 90ms linear; }
+.state-badge { transition: color .45s var(--ease-out), background-color .3s ease, box-shadow .3s ease; }
+.activity { --activity-c: var(--success); transition: --activity-c .45s var(--ease-out), background-color .3s ease, box-shadow .3s ease; }
+body { transition: background-color .5s ease, color .5s ease; }
+
+/* ── Wallpaper cross-fade: appearance.js clones the outgoing layer on top and fades it ── */
+.bg-layer.bg-leaving { opacity: 1; transition: opacity .8s cubic-bezier(.4, 0, .2, 1); will-change: opacity; }
+
+/* ── The tactile button base ── */
+.tac { position: relative; -webkit-tap-highlight-color: transparent; user-select: none; }
+.tac:disabled { cursor: default; }
+/* Pointer-origin press glow: light pools where the finger landed, then fades. */
+.tac::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: radial-gradient(circle at var(--press-x, 50%) var(--press-y, 50%), var(--tac-glow), transparent 62%);
+  opacity: 0; transition: opacity .5s ease;
+}
+.tac.is-pressed:not(:disabled)::after { opacity: 1; transition-duration: .05s; }
+.tac:not(.tac-flat):is(:active, .is-pressed):not(:disabled) { transform: scale(.96); }
+
+/* ID-styled controls in the inline sheet out-rank .tac; give them the same motion. */
+.tac, #mic-btn, #screen-btn, #send-btn, #settings-btn, #new-session-btn, #settings-close,
+#update-action-btn, .compact-action, .ghost-btn, .onboard-secondary, button.primary, .activity-stop,
+.setup-connection, .error-banner .dismiss, .error-banner .error-action, .import-btn, .seg button, .bg-swatch,
+.tool-chip, .onboard-ghost, .update-banner button { transition: var(--tac-transition); }
+#mic-btn.tac:is(:active, .is-pressed), #screen-btn.tac:is(:active, .is-pressed):not(:disabled),
+#send-btn.tac:is(:active, .is-pressed):not(:disabled), #settings-btn.tac:is(:active, .is-pressed),
+#new-session-btn.tac:is(:active, .is-pressed), #settings-close.tac:is(:active, .is-pressed),
+#update-action-btn.tac:is(:active, .is-pressed) { transform: scale(.96); }
+
+/* ── Secondary buttons: raised glass chips ── */
+.ghost-btn, .onboard-secondary, #update-check-btn, .compact-action, #settings-btn, .import-btn, #new-session-btn,
+.error-banner .dismiss, .error-banner .error-action, .update-banner button.ghost {
+  border: 0; background-color: var(--ink-chip, var(--chip-fill)); background-image: var(--tac-sheen);
+  box-shadow: var(--tac-raise); color: var(--text);
+}
+.ghost-btn, .onboard-secondary { padding: 8px 15px; border-radius: 10px; font-size: 12.5px; font-weight: 550; letter-spacing: -.005em; }
+:is(.ghost-btn, .onboard-secondary, #update-check-btn, .compact-action, #settings-btn, .import-btn, #new-session-btn,
+  .error-banner .dismiss, .error-banner .error-action):hover:not(:disabled) {
+  background-color: var(--ink-chip-hover, var(--chip-fill-hover)); box-shadow: var(--tac-raise-hover); border-color: transparent;
+}
+:is(.ghost-btn, .onboard-secondary, #update-check-btn, .compact-action, #settings-btn, .import-btn, #new-session-btn,
+  .error-banner .dismiss, .error-banner .error-action):is(:active, .is-pressed):not(:disabled) {
+  box-shadow: var(--tac-sunk); background-color: var(--ink-chip, var(--chip-fill));
+}
+.ghost-btn:disabled, .onboard-secondary:disabled { opacity: .45; box-shadow: var(--tac-sunk); }
+.ghost-btn.danger { color: var(--error); }
+.ghost-btn.danger:hover:not(:disabled) { background-color: color-mix(in srgb, var(--error) 16%, transparent); }
+#settings-btn { border: 0; }
+#settings-btn svg { transition: transform .5s var(--ease-out); }
+#settings-btn:hover svg { transform: rotate(40deg); }
+#new-session-btn { padding: 4px 9px; border-radius: 8px; }
+.import-btn { padding: 4px 7px; border: 0; border-radius: 8px; }
+
+/* ── Primary: a lit, domed accent key ── */
+button.primary, .setup-connection, #update-action-btn, .update-banner button:not(.ghost):not(.dismiss) {
+  border: 0; color: #06131c; font-weight: 650; letter-spacing: -.01em;
+  background-color: var(--accent-active);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, .32), rgba(255, 255, 255, 0) 52%, rgba(0, 0, 0, .10));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .55), inset 0 -1px 0 rgba(0, 0, 0, .22),
+    0 1px 2px rgba(0, 0, 0, .35), 0 8px 22px -8px color-mix(in srgb, var(--accent-active) 70%, transparent);
+}
+button.primary { padding: 10px 22px; border-radius: 11px; font-size: 13.5px; opacity: 1; }
+button.primary:hover:not(:disabled), .setup-connection:hover, #update-action-btn:hover {
+  opacity: 1; transform: none; filter: brightness(1.07) saturate(1.05);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), inset 0 -1px 0 rgba(0, 0, 0, .22),
+    0 2px 4px rgba(0, 0, 0, .35), 0 12px 28px -8px color-mix(in srgb, var(--accent-active) 85%, transparent);
+}
+:is(button.primary, .setup-connection, #update-action-btn):is(:active, .is-pressed):not(:disabled) {
+  filter: brightness(.96);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, .28), inset 0 -1px 0 rgba(255, 255, 255, .15),
+    0 0 0 rgba(0, 0, 0, 0), 0 3px 10px -6px color-mix(in srgb, var(--accent-active) 60%, transparent);
+}
+button.primary:disabled { opacity: .55; filter: saturate(.6); }
+.setup-connection { padding: 10px 18px; border-radius: 11px; }
+#update-action-btn { background-color: var(--success); color: #04210f; }
+
+/* ── Composer: send / share are glass keys, the mic is the jewel ── */
+#screen-btn, #send-btn { box-shadow: var(--tac-raise); background-image: var(--tac-sheen); }
+#screen-btn:hover, #send-btn:hover:not(:disabled) { box-shadow: var(--tac-raise-hover); }
+:is(#screen-btn, #send-btn):is(:active, .is-pressed):not(:disabled) { box-shadow: var(--tac-sunk); }
+#send-btn:not(:disabled) { color: var(--accent-active); }
+#send-btn:disabled { opacity: .38; box-shadow: var(--tac-sunk); }
+#send-btn svg { transition: transform .25s var(--ease-out); }
+#send-btn:hover:not(:disabled) svg { transform: translate(1px, -1px); }
+#screen-btn.active { animation: none; color: var(--accent-active);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-active) 55%, transparent), 0 0 16px -2px color-mix(in srgb, var(--accent-active) 55%, transparent),
+    0 1px 2px rgba(0, 0, 0, .3), 0 6px 14px -8px rgba(0, 0, 0, .55); }
+#mic-btn {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), inset 0 -3px 6px rgba(0, 0, 0, .28),
+    0 2px 4px rgba(0, 0, 0, .35), 0 0 20px color-mix(in srgb, var(--accent-active) 38%, transparent);
+}
+#mic-btn:hover { transform: none; filter: brightness(1.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .7), inset 0 -3px 6px rgba(0, 0, 0, .28),
+    0 3px 6px rgba(0, 0, 0, .35), 0 0 28px color-mix(in srgb, var(--accent-active) 55%, transparent); }
+#mic-btn:is(:active, .is-pressed) { filter: brightness(.95);
+  box-shadow: inset 0 3px 7px rgba(0, 0, 0, .35), inset 0 -1px 0 rgba(255, 255, 255, .2),
+    0 1px 1px rgba(0, 0, 0, .3), 0 0 14px color-mix(in srgb, var(--accent-active) 45%, transparent); }
+/* Listening: a sonar ring radiates from the key instead of the whole key blinking. */
+#mic-btn.listening { animation: mic-ring 1.7s cubic-bezier(.2, .6, .3, 1) infinite;
+  background: radial-gradient(120% 120% at 30% 15%, #ffd7a3, #ffab4d 55%, #c46f14); }
+@keyframes mic-ring {
+  0% { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), inset 0 -3px 6px rgba(0, 0, 0, .28), 0 0 0 0 rgba(255, 171, 77, .55), 0 0 22px rgba(255, 171, 77, .45); }
+  100% { box-shadow: inset 0 1px 0 rgba(255, 255, 255, .6), inset 0 -3px 6px rgba(0, 0, 0, .28), 0 0 0 14px rgba(255, 171, 77, 0), 0 0 22px rgba(255, 171, 77, .45); }
+}
+.input-area { transition: box-shadow .3s ease; }
+
+/* ── Stop / danger keys ── */
+.activity-stop { border: 0; background-color: color-mix(in srgb, var(--error) 18%, transparent); background-image: var(--tac-sheen);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--error) 45%, transparent), inset 0 1px 0 rgba(255, 255, 255, .14),
+    0 1px 2px rgba(0, 0, 0, .3), 0 6px 14px -8px rgba(0, 0, 0, .55); }
+.activity-stop:hover { background-color: color-mix(in srgb, var(--error) 28%, transparent); }
+.activity-stop:is(:active, .is-pressed) { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--error) 55%, transparent), inset 0 2px 5px rgba(0, 0, 0, .35),
+  0 0 0 rgba(0, 0, 0, 0), 0 0 0 -8px rgba(0, 0, 0, 0); }
+
+/* ── Sidebar rows & small chips ── */
+.session-item { transition: background-color .18s ease, color .18s ease, box-shadow .2s ease; }
+.session-item:has(.session-open.is-pressed) { background-color: rgba(255, 255, 255, .03); box-shadow: inset 0 1px 3px rgba(0, 0, 0, .3); }
+.session-menu-btn { transition: background-color .15s ease, color .15s ease, transform .18s var(--ease-press); }
+.tool-chip:hover { transform: translateY(-1px); }
+.msg-action { transition: background-color .15s ease, color .15s ease, transform .18s var(--ease-press); }
+
+/* ── Background swatches: lift on hover, sink on press, ring animates in ── */
+.bg-swatch { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .12), 0 0 0 0 transparent, 0 2px 6px -2px rgba(0, 0, 0, .5); }
+.bg-swatch:hover { transform: translateY(-2px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .22), 0 0 0 0 transparent, 0 12px 22px -10px rgba(0, 0, 0, .7); }
+.bg-swatch[aria-checked="true"] {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .28), 0 0 0 2px var(--accent-active), 0 8px 20px -8px color-mix(in srgb, var(--accent-active) 60%, transparent); }
+.bg-swatch span { transition: background .2s ease; }
+.bg-swatch[aria-checked="true"] span::after { content: ''; float: right; width: 14px; height: 14px; margin-top: -1px; border-radius: 50%;
+  background: var(--accent-active) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2306131c' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center / 10px no-repeat;
+  animation: tick-in .28s var(--ease-press) both; }
+@keyframes tick-in { from { transform: scale(.25); opacity: 0; filter: blur(4px); } to { transform: scale(1); opacity: 1; filter: blur(0); } }
+
+/* ── Segmented control ── */
+.seg { background: rgba(0, 0, 0, .18); box-shadow: var(--well); padding: 3px; }
+.seg button { transition: var(--tac-transition); font-weight: 550; }
+.seg button:hover { color: var(--text); }
+.seg button[aria-checked="true"] { background-color: var(--ink-chip-hover, var(--chip-fill-hover)); background-image: var(--tac-sheen); box-shadow: var(--tac-raise); color: var(--text); }
+
+/* ── Form controls ── */
+/* Text wells: inputs read as recessed into the glass. */
+.settings-panel :is(input[type="url"], input[type="text"], input[type="password"], input[type="number"]),
+.onboard-step :is(input[type="url"], input[type="text"], input[type="password"]), .settings-panel select, .onboard-step select {
+  border: 0; box-shadow: var(--well); border-radius: 10px; font-size: 13.5px; padding: 9px 13px;
+  background-color: color-mix(in srgb, var(--glass-fill-solid) 55%, rgba(0, 0, 0, .22));
+  transition: box-shadow .2s ease, background-color .2s ease;
+}
+html[data-theme="light"] :is(.settings-panel, .onboard-step) :is(input[type="url"], input[type="text"], input[type="password"], input[type="number"], select) {
+  background-color: rgba(255, 255, 255, .6); }
+.settings-panel :is(input, select):focus, .onboard-step :is(input, select):focus { border-color: transparent; box-shadow: var(--well-focus); }
+.settings-panel :is(input, select):hover:not(:focus), .onboard-step :is(input, select):hover:not(:focus) {
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, .38), inset 0 0 0 1px rgba(255, 255, 255, .13); }
+/* Selects: native chrome off, one consistent chevron. */
+.settings-panel select, .onboard-step select, .session-sort-row select {
+  -webkit-appearance: none; appearance: none; cursor: pointer; padding-right: 34px;
+  background-image: var(--chevron); background-repeat: no-repeat; background-position: right 12px center; background-size: 12px;
+}
+.session-sort-row select { border: 0; box-shadow: var(--well); background-color: rgba(0, 0, 0, .16); padding-right: 24px; background-position: right 7px center; background-size: 10px; }
+
+/* Switches (every checkbox in Settings and setup). */
+.settings-panel input[type="checkbox"], .onboard-step input[type="checkbox"] {
+  -webkit-appearance: none; appearance: none; position: relative; flex: none; cursor: pointer;
+  width: 36px !important; height: 20px; margin: 0 !important; border-radius: 999px;
+  background-color: rgba(255, 255, 255, .13);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, .5), inset 0 0 0 1px rgba(255, 255, 255, .08);
+  transition: background-color .25s ease, box-shadow .25s ease;
+}
+html[data-theme="light"] :is(.settings-panel, .onboard-step) input[type="checkbox"] { background-color: rgba(10, 20, 40, .14); }
+.settings-panel input[type="checkbox"]::before, .onboard-step input[type="checkbox"]::before {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 999px;
+  background: linear-gradient(180deg, #ffffff, #e2e6ee);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .45), 0 3px 6px -1px rgba(0, 0, 0, .3);
+  transition: transform .26s var(--ease-press), width .16s var(--ease-press);
+}
+.settings-panel input[type="checkbox"]:checked, .onboard-step input[type="checkbox"]:checked {
+  background-color: var(--accent-active);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, .3), inset 0 0 0 1px rgba(255, 255, 255, .12), 0 0 12px -2px color-mix(in srgb, var(--accent-active) 60%, transparent);
+}
+.settings-panel input[type="checkbox"]:checked::before, .onboard-step input[type="checkbox"]:checked::before { transform: translateX(16px); }
+/* Squish while held: the knob widens toward its destination, like a real toggle. */
+.settings-panel input[type="checkbox"]:active::before, .onboard-step input[type="checkbox"]:active::before { width: 20px; }
+.settings-panel input[type="checkbox"]:checked:active::before, .onboard-step input[type="checkbox"]:checked:active::before { transform: translateX(12px); }
+.settings-panel input[type="checkbox"]:disabled { opacity: .45; cursor: default; }
+.settings-panel input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent-active); outline-offset: 2px; }
+/* Switch rows: label text left, switch right, hint underneath. */
+.settings-panel .checkbox-label { display: flex !important; flex-wrap: wrap; align-items: center; column-gap: 12px; row-gap: 2px;
+  padding: 10px 0; margin: 0 0 4px; cursor: pointer; line-height: 1.4; }
+.settings-panel .checkbox-label > input { order: 1; margin-left: auto !important; }
+.settings-panel .checkbox-label > .hint { order: 2; flex-basis: 100%; margin: 0 !important; }
+.settings-panel .checkbox-label > .hint:empty { display: none; }
+.settings-panel section > .checkbox-label + .hint { margin-top: -4px; }
+
+/* Sliders: filled track (tactile.js keeps --fill in sync), a lifted thumb that grows under the finger. */
+.settings-panel input[type="range"] { -webkit-appearance: none; appearance: none; height: 22px; background: transparent; cursor: pointer; --fill: 50%; }
+.settings-panel input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px; border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-active) 0 var(--fill), rgba(255, 255, 255, .13) var(--fill) 100%);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .45);
+}
+html[data-theme="light"] .settings-panel input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(90deg, var(--accent-active) 0 var(--fill), rgba(10, 20, 40, .14) var(--fill) 100%); }
+.settings-panel input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 18px; height: 18px; margin-top: -6px; border-radius: 50%;
+  background: linear-gradient(180deg, #ffffff, #dfe3eb);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .5), 0 0 0 0 color-mix(in srgb, var(--accent-active) 0%, transparent);
+  transition: transform .16s var(--ease-press), box-shadow .2s ease;
+}
+.settings-panel input[type="range"]:hover::-webkit-slider-thumb { box-shadow: 0 1px 3px rgba(0, 0, 0, .5), 0 0 0 5px color-mix(in srgb, var(--accent-active) 16%, transparent); }
+.settings-panel input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.14);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .5), 0 0 0 7px color-mix(in srgb, var(--accent-active) 22%, transparent); }
+.settings-panel input[type="range"]:focus-visible { outline: none; }
+.settings-panel input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 1px 3px rgba(0, 0, 0, .5), 0 0 0 3px var(--accent-active); }
+.glass-row output, .settings-panel label > .hint[id$="-val"] { font-variant-numeric: tabular-nums; }
+/* `.settings-panel label` (block) out-ranked `.glass-row` (flex): label | track | value on one row. */
+.settings-panel .glass-row { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; font-weight: 550; }
+.settings-panel .glass-row > span:first-child { width: 112px; }
+
+/* ── Settings dialog layout ── */
+.settings-overlay { background: rgba(3, 5, 10, .42); }
+.settings-panel { max-width: 880px; max-height: 700px; border: 0; border-radius: 24px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), inset 0 0 0 1px rgba(255, 255, 255, .08), 0 40px 100px -20px rgba(0, 0, 0, .7), 0 12px 30px -12px rgba(0, 0, 0, .5);
+  transform: scale(.97) translateY(8px); transition: transform .38s var(--ease-out), opacity .25s ease; }
+.settings-overlay.visible .settings-panel { transform: none; }
+
+.settings-nav { position: relative; width: 212px; gap: 2px; padding: 20px 12px 14px; }
+.settings-nav .settings-title { font-size: 16px; padding: 2px 12px 10px; }
+.snav-group-label { padding: 14px 12px 6px; font-size: 10.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--text-muted); opacity: .8; }
+.snav-item { position: relative; z-index: 1; gap: 11px; padding: 8px 12px; border: 0; border-radius: 10px; font-size: 13px;
+  transition: color .2s ease, background-color .2s ease; }
+.snav-item .snav-ico { flex: none; opacity: .75; transition: opacity .2s ease, transform .3s var(--ease-out); }
+.snav-item:hover .snav-ico, .snav-item.active .snav-ico { opacity: 1; }
+.snav-item.active .snav-ico { color: var(--accent-active); }
+.snav-item.is-pressed { background-color: rgba(255, 255, 255, .04); }
+/* One indicator slides between tabs instead of each item swapping its own fill. */
+.snav-indicator { position: absolute; left: 0; top: 0; z-index: 0; border-radius: 10px; pointer-events: none;
+  background-color: var(--ink-chip-hover, var(--chip-fill-hover)); background-image: var(--tac-sheen); box-shadow: var(--tac-raise);
+  transition: transform .34s var(--ease-out), width .34s var(--ease-out), height .34s var(--ease-out), opacity .2s ease; }
+.snav-indicator.no-anim { transition: none; }
+.settings-nav.has-indicator .snav-item.active { background: transparent; border: 0; box-shadow: none; }
+.settings-nav-foot { padding-top: 14px; opacity: .7; }
+
+.settings-header { align-items: flex-start; gap: 16px; padding: 20px 24px 16px; transition: box-shadow .25s ease; position: relative; z-index: 2; }
+.settings-body.is-scrolled .settings-header { box-shadow: 0 10px 18px -14px rgba(0, 0, 0, .8); }
+.settings-heading { min-width: 0; }
+.settings-header h2 { font-size: 18px; line-height: 1.2; }
+.settings-tab-desc { margin-top: 4px; font-size: 12.5px; color: var(--text-muted); text-wrap: pretty; }
+#settings-close { flex: none; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%;
+  border: 0; color: var(--text-muted); background-color: var(--ink-chip, var(--chip-fill)); background-image: var(--tac-sheen); box-shadow: var(--tac-raise); font-size: 0; }
+#settings-close:hover { color: var(--text); box-shadow: var(--tac-raise-hover); background-color: var(--ink-chip-hover, var(--chip-fill-hover)); }
+#settings-close:is(:active, .is-pressed) { box-shadow: var(--tac-sunk); }
+
+.settings-content { padding: 18px 24px 22px; scroll-padding-top: 12px; }
+.tab-panel { animation: panel-in .32s var(--ease-out) both; }
+@keyframes panel-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.settings-panel section { padding: 18px 18px 8px; margin-bottom: 14px; border-radius: 16px; border: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .07), inset 0 0 0 1px rgba(255, 255, 255, .055); }
+.settings-panel h3 { display: flex; align-items: baseline; gap: 8px; font-size: 11px; letter-spacing: .09em; margin-bottom: 14px; color: var(--text); opacity: .72; }
+.settings-panel h3 .hint { opacity: 1; }
+.settings-panel label { font-size: 12.5px; font-weight: 550; color: var(--text); margin-bottom: 14px; }
+.settings-panel label > :is(input, select) { font-weight: 400; }
+.settings-panel .hint { font-weight: 400; }
+.settings-panel details.adv > summary { list-style: none; display: inline-flex; align-items: center; gap: 6px; border-radius: 8px; padding: 6px 8px 6px 0; }
+.settings-panel details.adv > summary::-webkit-details-marker { display: none; }
+.settings-panel details.adv > summary::before { content: ''; width: 10px; height: 10px; background: var(--chevron) center / 10px no-repeat; transform: rotate(-90deg); transition: transform .25s var(--ease-out); opacity: .8; }
+.settings-panel details.adv[open] > summary::before { transform: none; }
+
+.settings-footer { justify-content: flex-end; gap: 14px; padding: 14px 24px; background: rgba(255, 255, 255, .025); }
+.settings-footer-hint { margin-right: auto; font-size: 12px; color: var(--text-muted); }
+#settings-saved-msg { font-size: 12.5px; font-weight: 600; }
+#settings-saved-msg:not(:empty) { animation: saved-in .35s var(--ease-press) both; }
+@keyframes saved-in { from { opacity: 0; transform: translateX(6px); filter: blur(3px); } to { opacity: 1; transform: none; filter: blur(0); } }
+
+@media (max-width: 640px) {
+  .settings-nav { width: auto; }
+  .snav-group-label { display: none; }
+}
+
+/* Reduced motion: no press scaling or sliding; colour still changes. */
+@media (prefers-reduced-motion: reduce) {
+  .tac:is(:active, .is-pressed), #mic-btn.tac:is(:active, .is-pressed) { transform: none !important; }
+  #mic-btn.listening { animation: none; box-shadow: 0 0 0 3px rgba(255, 171, 77, .6); }
+}

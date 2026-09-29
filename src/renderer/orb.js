@@ -75,6 +75,13 @@
   let bright = STATE_PARAMS.idle.bright;
   let baseRgb = [232, 238, 248];
   let rgb = mixRgb(baseRgb, STATE_PARAMS.idle.tint, STATE_PARAMS.idle.tintMix);
+  // Colour is tweened on a fixed ease-out curve (not chased exponentially)
+  // so a state or theme/ink change reads as one deliberate cross-fade.
+  const COLOR_FADE_S = 0.6;
+  let colorFrom = rgb.slice();
+  let colorTo = rgb.slice();
+  let colorT0 = -Infinity;
+  let themed = false; // the first theme read snaps; later ones fade
 
   // Particle buffers.
   let count = 0;
@@ -155,8 +162,21 @@
     breathe = approach(breathe, p.breathe, 3, dt);
     shimmer = approach(shimmer, p.shimmer, 3, dt);
     bright = approach(bright, p.bright + levelSmooth * 0.25, 5, dt);
-    rgb = [0, 1, 2].map((k) => approach(rgb[k], mixRgb(baseRgb, p.tint, p.tintMix)[k], 4, dt));
+    stepColor();
   }
+
+  function colorTarget() { const p = params(); return mixRgb(baseRgb, p.tint, p.tintMix); }
+  function colorFading() { return time - colorT0 < COLOR_FADE_S; }
+  function stepColor() {
+    const target = colorTarget();
+    if (Math.hypot(target[0] - colorTo[0], target[1] - colorTo[1], target[2] - colorTo[2]) > 0.5) {
+      colorFrom = rgb.slice(); colorTo = target; colorT0 = time; // retarget from where we are
+    }
+    const u = Math.min(1, Math.max(0, (time - colorT0) / COLOR_FADE_S));
+    const e = 1 - Math.pow(1 - u, 3); // ease-out: responds on the first frame, lands softly
+    rgb = mixRgb(colorFrom, colorTo, e);
+  }
+  function snapColor() { rgb = colorTarget(); colorFrom = rgb.slice(); colorTo = rgb.slice(); colorT0 = -Infinity; }
 
   // Position every particle for the current time and project it to the canvas.
   function layout(width, height) {
@@ -282,7 +302,7 @@
 
   // ── Loop gating ──────────────────────────────────────────────────────────
   function isSettled() {
-    return Math.abs(expansion - targetExpansion()) < SETTLED && levelSmooth < 0.002;
+    return Math.abs(expansion - targetExpansion()) < SETTLED && levelSmooth < 0.002 && !colorFading();
   }
   function wantsLoop() {
     if (computeFrozen || !ctx) return false;
@@ -348,8 +368,7 @@
     if (m) {
       const v = parseInt(m[1], 16);
       baseRgb = [(v >> 16) & 255, (v >> 8) & 255, v & 255];
-      const p = params();
-      rgb = mixRgb(baseRgb, p.tint, p.tintMix); // theme switches apply instantly
+      if (!themed) { themed = true; snapColor(); } // later theme/ink flips cross-fade in step()
     }
   }
 
@@ -431,7 +450,7 @@
     expansion = targetExpansion();
     const p = params();
     spin = p.spin; breathe = p.breathe; shimmer = p.shimmer; bright = p.bright;
-    rgb = mixRgb(baseRgb, p.tint, p.tintMix);
+    snapColor();
     draw();
     return getPhase();
   }

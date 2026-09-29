@@ -267,7 +267,43 @@
   }
   const loadCustomBlob = () => dbOp('readonly', (s) => s.get(KEY)).catch(() => null);
 
+  // ── Wallpaper cross-fade ──
+  // The live .bg-layer switches scene at once; a clone of the outgoing scene is
+  // laid on top of it and faded out, so the change reads as a dissolve. The
+  // clone drops every id (no duplicate #bg-custom) and at most two ever exist,
+  // so rapid clicking can't pile up layers the backdrop blur has to sample.
+  const FADE_MS = 800;
+  let shownBg = null;
+  function crossfade() {
+    const layer = document.querySelector('.bg-layer:not(.bg-leaving)');
+    if (!layer || !layer.parentNode) return;
+    const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduced || document.hidden) return;
+    const old = document.querySelectorAll('.bg-layer.bg-leaving');
+    for (let i = 0; i < old.length - 1; i++) old[i].remove();
+    const ghost = layer.cloneNode(true);
+    ghost.classList.add('bg-leaving');
+    ghost.removeAttribute('id');
+    ghost.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+    layer.parentNode.insertBefore(ghost, layer.nextSibling);
+    let done = false;
+    const drop = () => { if (!done) { done = true; ghost.remove(); } };
+    ghost.addEventListener('transitionend', (e) => { if (e.target === ghost && e.propertyName === 'opacity') drop(); });
+    setTimeout(drop, FADE_MS + 250); // hidden/throttled windows may never fire transitionend
+    void ghost.offsetWidth; // start from opacity 1
+    ghost.style.opacity = '0';
+  }
+  function showBg(bg) {
+    const layer = document.querySelector('.bg-layer:not(.bg-leaving)');
+    if (shownBg !== null && shownBg !== bg) crossfade();
+    shownBg = bg;
+    if (layer) layer.dataset.bg = bg;
+    document.documentElement.dataset.bg = bg;
+  }
+
   function setCustomUrl(blob) {
+    // Replacing the image on screen dissolves too, not just scene switches.
+    if (shownBg === 'custom' && customUrl) crossfade();
     if (customUrl) URL.revokeObjectURL(customUrl);
     customUrl = blob ? URL.createObjectURL(blob) : null;
     const el = document.getElementById('bg-custom');
@@ -311,7 +347,7 @@
     const root = document.documentElement;
     // A missing custom image falls back to the default scene instead of black.
     const bg = current.background === 'custom' && !customUrl ? DEFAULTS.background : current.background;
-    root.dataset.bg = bg;
+    showBg(bg);
     root.dataset.glass = current.glassStyle;
     root.style.setProperty('--glass-blur', `${current.glassBlur}px`);
     root.style.setProperty('--glass-tint', String(current.glassOpacity / 100));
