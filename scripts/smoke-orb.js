@@ -127,6 +127,8 @@ const Orb = global.window.AriaOrb;
 const m = () => Orb.getMetrics();
 
 check('adapter.exists', !!Orb && typeof Orb.setState === 'function' && typeof Orb.getMetrics === 'function');
+check('adapter.startsLowBeforeHardwareProfile', m().particles === 900,
+  `initial particles=${m().particles}; slow devices must not render at high quality before hardware detection`);
 check('adapter.initializesCompact',
   Orb.getState() === 'idle' && Orb.getPhase() === 'consolidated' && Math.abs(m().meanRadius - 1) < 0.04,
   JSON.stringify(m()));

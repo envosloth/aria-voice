@@ -48,7 +48,10 @@
   let state = 'idle';
   let level = 0;
   let levelSmooth = 0;
-  let quality = 'high';
+  // Start conservatively: the renderer draws before the async hardware IPC
+  // returns. Strong hosts are upgraded by applyOrbQuality() at startup; weak
+  // hosts must never pay for a full-quality initial frame.
+  let quality = 'low';
   let sttBackend = 'vulkan';
   let sttActive = false;
   let computeFrozen = false;
