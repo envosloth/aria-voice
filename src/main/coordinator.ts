@@ -5,7 +5,7 @@ import { URL } from 'url';
 import { config } from './config';
 import { getSecret } from './secure-storage';
 import { streamChat, LlmCallbacks, ChatMessage, ChatHandle, TokenUsage } from './llm-stream';
-import { credentialedEndpointSecurityError } from './endpoint-security';
+import { credentialedEndpointSecurityError, requestHostname } from './endpoint-security';
 import { routeDetailed, visionDetailFor, Target } from './router';
 import { classifyTurn, CoordinatorId } from './turn-classifier';
 import { matchLocalIntent, answerFor, nextOccurrence, humanizeMs, formatClock, LocalIntent } from './local-intents';
@@ -244,7 +244,7 @@ export function deleteHarnessSession(
     try {
       req = transport.request(
         {
-          hostname: url.hostname,
+          hostname: requestHostname(url),
           port: url.port || (isHttps ? 443 : 80),
           path: url.pathname,
           method: 'DELETE',
@@ -432,7 +432,7 @@ export interface CoordinateOptions {
 export function oneShotChat(
   text: string,
   onToken: (token: string) => void,
-  signal: { cancelled: boolean },
+  signal: AbortSignal,
 ): Promise<{ target: string; text: string }> {
   const target: Target | null = config.get('llm.endpoint') ? 'llm' : config.get('harness.endpoint') ? 'harness' : null;
   if (!target) return Promise.reject(new Error('No LLM or agent harness configured yet. Open Settings (gear icon) to add one.'));
@@ -443,9 +443,22 @@ export function oneShotChat(
       fail(new Error(`Can't decrypt the stored ${which} API key: ${(e as Error).message}`)); return;
     }
     const ep = endpoint.replace(/^(https?:\/\/[^/]+).*/, '$1');
-    let poll: NodeJS.Timeout | null = null;
-    const settle = (fn: () => void) => { if (poll) { clearInterval(poll); poll = null; } fn(); };
-    const handle = streamChat({
+    let settled = false;
+    let handle: ChatHandle | null = null;
+    const settle = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', abort);
+      fn();
+    };
+    const abort = () => settle(() => {
+      try { handle?.cancel(); } finally {
+        fail(Object.assign(new Error('Latency test cancelled'), { name: 'AbortError' }));
+      }
+    });
+    if (signal.aborted) { abort(); return; }
+    signal.addEventListener('abort', abort, { once: true });
+    handle = streamChat({
       endpoint, model, apiKey,
       messages: [
         { role: 'system', content: target === 'harness' ? HARNESS_SYSTEM_PROMPT : LLM_SYSTEM_PROMPT },
@@ -453,14 +466,14 @@ export function oneShotChat(
       ],
       timeoutMs: target === 'harness' ? 120000 : 30000,
     }, {
-      onToken: (t) => { if (!signal.cancelled) onToken(t); },
+      onToken: (t) => { if (!settled && !signal.aborted) onToken(t); },
       onDone: (full) => settle(() => done({ target: TARGET_NAMES[target], text: full })),
       onError: (err) => settle(() => fail(new Error(
         isConnectionError(err) ? `Can't reach your ${which} at ${ep} — is it running?`
           : isAuthError(err) ? `Your ${which} at ${ep} rejected the API key (401/403).` : `${which} error: ${err}`,
       ))),
     });
-    poll = setInterval(() => { if (signal.cancelled) settle(() => { try { handle.cancel(); } catch { /* done */ } }); }, 100);
+    if (signal.aborted) handle.cancel();
   }));
 }
 

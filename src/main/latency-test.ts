@@ -21,7 +21,7 @@ export interface LatencyTestDeps {
   /** Run STT over 16 kHz s16le PCM. `onSent` fires when transcribe is requested. */
   transcribe(pcm16k: Buffer, turnId: string, onSent: (t: number) => void): Promise<string>;
   /** Stream one reply; call onToken per token; resolves with the full text. */
-  chat(text: string, onToken: (token: string) => void, signal: { cancelled: boolean }): Promise<{ target: string; text: string }>;
+  chat(text: string, onToken: (token: string) => void, signal: AbortSignal): Promise<{ target: string; text: string }>;
   now(): number;
 }
 
@@ -84,6 +84,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
 }
 
 export async function runLatencyTest(deps: LatencyTestDeps, id: string): Promise<LatencyTestResult> {
+  const controller = new AbortController();
   try {
     // 1. Make the test "speech" with the voice itself.
     const speech = await withTimeout(deps.synthesize(TEST_PHRASE, `${id}:speech`), 30_000, 'Preparing the test audio');
@@ -101,7 +102,7 @@ export async function runLatencyTest(deps: LatencyTestDeps, id: string): Promise
     let buf = '';
     let phrase: string | null = null;
     let tPhrase = 0;
-    const signal = { cancelled: false };
+    const signal = controller.signal;
     let resolvePhrase: () => void = () => {};
     const phraseReady = new Promise<void>((r) => { resolvePhrase = r; });
     const chatP = deps.chat(transcript, (tok) => {
@@ -116,14 +117,14 @@ export async function runLatencyTest(deps: LatencyTestDeps, id: string): Promise
     let early: { target: string; text: string } | null = null;
     try {
       early = await withTimeout(Promise.race([phraseReady.then(() => null), chatP]), 60_000, 'The AI');
-    } catch (e) { signal.cancelled = true; throw e; }
+    } catch (e) { controller.abort(); throw e; }
     if (!phrase) { phrase = (early ? early.text : '').trim(); tPhrase = deps.now(); }
     if (!phrase) return { ok: false, error: 'The AI replied with nothing to say.', transcript, target: early ? early.target : undefined };
     const phraseText: string = phrase;
 
     // 4. First audio of the reply.
     const voice = await withTimeout(deps.synthesize(phraseText, `${id}:reply`), 30_000, 'The voice');
-    const reply = early || await withTimeout(chatP, 60_000, 'The AI').catch(() => ({ target: '', text: phraseText }));
+    const reply = early || await withTimeout(chatP, 60_000, 'The AI');
     return {
       ok: true,
       transcript,
@@ -136,5 +137,7 @@ export async function runLatencyTest(deps: LatencyTestDeps, id: string): Promise
     };
   } catch (e) {
     return { ok: false, error: (e as Error).message || String(e) };
+  } finally {
+    controller.abort();
   }
 }
