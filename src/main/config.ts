@@ -4,6 +4,13 @@ import { DEFAULT_STT_MODEL } from '../shared/constants';
 interface AppConfig {
   stt: {
     model: string;
+    // Where speech is transcribed: the local whisper.cpp sidecar, or an
+    // OpenAI-compatible cloud endpoint (Groq by default — free tier). Cloud is
+    // opt-in and falls back to local on any failure.
+    provider: 'local' | 'cloud';
+    cloudProvider: string;   // one of STT_CLOUD_PROVIDERS ids
+    cloudEndpoint: string;   // empty = the provider's default
+    cloudModel: string;
     backend: 'vulkan' | 'cpu';
     prewarm: boolean;
     // Speculative early endpointing: transcribe during a pause and end a
@@ -159,6 +166,10 @@ interface AppConfig {
 const defaults: AppConfig = {
   stt: {
     model: DEFAULT_STT_MODEL,
+    provider: 'local',
+    cloudProvider: 'groq',
+    cloudEndpoint: '',
+    cloudModel: '',
     backend: 'vulkan',
     prewarm: true,
     speculative: true,
@@ -262,6 +273,8 @@ export const config = new JsonStore<AppConfig>('aria-config', defaults);
 // Closed string unions: reject values outside the set the code understands.
 const ENUMS: Record<string, readonly string[]> = {
   'stt.backend': ['vulkan', 'cpu'],
+  'stt.provider': ['local', 'cloud'],
+  'stt.cloudProvider': ['groq', 'openai', 'custom'],
   'tts.engine': ['piper', 'kokoro'],
   'routing.mode': ['auto', 'llm', 'harness'],
   'routing.classifier': ['auto', 'off'],

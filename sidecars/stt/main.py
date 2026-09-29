@@ -51,7 +51,22 @@ class SttSidecar(BaseSidecar):
         self._spec: tuple[int, str] | None = None
         self._server_proc: subprocess.Popen | None = None
         self._server_port = 0
+        self._cloud: dict | None = self._cloud_config()
         self._cli_bin = ""  # fallback
+
+    @staticmethod
+    def _cloud_config() -> dict | None:
+        """Cloud STT settings from the environment, or None when unconfigured.
+        Opt-in only: without provider=cloud, endpoint, model and key this is a
+        no-op and the sidecar behaves exactly as before."""
+        if os.environ.get("ARIA_STT_PROVIDER", "").strip().lower() != "cloud":
+            return None
+        endpoint = os.environ.get("ARIA_STT_CLOUD_ENDPOINT", "").strip()
+        model = os.environ.get("ARIA_STT_CLOUD_MODEL", "").strip()
+        key = os.environ.get("ARIA_STT_CLOUD_KEY", "").strip()
+        if not endpoint or not model or not key:
+            return None
+        return {"endpoint": endpoint, "model": model, "key": key}
 
     def initialize(self) -> None:
         self.model_path = self._find_model()
@@ -71,7 +86,9 @@ class SttSidecar(BaseSidecar):
 
         backend = "vulkan" if self.using_vulkan else "cpu"
         mode = "server(warm)" if self._server_proc else "cli(cold)"
-        self._emit_status("initialized", f"backend={backend} mode={mode} model={os.path.basename(self.model_path)}")
+        provider = "cloud" if self._cloud else "local"
+        self._emit_status("initialized", f"provider={provider} backend={backend} mode={mode} model="
+                          + (self._cloud["model"] if self._cloud else os.path.basename(self.model_path)))
 
     # ---- audio handling ----
 
@@ -201,12 +218,50 @@ class SttSidecar(BaseSidecar):
         return text if energy ** 0.5 < self._SILENT_TAIL_RMS else None
 
     def _transcribe(self, pcm_data: bytes) -> str:
-        if self._server_proc and self._server_proc.poll() is None:
+        """Cloud when explicitly configured, else local; any cloud failure falls
+        back to local whisper so a dead endpoint or key can never mute the mic.
+        An EMPTY cloud transcript is a real answer (silence), not a failure."""
+        if self._cloud:
             try:
-                return self._transcribe_server(pcm_data)
+                return self._transcribe_cloud(pcm_data)
             except Exception as e:
-                self._emit_status("warning", f"server inference failed ({e}); using CLI fallback")
+                self._emit_status("warning", f"cloud STT failed ({e}); using local whisper")
+        return self._transcribe_local(pcm_data)
+
+    def _transcribe_local(self, pcm_data: bytes) -> str:
+        """Explicit local path (used by the cloud-fallback contract + tests)."""
+        if self._server_proc and self._server_proc.poll() is None:
+            return self._transcribe_server(pcm_data)
         return self._transcribe_cli(self._pcm_to_wav(pcm_data))
+
+    # ---- cloud (opt-in, OpenAI-compatible /audio/transcriptions) ----
+    # Set from ARIA_STT_PROVIDER=cloud + endpoint/model/key env vars the
+    # supervisor passes for this child only. The key never touches disk here.
+    _CLOUD_TIMEOUT_S = 20
+
+    def _transcribe_cloud(self, pcm_data: bytes) -> str:
+        boundary = "----ariaCloud" + str(int(time.time() * 1000))
+        extra = {"model": self._cloud["model"], "response_format": "json", "temperature": "0"}
+        body = self._multipart(boundary, self._pcm_to_wav(pcm_data), extra=extra)
+        req = urllib.request.Request(
+            self._cloud["endpoint"],
+            data=body,
+            headers={
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "Authorization": f"Bearer {self._cloud['key']}",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        # Same no-proxy opener as the loopback server call, and bounded so a
+        # hanging endpoint cannot stall the utterance.
+        with _LOOPBACK_OPENER.open(req, timeout=self._CLOUD_TIMEOUT_S) as resp:
+            raw = resp.read(1024 * 1024).decode("utf-8", errors="ignore")
+        parsed = json.loads(raw)          # bad JSON -> ValueError -> local fallback
+        text = parsed.get("text")
+        if text is None:
+            raise ValueError("cloud response had no text field")
+        return str(text).strip()
 
     # audio_ctx fast path: whisper's encoder always processes a full 30s window
     # (ctx 1500) no matter how short the utterance, so a 2s voice command wastes

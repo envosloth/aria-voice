@@ -3,6 +3,7 @@ import { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, nativeImage } 
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { Supervisor } from './supervisor';
 import { config } from './config';
 import { validateConfigSet } from './config';
@@ -176,6 +177,10 @@ function createWindow(): BrowserWindow {
     minWidth: 760,
     minHeight: 540,
     show: !SMOKE, // headless boot test: don't pop a window on the user's desktop
+    // Window/taskbar icon: without this Linux shows a generic Electron icon in
+    // the frame and window list while the launcher shows ARIA's. Same asset the
+    // launcher and installers use, so they always agree.
+    icon: appIconPath(),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
       contextIsolation: true,
@@ -269,6 +274,21 @@ function showMainWindow(): void {
 function applyAppMenu(): void {
   const menu = Menu.buildFromTemplate([{ role: 'editMenu' }]);
   Menu.setApplicationMenu(menu);
+}
+
+/** The ARIA icon for window/taskbar use: the same asset the installers and the
+ *  launcher use. undefined if missing (Electron then uses its default rather
+ *  than failing to open a window). */
+function appIconPath(): string | undefined {
+  const candidates = [
+    path.join(__dirname, '..', '..', 'assets', 'icon.png'),          // dev checkout
+    path.join(process.resourcesPath || '', 'assets', 'icon.png'),     // packaged
+    path.join(os.homedir(), '.local', 'share', 'icons', 'hicolor', '512x512', 'apps', 'aria-voice.png'),
+  ];
+  for (const p of candidates) {
+    try { if (p && fs.existsSync(p)) return p; } catch { /* keep looking */ }
+  }
+  return undefined;
 }
 
 function createTray(): void {
@@ -875,6 +895,18 @@ function sendSttTranscribe(request: TranscribeRequest): void {
     audio_bytes: request.audioBytes,
   });
 }
+
+// Linux compositors resolve a window's icon by matching its app_id / WM_CLASS
+// against a .desktop file (StartupWMClass). Electron's default class is
+// "electron", which matches no entry, so the frame fell back to a generic icon
+// while the launcher showed ARIA's. One class name everywhere: here, in the
+// .desktop entry, and in the dev launcher's --class flag.
+const ARIA_WM_CLASS = 'aria-voice';
+try {
+  app.setName('ARIA');
+  const desktopName = (app as unknown as { setDesktopName?: (n: string) => void }).setDesktopName;
+  if (typeof desktopName === 'function') desktopName.call(app, `${ARIA_WM_CLASS}.desktop`);
+} catch { /* cosmetic only */ }
 
 app.whenReady().then(async () => {
   // Measurement hook: with ARIA_VERIFY_CLASSIFIER=1 the app runs the turn

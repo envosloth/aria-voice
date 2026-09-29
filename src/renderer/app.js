@@ -1517,6 +1517,27 @@ aria.llm.onContext((info) => {
   }
 });
 
+// Speech-to-text provider: the cloud rows appear only for a cloud provider, and
+// the hint names the endpoint that will receive audio.
+function updateSttProviderRows() {
+  if (!cfg.sttProvider) return;
+  const v = cfg.sttProvider.value;
+  const cloud = v !== 'local';
+  const keyRow = document.getElementById('stt-cloud-key-row');
+  const epRow = document.getElementById('stt-cloud-endpoint-row');
+  const modelRow = document.getElementById('stt-cloud-model-row');
+  if (keyRow) keyRow.hidden = !cloud;
+  if (epRow) epRow.hidden = v !== 'custom';
+  if (modelRow) modelRow.hidden = !cloud;
+  const hint = document.getElementById('stt-provider-hint');
+  if (hint) {
+    hint.textContent = v === 'local' ? 'Audio never leaves this computer.'
+      : v === 'groq' ? 'Audio is sent to api.groq.com (free tier). Falls back to local if it fails.'
+      : v === 'openai' ? 'Audio is sent to api.openai.com (billed per minute).'
+      : 'Audio is sent to the endpoint below.';
+  }
+}
+
 // --- Context sources: settings, platform support, header indicator --------
 const CONTEXT_SOURCES = [
   { key: 'selection', cfg: 'context.selection', input: 'cfg-context-selection', support: 'ctx-support-selection', label: 'selection' },
@@ -2152,6 +2173,10 @@ const cfg = {
   detectHarnessStatus: document.getElementById('detect-harness-status'),
   sttModel: document.getElementById('cfg-stt-model'),
   sttBackend: document.getElementById('cfg-stt-backend'),
+  sttProvider: document.getElementById('cfg-stt-provider'),
+  sttKey: document.getElementById('cfg-stt-key'),
+  sttEndpoint: document.getElementById('cfg-stt-endpoint'),
+  sttCloudModel: document.getElementById('cfg-stt-cloud-model'),
   ttsVoice: document.getElementById('cfg-tts-voice'),
   ttsEngine: document.getElementById('cfg-tts-engine'),
   ttsEngineHint: document.getElementById('cfg-tts-engine-hint'),
@@ -2853,6 +2878,14 @@ async function loadSettings() {
   applyHarnessSelection(inferred, { prefill: false });
   cfg.sttModel.value = (await aria.config.get('stt.model')) || 'small';
   cfg.sttBackend.value = (await aria.config.get('stt.backend')) || 'vulkan';
+  if (cfg.sttProvider) {
+    cfg.sttProvider.value = (await aria.config.get('stt.provider')) || 'local';
+    cfg.sttEndpoint.value = (await aria.config.get('stt.cloudEndpoint')) || '';
+    cfg.sttCloudModel.value = (await aria.config.get('stt.cloudModel')) || '';
+    cfg.sttKey.value = (await aria.secure.get('stt-api-key').catch(() => null)) || '';
+    cfg.sttProvider.addEventListener('change', updateSttProviderRows);
+    updateSttProviderRows();
+  }
   applyOrbSttBackend(cfg.sttBackend.value);
   {
     const savedVoice = (await aria.config.get('tts.voice')) || TTS_DEFAULT_VOICE.kokoro;
@@ -3678,6 +3711,15 @@ settingsSave.addEventListener('click', async () => {
     refreshConnectionSummary();
     await aria.config.set('stt.model', cfg.sttModel.value);
     await aria.config.set('stt.backend', cfg.sttBackend.value);
+    if (cfg.sttProvider) {
+      await aria.config.set('stt.provider', cfg.sttProvider.value === 'local' ? 'local' : 'cloud');
+      await aria.config.set('stt.cloudProvider', cfg.sttProvider.value === 'groq' || cfg.sttProvider.value === 'openai' ? cfg.sttProvider.value : 'custom');
+      await aria.config.set('stt.cloudEndpoint', cfg.sttEndpoint.value.trim());
+      await aria.config.set('stt.cloudModel', cfg.sttCloudModel.value.trim());
+      const k = cfg.sttKey.value.trim();
+      if (k) await aria.secure.set('stt-api-key', k);
+      else if (cfg.sttProvider.value !== 'local') await aria.secure.delete('stt-api-key').catch(() => {});
+    }
     applyOrbSttBackend(cfg.sttBackend.value);
     const ttsEngine = cfg.ttsEngine.value;
     const ttsVoice = cfg.ttsVoice.value.trim();

@@ -13,7 +13,10 @@ import {
   CIRCUIT_RESET_MS,
   RSS_LIMITS_MB,
   MEMORY_CHECK_INTERVAL_MS,
+  STT_CLOUD_PROVIDERS,
 } from '../shared/constants';
+import { getSecret } from './secure-storage';
+import { config } from './config';
 
 interface SidecarState {
   process: ChildProcess | null;
@@ -164,6 +167,7 @@ export class Supervisor {
     // Never let that parent's virtualenv/PYTHONPATH contaminate the sidecar's
     // dedicated interpreter with binary wheels from a different Python version.
     const childEnv: NodeJS.ProcessEnv = { ...process.env, PYTHONNOUSERSITE: '1' };
+    if (name === 'stt') Object.assign(childEnv, this.sttCloudEnv());
     delete childEnv.PYTHONPATH;
     delete childEnv.PYTHONHOME;
     delete childEnv.VIRTUAL_ENV;
@@ -575,6 +579,22 @@ export class Supervisor {
       return;
     }
     process.kill(-pid, force ? 'SIGKILL' : 'SIGTERM');
+  }
+
+  /**
+   * Cloud-STT settings for the stt sidecar: config + the API key from secure
+   * storage (never the config file, never logged), passed as env vars for this
+   * child only. A missing key simply leaves cloud unconfigured.
+   */
+  private sttCloudEnv(): NodeJS.ProcessEnv {
+    const env: NodeJS.ProcessEnv = { ARIA_STT_PROVIDER: String(config.get('stt.provider') || 'local') };
+    if (env.ARIA_STT_PROVIDER !== 'cloud') return env;
+    const provider = String(config.get('stt.cloudProvider') || 'groq');
+    const preset = STT_CLOUD_PROVIDERS.find((p) => p.id === provider) || STT_CLOUD_PROVIDERS[0];
+    env.ARIA_STT_CLOUD_ENDPOINT = String(config.get('stt.cloudEndpoint') || '') || preset.endpoint;
+    env.ARIA_STT_CLOUD_MODEL = String(config.get('stt.cloudModel') || '') || preset.model;
+    try { env.ARIA_STT_CLOUD_KEY = getSecret('stt-api-key') || ''; } catch { env.ARIA_STT_CLOUD_KEY = ''; }
+    return env;
   }
 
   private resolveSidecarCommand(name: SidecarName): { bin: string; args: string[] } {
