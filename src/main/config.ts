@@ -4,7 +4,7 @@ import { DEFAULT_STT_MODEL } from '../shared/constants';
 interface AppConfig {
   stt: {
     model: string;
-    provider: 'local' | 'groq';
+    provider: 'local' | 'groq' | 'deepgram' | 'assemblyai';
     groqModel: 'whisper-large-v3-turbo' | 'whisper-large-v3';
     fullContext: boolean; // disable short-window optimisation for accuracy
     prompt: string;      // explicit vocabulary only, never auto-extracted memory
@@ -15,7 +15,9 @@ interface AppConfig {
     speculative: boolean;
   };
   tts: {
-    engine: 'piper' | 'kokoro';
+    engine: 'piper' | 'kokoro' | 'elevenlabs' | 'cartesia' | 'openai' | 'deepgram';
+    cloudModels: { elevenlabs: string; cartesia: string; openai: string; deepgram: string };
+    cloudVoices: { elevenlabs: string; cartesia: string; openai: string; deepgram: string };
     voice: string;
     speed: number; // speaking rate multiplier, 0.5..2.0 (1.0 = normal)
   };
@@ -173,6 +175,8 @@ const defaults: AppConfig = {
   },
   tts: {
     engine: 'kokoro',
+    cloudModels: { elevenlabs: 'eleven_flash_v2_5', cartesia: 'sonic-3.6', openai: 'gpt-4o-mini-tts', deepgram: 'aura-2-odysseus-en' },
+    cloudVoices: { elevenlabs: 'JBFqnCBsd6RMkjVDRZzb', cartesia: 'db6b0ed5-d5d3-463d-ae85-518a07d3c2b4', openai: 'onyx', deepgram: '' },
     voice: 'bm_george', // "Jarvis" — refined British male
     speed: 1.0,
   },
@@ -270,9 +274,9 @@ export const config = new JsonStore<AppConfig>('aria-config', defaults);
 // Closed string unions: reject values outside the set the code understands.
 const ENUMS: Record<string, readonly string[]> = {
   'stt.backend': ['vulkan', 'cpu'],
-  'stt.provider': ['local', 'groq'],
+  'stt.provider': ['local', 'groq', 'deepgram', 'assemblyai'],
   'stt.groqModel': ['whisper-large-v3-turbo', 'whisper-large-v3'],
-  'tts.engine': ['piper', 'kokoro'],
+  'tts.engine': ['piper', 'kokoro', 'elevenlabs', 'cartesia', 'openai', 'deepgram'],
   'routing.mode': ['auto', 'llm', 'harness'],
   'routing.classifier': ['auto', 'off'],
   'routing.coordinator': ['builtin', 'jev'],

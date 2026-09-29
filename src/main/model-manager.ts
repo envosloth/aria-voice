@@ -118,6 +118,9 @@ export function buildManifest(sttModel: string, ttsVoice: string, ttsEngine = 'k
     ];
   }
 
+  // Cloud synthesis needs no local TTS weights. Keep STT for recognition/fallback.
+  if (['elevenlabs', 'cartesia', 'openai', 'deepgram'].includes(ttsEngine)) return [stt];
+
   // Piper fallback engine. Each voice ships a separate .onnx (+ .onnx.json) under
   // its own per-voice HuggingFace directory (see piperVoiceBase).
   const piperMetadata = PIPER_MODELS[ttsVoice];

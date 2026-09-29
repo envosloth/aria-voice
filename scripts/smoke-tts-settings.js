@@ -90,7 +90,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     ws.close();
     console.log(JSON.stringify(r, null, 2));
     const checks = {
-      engineChoice: r.engines.join() === 'kokoro,piper',
+      engineChoice: r.engines.join() === 'kokoro,piper,elevenlabs,cartesia,openai,deepgram',
       kokoroListsAllVoices: r.kokoroVoices.length === 28 && r.kokoroVoices.every((v) => /^(af|am|bf|bm)_/.test(v)),
       piperListsOnlyPiper: r.piperVoices.join() === 'en_GB-alan-medium,en_US-lessac-medium' && r.piperDefault === 'en_GB-alan-medium',
       hintFollowsEngine: /Kokoro/.test(r.kokoroHint),

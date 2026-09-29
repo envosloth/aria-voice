@@ -58,7 +58,7 @@ check('onboarding.autoConnectsLocalHarness',
 const appearance = fs.readFileSync(path.join(root, 'src', 'renderer', 'appearance.js'), 'utf8');
 const copyRenderer = fs.readFileSync(path.join(root, 'scripts', 'copy-renderer.js'), 'utf8');
 check('glass.shipped',
-  /<script src="appearance\.js"><\/script>\s*<script src="app\.js">/.test(html) && /'appearance\.js'/.test(copyRenderer),
+  html.indexOf('<script src="appearance.js"></script>') >= 0 && html.indexOf('<script src="appearance.js"></script>') < html.indexOf('<script src="app.js"></script>') && /'appearance\.js'/.test(copyRenderer),
   'appearance.js must load before app.js and be copied into dist');
 check('glass.material',
   /--glass-blur/.test(html) && /backdrop-filter: var\(--glass-filter\)/.test(html) && /\.panel::before/.test(html) &&

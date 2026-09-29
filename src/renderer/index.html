@@ -235,7 +235,8 @@
     .sidebar > :not(.session-list) { flex-shrink: 0; }
     .sidebar > * { -webkit-app-region: no-drag; }
     .brand { display: flex; align-items: center; gap: 9px; padding: 2px 4px 12px; border-bottom: 1px solid var(--border); }
-    .brand-mark { width: 26px; height: 26px; flex: none; object-fit: contain; }
+    #tts-local-voice-row[hidden], #tts-cloud-voice-row[hidden], #stt-groq-model-row[hidden] { display: none !important; }
+    .brand-mark { width: 26px; height: 26px; flex: none; object-fit: contain; border-radius: 7px; overflow: hidden; }
     .brand-name { font: 700 12px var(--mono); letter-spacing: .22em; color: var(--text); }
     .side-cap { padding: 12px 4px 4px; }
     #new-session-btn { -webkit-app-region: no-drag; display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 7px; border: 1px solid var(--border); background: rgba(255,255,255,.04); color: var(--text-muted); font-family: var(--mono); font-size: 9px; letter-spacing: .1em; cursor: pointer; transition: color .18s ease, background .18s ease, border-color .18s ease; }
@@ -401,8 +402,6 @@
     .route-badge { display: inline-block; font: 700 9px var(--mono); text-transform: uppercase; letter-spacing: .06em; padding: 3px 8px; border-radius: 6px; margin-right: 8px; vertical-align: middle; color: #fff; }
     .route-llm { background: rgba(255,255,255,.16); }
     .route-harness { background: var(--accent-active); color: #06131c; }
-    .context-indicator { margin-left: 10px; font: 600 11px var(--sans, inherit); padding: 3px 9px; border-radius: 999px; color: var(--text); background: color-mix(in srgb, var(--accent-active) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent-active) 35%, transparent); cursor: pointer; }
-    .context-indicator:focus-visible { outline: 2px solid var(--accent-active); outline-offset: 2px; }
     .context-chip { background: color-mix(in srgb, var(--success, #3c9) 12%, transparent); border-color: color-mix(in srgb, var(--success, #3c9) 35%, transparent); }
     .context-chip.withheld { background: color-mix(in srgb, var(--error) 12%, transparent); border-color: color-mix(in srgb, var(--error) 35%, transparent); }
     .msg-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
@@ -819,9 +818,6 @@
       <div class="chat-head">
         <div class="chat-title">Current conversation</div>
         <div class="chat-sub" id="chat-sub">aria · voice</div>
-        <button type="button" id="context-indicator" class="context-indicator" hidden
-          title="What ARIA is allowed to read when you point at it — click to change"
-          aria-label="Desktop context ARIA can read"></button>
         <div style="margin-left:auto" class="state-badge" aria-hidden="true"></div>
         <div class="compact-actions" aria-label="Conversation controls">
           <button id="compact-new-session-btn" class="compact-action" title="Start a new conversation" aria-label="Start a new conversation">
@@ -1120,20 +1116,22 @@
           <select id="cfg-stt-provider">
             <option value="local">On this computer — private, offline</option>
             <option value="groq">Groq — cloud, free tier available</option>
+            <option value="deepgram">Deepgram — cloud, Nova-3</option>
+            <option value="assemblyai">AssemblyAI — cloud, Universal-3.5 Pro (batch)</option>
           </select>
           <span class="hint" id="stt-provider-hint">Local speech recognition; audio stays here.</span>
         </label>
         <div id="stt-cloud-key-row" hidden>
-          <label>Groq API key
+          <label><span id="stt-key-label">Groq API key</span>
             <input type="password" id="cfg-stt-key" autocomplete="off" spellcheck="false" placeholder="Enter a key to enable Groq">
           </label>
-          <label>Cloud model
+          <label id="stt-groq-model-row">Cloud model
             <select id="cfg-stt-groq-model">
               <option value="whisper-large-v3-turbo">Whisper large v3 turbo — faster</option>
               <option value="whisper-large-v3">Whisper large v3 — accuracy-focused</option>
             </select>
           </label>
-          <p class="hint">Audio and the vocabulary below are sent to api.groq.com. Requires your own key; account quotas apply. Failures fall back locally. Groq offers zero-data-retention in its Data Controls.</p>
+          <p class="hint" id="stt-cloud-privacy"></p>
         </div>
         <label>Local model (also used for cloud fallback)
           <select id="cfg-stt-model">
@@ -1163,11 +1161,20 @@
           <select id="cfg-tts-engine">
             <option value="kokoro">Kokoro — natural, neural (recommended)</option>
             <option value="piper">Piper — fastest, lighter, more robotic</option>
+            <option value="elevenlabs">ElevenLabs — cloud, expressive voices</option>
+            <option value="cartesia">Cartesia — cloud, Sonic streaming</option>
+            <option value="openai">OpenAI — cloud, natural speech</option>
+            <option value="deepgram">Deepgram — cloud, Aura</option>
           </select>
         </label>
-        <label>Voice
+        <label id="tts-local-voice-row">Voice
           <select id="cfg-tts-voice"></select>
         </label>
+        <div id="tts-cloud-row" hidden>
+          <label><span id="tts-key-label">Cloud API key</span><input type="password" id="cfg-tts-key" autocomplete="off" spellcheck="false"></label>
+          <label>Model ID<input id="cfg-tts-cloud-model" type="text" maxlength="100" spellcheck="false"></label>
+          <label id="tts-cloud-voice-row">Voice ID<input id="cfg-tts-cloud-voice" type="text" maxlength="100" spellcheck="false"><span class="hint">Use a voice available to your provider account.</span></label>
+        </div>
         <p class="hint" id="cfg-tts-engine-hint"></p>
         <label>Speaking speed <span class="hint" id="cfg-tts-speed-val">1.00×</span>
           <input type="range" id="cfg-tts-speed" min="0.5" max="2" step="0.05" value="1">
@@ -1427,6 +1434,7 @@
   <script src="harnesses.js"></script>
   <script src="orb.js"></script>
   <script src="appearance.js"></script>
+  <script src="speech-settings.js"></script>
   <script src="app.js"></script>
   <script src="tactile.js"></script>
 </body>

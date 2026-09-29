@@ -62,14 +62,16 @@ export class Supervisor {
   private memoryCheckFailed = false;
   private socketDir: string | null = null;
   private sttEnv?: () => NodeJS.ProcessEnv;
+  private ttsEnv?: () => NodeJS.ProcessEnv;
 
   constructor(
     onStatus: StatusCallback,
     onMessage?: MessageCallback,
-    opts?: { rssLimitsMb?: Partial<Record<SidecarName, number>>; memoryCheckMs?: number; sttEnv?: () => NodeJS.ProcessEnv },
+    opts?: { rssLimitsMb?: Partial<Record<SidecarName, number>>; memoryCheckMs?: number; sttEnv?: () => NodeJS.ProcessEnv; ttsEnv?: () => NodeJS.ProcessEnv },
   ) {
     this.onStatus = onStatus;
     this.sttEnv = opts?.sttEnv;
+    this.ttsEnv = opts?.ttsEnv;
     this.onMessage = onMessage;
     this.rssLimitsMb = { ...RSS_LIMITS_MB, ...(opts?.rssLimitsMb ?? {}) };
     this.memoryCheckMs = opts?.memoryCheckMs ?? MEMORY_CHECK_INTERVAL_MS;
@@ -169,9 +171,10 @@ export class Supervisor {
     // Credential stays confined to the STT child, never the parent environment
     // or TTS/wakeword. Reject legacy/inherited cloud credentials as well.
     for (const key of Object.keys(childEnv)) {
-      if (key.startsWith('ARIA_STT_GROQ_') || key.startsWith('ARIA_STT_CLOUD_')) delete childEnv[key];
+      if (key.startsWith('ARIA_STT_GROQ_') || key.startsWith('ARIA_STT_CLOUD_') || key.startsWith('ARIA_TTS_CLOUD_')) delete childEnv[key];
     }
     if (name === 'stt' && this.sttEnv) Object.assign(childEnv, this.sttEnv());
+    if (name === 'tts' && this.ttsEnv) Object.assign(childEnv, this.ttsEnv());
     delete childEnv.PYTHONPATH;
     delete childEnv.PYTHONHOME;
     delete childEnv.VIRTUAL_ENV;

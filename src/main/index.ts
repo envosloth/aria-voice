@@ -4,6 +4,7 @@ import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { Supervisor } from './supervisor';
+import { sttEnvironment, ttsEnvironment } from './speech-env';
 import { config } from './config';
 import { validateConfigSet } from './config';
 import { getSecureBackend, isSecureBackendSafe, setSecret, getSecret, deleteSecret } from './secure-storage';
@@ -458,7 +459,7 @@ function setupIpcHandlers(): void {
     // saving several related fields at once reloads each sidecar just once.
     if (key === 'wakeword.phrase' || key === 'wakeword.enabled') {
       scheduleWakewordReload();
-    } else if (key === 'tts.voice' || key === 'tts.engine') {
+    } else if (key === 'tts.voice' || key === 'tts.engine' || key.startsWith('tts.cloudModels.') || key.startsWith('tts.cloudVoices.')) {
       markCustomIfManaged(); scheduleSidecarReload('tts');
     } else if (key === 'tts.speed') {
       // Speaking rate applies live via a control message — no model reload. If the
@@ -510,12 +511,14 @@ function setupIpcHandlers(): void {
     if (!isRendererSecretKey(key)) throw new Error('Secure-store key not allowed');
     if (typeof value !== 'string' || value.length > 8192) throw new Error('Invalid secret value');
     setSecret(key, value);
-    if (key === 'stt-api-key') scheduleSidecarReload('stt');
+    if (key.startsWith('stt-')) scheduleSidecarReload('stt');
+    if (key.startsWith('tts-')) scheduleSidecarReload('tts');
   });
   handle(IPC.SECURE_STORE_DELETE, (_e, key: unknown) => {
     if (!isRendererSecretKey(key)) throw new Error('Secure-store key not allowed');
     deleteSecret(key);
-    if (key === 'stt-api-key') scheduleSidecarReload('stt');
+    if (key.startsWith('stt-')) scheduleSidecarReload('stt');
+    if (key.startsWith('tts-')) scheduleSidecarReload('tts');
   });
 
   on(IPC.LLM_SEND, (_e, payload: unknown) => {
@@ -921,16 +924,10 @@ app.whenReady().then(async () => {
     (name: SidecarName, msg: Record<string, unknown>) => {
       routeSidecarMessage(name, msg);
     },
-    { sttEnv: () => {
-      const env: NodeJS.ProcessEnv = {
-        ARIA_STT_PROVIDER: config.get('stt.provider') === 'groq' ? 'groq' : 'local',
-        ARIA_STT_GROQ_MODEL: String(config.get('stt.groqModel') || 'whisper-large-v3-turbo'),
-      };
-      if (env.ARIA_STT_PROVIDER === 'groq') {
-        try { env.ARIA_STT_GROQ_KEY = getSecret('stt-api-key') || ''; } catch { env.ARIA_STT_GROQ_KEY = ''; }
-      }
-      return env;
-    } },
+    {
+      sttEnv: () => sttEnvironment(key => config.get(key), getSecret),
+      ttsEnv: () => ttsEnvironment(key => config.get(key), getSecret),
+    },
   );
 
   supervisor.onBinaryData((name: SidecarName, data: Buffer) => {

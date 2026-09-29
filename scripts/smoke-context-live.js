@@ -10,7 +10,7 @@
 //   - "what app am I in" reports the last NON-ARIA window from Hyprland focus
 //     history, not ARIA itself;
 //   - an unrelated utterance ("tell me a joke") reads nothing even with all on;
-//   - the header indicator lists enabled sources and opens Settings → Context;
+//   - no top context banner; Settings still exposes consent switches;
 //   - a dropped text file reaches the prompt for that one message only.
 // Skips (exit 0, reported) when no Wayland clipboard tools / session exist.
 const fs = require('fs');
@@ -119,7 +119,7 @@ async function connect(port) {
     r.off = await say('summarize this');
     r.offSawNothing = llmReqs.length + agentReqs.length > 0 && !/ZX-/.test(JSON.stringify(llmReqs.slice(n).concat(agentReqs)));
     r.offNoChips = r.off && r.off.chips.length === 0;
-    r.indicatorHiddenWhenOff = await ev(`document.getElementById('context-indicator').hidden`);
+    r.indicatorHiddenWhenOff = await ev(`!document.getElementById('context-indicator')`);
 
     // Enable via the real Settings checkboxes.
     r.settings = await ev(`(async () => {
@@ -135,8 +135,7 @@ async function connect(port) {
       await wait(300);
       out.persisted = [await aria.config.get('context.selection'), await aria.config.get('context.clipboard'), await aria.config.get('context.activeApp')];
       document.getElementById('settings-close').click(); await wait(200);
-      out.indicator = document.getElementById('context-indicator').textContent;
-      out.indicatorShown = !document.getElementById('context-indicator').hidden;
+      out.bannerAbsent = !document.getElementById('context-indicator');
       return out;
     })()`);
 
@@ -187,7 +186,9 @@ async function connect(port) {
     r.fileOneShot = !/ZX-FILE-MARK/.test(sys(llmReqs[llmReqs.length - 1]) + sys(agentReqs[agentReqs.length - 1]));
 
     r.indicatorOpensSettings = await ev(`(async () => {
-      document.getElementById('context-indicator').click();
+      document.getElementById('settings-btn').click();
+      await new Promise(r => setTimeout(r, 300));
+      document.getElementById('settings-tab-context').click();
       await new Promise(r => setTimeout(r, 300));
       return document.getElementById('settings-overlay').classList.contains('visible')
         && document.getElementById('settings-tab-context').classList.contains('active');
@@ -197,7 +198,7 @@ async function connect(port) {
     console.log(JSON.stringify(r, null, 2));
     const checks = {
       offByDefaultReadsNothing: r.offSawNothing && r.offNoChips && r.indicatorHiddenWhenOff,
-      settingsToggleAndPersist: r.settings.persisted.every((v) => v === true) && r.settings.indicatorShown && /selection/.test(r.settings.indicator),
+      settingsToggleAndPersist: r.settings.persisted.every((v) => v === true) && r.settings.bannerAbsent,
       selectionReachesPrompt: r.selPrompt && r.selNotClipboard && r.selDataFraming,
       textWorkStaysOnChatPath: r.selStayedOnChat,
       contextChipShown: r.selChip,
@@ -208,7 +209,7 @@ async function connect(port) {
       unrelatedReadsNothing: r.jokeReadNothing,
       droppedFileAttached: r.drop.some((c) => /notes\.md/.test(c)) && r.filePrompt && r.fileChipsCleared,
       droppedFileOneMessageOnly: r.fileOneShot,
-      indicatorOpensSettings: r.indicatorOpensSettings,
+      contextSettingsAccessible: r.indicatorOpensSettings,
     };
     for (const [k, v] of Object.entries(checks)) console.log(`[${k}] ${v ? 'PASS' : 'FAIL'}`);
     ok = Object.values(checks).every(Boolean);

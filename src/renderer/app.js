@@ -1517,29 +1517,15 @@ aria.llm.onContext((info) => {
   }
 });
 
-function updateSttProviderRows() {
-  const cloud = cfg.sttProvider.value === 'groq';
-  document.getElementById('stt-cloud-key-row').hidden = !cloud;
-  document.getElementById('stt-provider-hint').textContent = cloud
-    ? 'Cloud is opt-in; audio is uploaded only when an utterance ends.'
-    : 'Local speech recognition; audio stays here.';
-}
+function updateSttProviderRows() { return window.AriaSpeechSettings.updateStt(aria); }
 
-// --- Context sources: settings, platform support, header indicator --------
+// --- Context sources: settings and platform support -----------------------
 const CONTEXT_SOURCES = [
   { key: 'selection', cfg: 'context.selection', input: 'cfg-context-selection', support: 'ctx-support-selection', label: 'selection' },
   { key: 'clipboard', cfg: 'context.clipboard', input: 'cfg-context-clipboard', support: 'ctx-support-clipboard', label: 'clipboard' },
   { key: 'activeApp', cfg: 'context.activeApp', input: 'cfg-context-active-app', support: 'ctx-support-active-app', label: 'active app' },
 ];
 let contextSupport = null;
-async function refreshContextIndicator() {
-  const el = document.getElementById('context-indicator');
-  if (!el) return;
-  const on = [];
-  for (const s of CONTEXT_SOURCES) if ((await aria.config.get(s.cfg)) === true) on.push(s.label);
-  el.hidden = on.length === 0;
-  el.textContent = on.length ? `ARIA can read: ${on.join(', ')}` : '';
-}
 async function loadContextSettings() {
   try { contextSupport = contextSupport || await aria.context.status(); } catch (e) { contextSupport = {}; }
   for (const s of CONTEXT_SOURCES) {
@@ -1558,14 +1544,10 @@ for (const s of CONTEXT_SOURCES) {
   // effect the moment it is flipped, not after a separate Save.
   if (input) input.addEventListener('change', async () => {
     await aria.config.set(s.cfg, input.checked);
-    refreshContextIndicator();
   });
 }
-const contextIndicatorBtn = document.getElementById('context-indicator');
-if (contextIndicatorBtn) contextIndicatorBtn.addEventListener('click', () => openSettingsTab('context'));
 const contextTab = document.getElementById('settings-tab-context');
 if (contextTab) contextTab.addEventListener('click', loadContextSettings);
-refreshContextIndicator();
 
 // --- Drop a text file on the composer to attach it to the next message -----
 let attachedFiles = [];
@@ -2548,6 +2530,9 @@ function engineForVoice(voice) { return /^(af_|am_|bf_|bm_)/.test(String(voice |
 const lastVoiceFor = {};
 function setTtsEngineUi(engine, preferVoice) {
   if (!cfg.ttsEngine || !cfg.ttsVoice) return;
+  window.AriaSpeechSettings.updateTts(aria, engine);
+  cfg.ttsSpeed.disabled = false;
+  if (window.AriaSpeechSettings.tts[engine]) { cfg.ttsEngine.value = engine; return; }
   const eng = TTS_VOICES[engine] ? engine : 'kokoro';
   cfg.ttsEngine.value = eng;
   cfg.ttsVoice.replaceChildren();
@@ -2866,13 +2851,12 @@ async function loadSettings() {
   applyHarnessSelection(inferred, { prefill: false });
   cfg.sttModel.value = (await aria.config.get('stt.model')) || 'small';
   cfg.sttBackend.value = (await aria.config.get('stt.backend')) || 'vulkan';
-  cfg.sttProvider.value = (await aria.config.get('stt.provider')) === 'groq' ? 'groq' : 'local';
+  cfg.sttProvider.value = (await aria.config.get('stt.provider')) || 'local';
   cfg.sttGroqModel.value = (await aria.config.get('stt.groqModel')) || 'whisper-large-v3-turbo';
   cfg.sttFullContext.checked = !!(await aria.config.get('stt.fullContext'));
   cfg.sttPrompt.value = (await aria.config.get('stt.prompt')) || '';
   cfg.sttKey.value = '';
-  cfg.sttKey.placeholder = (await aria.secure.get('stt-api-key').catch(() => null)) ? 'Key saved — leave blank to keep' : 'Enter a key to enable Groq';
-  updateSttProviderRows();
+  await updateSttProviderRows();
   applyOrbSttBackend(cfg.sttBackend.value);
   {
     const savedVoice = (await aria.config.get('tts.voice')) || TTS_DEFAULT_VOICE.kokoro;
@@ -3672,18 +3656,13 @@ if (cfg.discoverHarness) cfg.discoverHarness.addEventListener('click', () => dis
 
 cfg.sttProvider.addEventListener('change', updateSttProviderRows);
 
+let settingsSaveClearTimer;
 settingsSave.addEventListener('click', async () => {
+  clearTimeout(settingsSaveClearTimer);
+  savedMsg.textContent = '';
   settingsSave.disabled = true;
   try {
-    const sttKey = cfg.sttKey.value.trim();
-    if (cfg.sttProvider.value === 'groq' && !sttKey && !(await aria.secure.get('stt-api-key'))) {
-      throw new Error('Enter a Groq API key before enabling cloud transcription.');
-    }
-    if (sttKey) {
-      await aria.secure.set('stt-api-key', sttKey);
-      cfg.sttKey.value = '';
-      cfg.sttKey.placeholder = 'Key saved — leave blank to keep';
-    }
+    await window.AriaSpeechSettings.validateAndSaveKeys(aria);
     // Secrets go first: an unavailable/insecure keyring must not leave provider
     // configuration half-saved while the credentials were rejected.
     const lk = cfg.llmKey.value.trim();
@@ -3717,9 +3696,13 @@ settingsSave.addEventListener('click', async () => {
     const ttsEngine = cfg.ttsEngine.value;
     const ttsVoice = cfg.ttsVoice.value.trim();
     // Never persist a voice that doesn't belong to the chosen engine.
-    const voiceOk = (TTS_VOICES[ttsEngine] || []).some((v) => v.id === ttsVoice);
+    if (window.AriaSpeechSettings.tts[ttsEngine]) {
+      await window.AriaSpeechSettings.saveTts(aria, ttsEngine);
+    } else {
+      const voiceOk = (TTS_VOICES[ttsEngine] || []).some((v) => v.id === ttsVoice);
+      await aria.config.set('tts.voice', voiceOk ? ttsVoice : TTS_DEFAULT_VOICE[ttsEngine]);
+    }
     await aria.config.set('tts.engine', ttsEngine);
-    await aria.config.set('tts.voice', voiceOk ? ttsVoice : TTS_DEFAULT_VOICE[ttsEngine]);
     await aria.config.set('wakeword.enabled', cfg.wwEnabled.checked);
     await aria.config.set('wakeword.phrase', cfg.wwPhrase.value.trim());
     loadWakeConfig();
@@ -3741,7 +3724,7 @@ settingsSave.addEventListener('click', async () => {
     loadHardwareInfo().then((info) => applyOrbQuality(info));
     savedMsg.textContent = 'Saved ✓';
     updateChatSub();
-    setTimeout(() => { savedMsg.textContent = ''; }, 2500);
+    settingsSaveClearTimer = setTimeout(() => { savedMsg.textContent = ''; }, 2500);
   } catch (e) {
     savedMsg.textContent = 'Save failed: ' + (e && e.message ? e.message : String(e));
   } finally {
