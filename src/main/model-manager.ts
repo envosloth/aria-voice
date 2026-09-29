@@ -262,7 +262,32 @@ function drain(res: http.IncomingMessage): Promise<void> {
  * Resumes from a .partial file if one exists. Promotion is fail-closed: exact
  * response size and any supplied SHA-256 must verify before rename.
  */
-export async function downloadModel(spec: ModelSpec, onProgress?: ProgressCallback, options: DownloadOptions = {}): Promise<void> {
+// One in-flight download per destination file. Two concurrent callers (e.g.
+// onboarding + a settings change) would otherwise append to the same .partial
+// and rename over each other, corrupting or racing verification.
+const inFlightDownloads = new Map<string, { promise: Promise<void>; listeners: Set<ProgressCallback> }>();
+
+export function downloadModel(spec: ModelSpec, onProgress?: ProgressCallback, options: DownloadOptions = {}): Promise<void> {
+  const key = path.join(MODELS_DIR, spec.file);
+  const existing = inFlightDownloads.get(key);
+  if (existing) {
+    if (onProgress) existing.listeners.add(onProgress);
+    return existing.promise.finally(() => { if (onProgress) existing.listeners.delete(onProgress); });
+  }
+  const listeners = new Set<ProgressCallback>();
+  if (onProgress) listeners.add(onProgress);
+  const fanOut: ProgressCallback = (p) => {
+    for (const cb of listeners) { try { cb(p); } catch { /* a listener must not break the download */ } }
+  };
+  const entry = { promise: Promise.resolve(), listeners };
+  entry.promise = downloadModelOnce(spec, fanOut, options).finally(() => {
+    if (inFlightDownloads.get(key) === entry) inFlightDownloads.delete(key);
+  });
+  inFlightDownloads.set(key, entry);
+  return entry.promise;
+}
+
+async function downloadModelOnce(spec: ModelSpec, onProgress?: ProgressCallback, options: DownloadOptions = {}): Promise<void> {
   fs.mkdirSync(MODELS_DIR, { recursive: true });
   const dest = path.join(MODELS_DIR, spec.file);
   const partial = dest + '.partial';

@@ -8,6 +8,12 @@
 set -euo pipefail
 
 NAME="${1:?usage: package-sidecar.sh <sidecar-name>}"
+# Allowlist before NAME is used in any path, especially the rm -rf below:
+# "../..", "", "*" or an absolute path must never reach a recursive delete.
+case "$NAME" in
+  stt|tts|wakeword) ;;
+  *) echo "package-sidecar.sh: unknown sidecar '$NAME' (expected stt|tts|wakeword)" >&2; exit 2 ;;
+esac
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SIDECAR_DIR="$ROOT/sidecars/$NAME"
 VENV="$SIDECAR_DIR/venv"

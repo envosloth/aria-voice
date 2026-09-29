@@ -54,14 +54,14 @@ async function main() {
     const second = new Supervisor((_name, status, detail) => b.push({ status, detail }));
     check('isolated-supervisors-both-connect', await start(first, a) && await start(second, b));
     check('sidecar-environment-removes-parent-python-state', a.find((event) => event.status === 'ready')?.detail === '');
-    const socketRoot = `${SOCKET_DIR}-${process.getuid()}`;
-    const socketDirs = fs.existsSync(socketRoot)
-      ? fs.readdirSync(socketRoot).map((entry) => path.join(socketRoot, entry)).filter((entry) => fs.statSync(entry).isDirectory())
-      : [];
-    check('socket directories live under private application root', socketDirs.length >= 2, JSON.stringify(socketDirs));
-    check('socket root mode is private', (fs.statSync(socketRoot).mode & 0o777) === 0o700,
-      (fs.statSync(socketRoot).mode & 0o777).toString(8));
-    check('per-supervisor socket directories are private', socketDirs.every((entry) => (fs.statSync(entry).mode & 0o777) === 0o700));
+    // Each supervisor gets its own mkdtemp'd 0700 directory (XDG_RUNTIME_DIR or
+    // the sticky system temp dir) — never a predictable shared root.
+    const socketDirs = [first.socketDir, second.socketDir].filter(Boolean);
+    check('socket directories are distinct per supervisor', socketDirs.length === 2 && socketDirs[0] !== socketDirs[1], JSON.stringify(socketDirs));
+    check('socket directories are not the legacy shared root',
+      socketDirs.every((entry) => path.dirname(entry) !== `${SOCKET_DIR}-${process.getuid()}`), JSON.stringify(socketDirs));
+    check('per-supervisor socket directories are private', socketDirs.every((entry) =>
+      (fs.statSync(entry).mode & 0o777) === 0o700 && fs.statSync(entry).uid === process.getuid()));
     await first.stopAll();
     await second.stopAll();
 

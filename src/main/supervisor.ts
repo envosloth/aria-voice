@@ -2,6 +2,7 @@ import { ChildProcess, spawn } from 'child_process';
 import path from 'path';
 import net from 'net';
 import fs from 'fs';
+import os from 'os';
 import {
   SidecarName,
   HEARTBEAT_INTERVAL_MS,
@@ -11,7 +12,6 @@ import {
   CIRCUIT_RESET_MS,
   RSS_LIMITS_MB,
   MEMORY_CHECK_INTERVAL_MS,
-  SOCKET_DIR,
 } from '../shared/constants';
 
 interface SidecarState {
@@ -41,11 +41,6 @@ interface SidecarState {
   ready: boolean;
   readyPromise: Promise<void>;
   readyResolve: () => void;
-  // Trailing partial stdout line held between 'data' events. Sidecar stdout is
-  // line-framed JSON, but a single line can be split across two chunks (or two
-  // rapid messages can share one chunk) — buffer the remainder so a split line
-  // still parses instead of being lost. Reset on each (re)spawn.
-  stdoutBuf: string;
 }
 
 type StatusCallback = (name: SidecarName, status: string, detail?: string) => void;
@@ -84,14 +79,20 @@ export class Supervisor {
       this.onStatus(name, 'circuit-open', `Exceeded ${MAX_RESTART_ATTEMPTS} restart attempts`);
       return;
     }
+    // Already running: a second spawn would orphan the live process.
+    if (state.process && state.process.exitCode === null && state.process.signalCode === null) return;
+    // A start is a new incarnation: it supersedes any pending crash backoff and
+    // any earlier start() still awaiting listen(). The generation captured here
+    // is re-checked after every await so a stop()/restart() in between wins.
+    const generation = ++state.restartGeneration;
 
     // Arm a fresh readiness latch for this (re)spawn — the model must reload
     // before the sidecar is usable again, so any pending waitForReady() blocks
     // until the new process emits 'ready'.
     this.resetReadyLatch(state);
-    // Drop any half-line left over from a crashed process so it can't corrupt
-    // the first message of the new one.
-    state.stdoutBuf = '';
+    // Release the previous incarnation's PCM transport (a crashed process
+    // leaves its listener open) before binding a new one.
+    this.closeTransport(state);
 
     const server = net.createServer((conn) => {
       // One sidecar owns one PCM connection. Reject stale/extra clients instead
@@ -113,30 +114,47 @@ export class Supervisor {
     // a "tcp://host:port" URL => loopback TCP (Windows, which can't listen on a
     // UDS file path through Node's net).
     let socketArg: string;
-    if (process.platform === 'win32') {
-      // Windows: loopback TCP on an ephemeral port. Bind to 127.0.0.1 only so
-      // the channel is never reachable off-host; the kernel assigns the port.
-      await new Promise<void>((resolve, reject) => {
-        server.listen(0, '127.0.0.1', () => resolve());
-        server.on('error', reject);
-      });
-      const addr = server.address();
-      const port = typeof addr === 'object' && addr ? addr.port : 0;
-      socketArg = `tcp://127.0.0.1:${port}`;
-    } else {
-      // POSIX (Linux/macOS): filesystem Unix domain socket (unchanged).
-      const socketDir = this.getSocketDir();
-      const socketPath = path.join(socketDir, `${name}.sock`);
-      try { fs.unlinkSync(socketPath); } catch {}
-      await new Promise<void>((resolve, reject) => {
-        server.listen(socketPath, () => resolve());
-        server.on('error', reject);
-      });
-      socketArg = socketPath;
-      state.socketPath = socketPath;
+    let socketPath: string | null = null;
+    try {
+      if (process.platform === 'win32') {
+        // Windows: loopback TCP on an ephemeral port. Bind to 127.0.0.1 only so
+        // the channel is never reachable off-host; the kernel assigns the port.
+        await new Promise<void>((resolve, reject) => {
+          server.once('error', reject);
+          server.listen(0, '127.0.0.1', () => { server.off('error', reject); resolve(); });
+        });
+        const addr = server.address();
+        const port = typeof addr === 'object' && addr ? addr.port : 0;
+        socketArg = `tcp://127.0.0.1:${port}`;
+      } else {
+        // POSIX (Linux/macOS): filesystem Unix domain socket inside a verified
+        // private directory (re-verified every start; see getSocketDir()).
+        const socketDir = this.getSocketDir();
+        socketPath = path.join(socketDir, `${name}.sock`);
+        try { fs.unlinkSync(socketPath); } catch {}
+        const listenPath = socketPath;
+        await new Promise<void>((resolve, reject) => {
+          server.once('error', reject);
+          server.listen(listenPath, () => { server.off('error', reject); resolve(); });
+        });
+        socketArg = socketPath;
+      }
+    } catch (e) {
+      try { server.close(); } catch {}
+      if (socketPath) { try { fs.unlinkSync(socketPath); } catch {} }
+      throw e;
+    }
+
+    // A stop()/restart()/newer start() or shutdown may have happened while we
+    // awaited listen(); spawning now would resurrect an unwanted sidecar.
+    if (this.shuttingDown || !state.desiredRunning || state.restartGeneration !== generation) {
+      try { server.close(); } catch {}
+      if (socketPath) { try { fs.unlinkSync(socketPath); } catch {} }
+      return;
     }
 
     state.server = server;
+    state.socketPath = socketPath;
 
     const { bin, args: binArgs } = this.resolveSidecarCommand(name);
     // ARIA is often launched from another Python application (including Hermes).
@@ -157,32 +175,48 @@ export class Supervisor {
       env: childEnv,
     });
 
+    // Every handler below is bound to this exact child. A late event from a
+    // previous incarnation (buffered stdout, a delayed 'exit') must never feed
+    // the replacement's readiness latch or trigger a crash-restart of it.
+    const isCurrent = () => state.process === child;
+    // Trailing partial stdout line, owned by this child only. Sidecar stdout is
+    // line-framed JSON, but a single line can be split across two chunks (or two
+    // rapid messages can share one chunk) — buffer the remainder so a split line
+    // still parses instead of being lost.
+    let stdoutBuf = '';
     child.stdout?.on('data', (data: Buffer) => {
-      this.handleStdioMessage(name, data);
+      if (!isCurrent()) return;
+      stdoutBuf = this.handleStdioMessage(name, stdoutBuf, data);
     });
 
     child.stderr?.on('data', (data: Buffer) => {
+      if (!isCurrent()) return;
       this.onStatus(name, 'log', data.toString().trim());
     });
 
     child.on('exit', (code, signal) => {
-      if (this.shuttingDown) return;
+      if (this.shuttingDown || !isCurrent()) return;
       this.onStatus(name, 'exited', `code=${code} signal=${signal}`);
-      const st = this.sidecars.get(name);
-      // If a monitor already initiated this kill, its killSidecar().then()
-      // owns the restart — don't double-handle (which would burn extra
-      // restart attempts and trip the circuit breaker prematurely).
-      if (st?.recovering) return;
-      if (st) st.recovering = true;
-      this.handleCrash(name);
+      // If a monitor/stop already initiated this kill, it owns what happens
+      // next — don't double-handle (which would burn extra restart attempts and
+      // trip the circuit breaker prematurely).
+      if (state.recovering) return;
+      state.recovering = true;
+      this.scheduleCrash(name, state.restartGeneration);
     });
 
     child.on('error', (err) => {
+      if (this.shuttingDown || !isCurrent()) return;
       this.onStatus(name, 'error', err.message);
-      this.handleCrash(name);
+      if (state.recovering) return;
+      state.recovering = true;
+      this.scheduleCrash(name, state.restartGeneration);
     });
 
     state.process = child;
+    // This incarnation supersedes any failure recovery that was in flight for
+    // the previous one (its continuation sees the bumped generation and exits).
+    state.recovering = false;
     state.lastHeartbeat = Date.now();
     this.onStatus(name, 'started', `pid=${child.pid}`);
   }
@@ -246,8 +280,11 @@ export class Supervisor {
    * is cancelled or fails.
    */
   async quiesceForUpdate(): Promise<SidecarName[]> {
+    // Include sidecars that are wanted but momentarily not live (crash backoff,
+    // mid-start, circuit cooldown): otherwise their pending restart would spawn
+    // a process during installation, and resume would forget them.
     const running = Array.from(this.sidecars.entries())
-      .filter(([, state]) => !!state.process)
+      .filter(([, state]) => !!state.process || state.desiredRunning)
       .map(([name]) => name);
     await Promise.allSettled(running.map((name) => this.stop(name)));
     return running;
@@ -258,6 +295,10 @@ export class Supervisor {
     for (const name of names) {
       const state = this.sidecars.get(name);
       if (!state || state.process || this.shuttingDown) continue;
+      // Resume is an intentional start: a breaker left open by a pre-update
+      // crash burst (whose cooldown timer quiesce cancelled) must not strand it.
+      state.circuitOpen = false;
+      state.restartCount = 0;
       try { await this.start(name); } catch { /* resume the remaining snapshot */ }
     }
   }
@@ -299,21 +340,21 @@ export class Supervisor {
     this.onData = cb;
   }
 
-  private handleStdioMessage(name: SidecarName, data: Buffer): void {
+  /** Parse framed stdout for one child; returns that child's new partial line. */
+  private handleStdioMessage(name: SidecarName, pending: string, data: Buffer): string {
     const state = this.sidecars.get(name);
     // Reassemble line-framed JSON across chunk boundaries: prepend the partial
     // line held from the previous 'data' event, split on '\n', and keep the new
     // trailing partial for next time. Without this a message split across two
     // chunks fails to parse and is lost (same framing as llm-stream.ts's SSE
     // reader). Cap the buffer so a newline-less runaway can't grow unbounded.
-    let buffered = (state?.stdoutBuf ?? '') + data.toString();
+    let buffered = pending + data.toString();
     if (buffered.length > 262144 && !buffered.includes('\n')) {
       this.onStatus(name, 'log', buffered.slice(0, 200) + '…(oversized line dropped)');
       buffered = '';
     }
     const lines = buffered.split('\n');
     const remainder = lines.pop() ?? '';
-    if (state) state.stdoutBuf = remainder;
     for (const line of lines) {
       if (!line) continue;
       try {
@@ -343,15 +384,24 @@ export class Supervisor {
         this.onStatus(name, 'log', line);
       }
     }
+    return remainder;
   }
 
-  private async handleCrash(name: SidecarName): Promise<void> {
+  /** Fire-and-forget crash handling that can never become an unhandled rejection. */
+  private scheduleCrash(name: SidecarName, generation: number): void {
+    void this.handleCrash(name, generation).catch((e) => {
+      this.onStatus(name, 'error', `crash recovery failed: ${(e as Error).message}`);
+    });
+  }
+
+  private async handleCrash(name: SidecarName, restartGeneration: number): Promise<void> {
     const state = this.sidecars.get(name);
     if (!state || this.shuttingDown) return;
+    // An intentional stop/restart/start since the failure owns the lifecycle now.
+    if (state.restartGeneration !== restartGeneration) return;
 
     state.process = null;
     this.resetReadyLatch(state);
-    const restartGeneration = state.restartGeneration;
     state.restartCount++;
 
     if (state.restartCount >= MAX_RESTART_ATTEMPTS) {
@@ -368,9 +418,7 @@ export class Supervisor {
         state.circuitOpen = false;
         state.restartCount = 0;
         this.onStatus(name, 'circuit-reset', 'cooldown elapsed — retrying');
-        if (state.desiredRunning) {
-          void this.start(name).catch((e) => this.onStatus(name, 'error', (e as Error).message));
-        }
+        void this.startAfterCrash(name, restartGeneration);
       }, CIRCUIT_RESET_MS);
       return;
     }
@@ -381,9 +429,28 @@ export class Supervisor {
 
     // Recovery cycle complete — clear the guard so the monitors resume. A
     // healthy restart will reset restartCount when the sidecar emits 'ready'.
+    if (state.restartGeneration !== restartGeneration) return;
     state.recovering = false;
-    if (!this.shuttingDown && state.desiredRunning && state.restartGeneration === restartGeneration) {
+    if (!this.shuttingDown && state.desiredRunning) {
+      await this.startAfterCrash(name, restartGeneration);
+    }
+  }
+
+  /**
+   * Automatic (re)start after a failure. A throwing start() (listen/spawn
+   * failure) is reported and counted as another failure, so it re-enters the
+   * backoff and eventually the circuit breaker instead of silently stalling.
+   */
+  private async startAfterCrash(name: SidecarName, restartGeneration: number): Promise<void> {
+    const state = this.sidecars.get(name);
+    if (!state || this.shuttingDown || !state.desiredRunning || state.restartGeneration !== restartGeneration) return;
+    try {
       await this.start(name);
+    } catch (e) {
+      this.onStatus(name, 'error', `restart failed: ${(e as Error).message}`);
+      if (this.shuttingDown || !state.desiredRunning || state.process) return;
+      state.recovering = true;
+      this.scheduleCrash(name, state.restartGeneration);
     }
   }
 
@@ -393,8 +460,7 @@ export class Supervisor {
       if (!state.process || state.circuitOpen || state.recovering) continue;
       if (now - state.lastHeartbeat > HEARTBEAT_TIMEOUT_MS) {
         this.onStatus(name, 'heartbeat-timeout', `${HEARTBEAT_TIMEOUT_MS}ms without heartbeat`);
-        state.recovering = true;
-        this.killSidecar(name, state).then(() => this.handleCrash(name));
+        this.killThenRecover(name, state);
       }
     }
   }
@@ -409,10 +475,25 @@ export class Supervisor {
       const limit = this.rssLimitsMb[name];
       if (rssMb > limit) {
         this.onStatus(name, 'memory-exceeded', `RSS ${Math.round(rssMb)}MB > limit ${limit}MB`);
-        state.recovering = true;
-        this.killSidecar(name, state).then(() => this.handleCrash(name));
+        this.killThenRecover(name, state);
       }
     }
+  }
+
+  /**
+   * Monitor-initiated kill + restart. The generation is captured BEFORE the
+   * kill: if stop()/restart()/start() runs while we wait for the process to
+   * die, that intentional action owns the sidecar and we must not respawn it.
+   */
+  private killThenRecover(name: SidecarName, state: SidecarState): void {
+    const generation = state.restartGeneration;
+    state.recovering = true;
+    void this.killSidecar(name, state)
+      .then(() => {
+        if (state.restartGeneration !== generation || state.process) return;
+        return this.handleCrash(name, generation);
+      })
+      .catch((e) => this.onStatus(name, 'error', `recovery failed: ${(e as Error).message}`));
   }
 
   private getProcessRss(pid: number): number | null {
@@ -425,7 +506,7 @@ export class Supervisor {
     }
   }
 
-  private async killSidecar(name: SidecarName, state: SidecarState): Promise<void> {
+  private closeTransport(state: SidecarState): void {
     if (state.socket) {
       state.socket.destroy();
       state.socket = null;
@@ -438,28 +519,35 @@ export class Supervisor {
       try { fs.unlinkSync(state.socketPath); } catch {}
       state.socketPath = null;
     }
-    if (!state.process?.pid) return;
+  }
 
-    try {
-      // Kill the entire process group / tree
-      this.killTree(state.process.pid, false);
-    } catch {
-      try { state.process.kill('SIGKILL'); } catch {}
-    }
+  private async killSidecar(_name: SidecarName, state: SidecarState): Promise<void> {
+    this.closeTransport(state);
+    const proc = state.process;
+    if (!proc?.pid) return;
+    const pid = proc.pid;
 
     await new Promise<void>((resolve) => {
-      if (!state.process) return resolve();
+      // Already dead: 'exit' will not fire again.
+      if (proc.exitCode !== null || proc.signalCode !== null) return resolve();
       const timeout = setTimeout(() => {
-        try { this.killTree(state.process!.pid!, true); } catch {}
+        try { this.killTree(pid, true); } catch {}
         resolve();
       }, 5000);
-      state.process.once('exit', () => {
+      proc.once('exit', () => {
         clearTimeout(timeout);
         resolve();
       });
+      try {
+        // Kill the entire process group / tree
+        this.killTree(pid, false);
+      } catch {
+        try { proc.kill('SIGKILL'); } catch {}
+      }
     });
 
-    state.process = null;
+    // Only clear the slot if it still belongs to the process we killed.
+    if (state.process === proc) state.process = null;
   }
 
   /**
@@ -530,7 +618,6 @@ export class Supervisor {
         ready: false,
         readyPromise: Promise.resolve(),
         readyResolve: () => {},
-        stdoutBuf: '',
       };
       this.resetReadyLatch(state);
       this.sidecars.set(name, state);
@@ -567,14 +654,38 @@ export class Supervisor {
     if (timer) clearTimeout(timer);
   }
 
+  /**
+   * Private directory for this supervisor's Unix sockets. Never a fixed,
+   * predictable shared path: another local user could pre-create it. Prefer
+   * $XDG_RUNTIME_DIR (per-user 0700 tmpfs) when it verifies as ours; otherwise
+   * mkdtemp directly under the sticky system temp dir (random name, created
+   * 0700 by us, so it cannot be pre-created or replaced by someone else).
+   * Re-verified on every start because tmp cleaners may remove it.
+   */
   private getSocketDir(): string {
-    if (this.socketDir) return this.socketDir;
-    const owner = typeof process.getuid === 'function' ? process.getuid() : process.pid;
-    const socketRoot = `${SOCKET_DIR}-${owner}`;
-    fs.mkdirSync(socketRoot, { recursive: true, mode: 0o700 });
-    try { fs.chmodSync(socketRoot, 0o700); } catch { /* Windows TCP does not use this directory */ }
-    this.socketDir = fs.mkdtempSync(path.join(socketRoot, 'instance-'));
-    try { fs.chmodSync(this.socketDir, 0o700); } catch { /* Windows TCP does not use this directory */ }
-    return this.socketDir;
+    if (this.socketDir && Supervisor.isPrivateDir(this.socketDir)) return this.socketDir;
+    this.socketDir = null; // missing (tmp cleaner) or no longer trustworthy
+    const uid = typeof process.getuid === 'function' ? process.getuid() : process.pid;
+    const xdg = process.env.XDG_RUNTIME_DIR;
+    const parent = xdg && path.isAbsolute(xdg) && Supervisor.isPrivateDir(xdg) ? xdg : os.tmpdir();
+    const dir = fs.mkdtempSync(path.join(parent, `aria-${uid}-`));
+    try { fs.chmodSync(dir, 0o700); } catch { /* verified below */ }
+    if (!Supervisor.isPrivateDir(dir)) {
+      throw new Error(`Refusing to use socket directory ${dir}: not a private directory owned by this user`);
+    }
+    this.socketDir = dir;
+    return dir;
+  }
+
+  /** Real (non-symlink) directory owned by us with no group/other access. */
+  static isPrivateDir(dir: string): boolean {
+    try {
+      const st = fs.lstatSync(dir);
+      if (!st.isDirectory() || st.isSymbolicLink()) return false;
+      if (typeof process.getuid === 'function' && st.uid !== process.getuid()) return false;
+      return (st.mode & 0o077) === 0;
+    } catch {
+      return false;
+    }
   }
 }

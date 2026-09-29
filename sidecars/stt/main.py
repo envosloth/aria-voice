@@ -14,6 +14,7 @@ Stdlib-only (urllib) so it freezes into a small PyInstaller bundle.
 import json
 import os
 import queue
+import re
 import socket
 import subprocess
 import sys
@@ -25,6 +26,11 @@ import wave
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "shared"))
 from base_sidecar import BaseSidecar
+
+# Loopback requests to the private whisper-server must never be routed through a
+# user/system HTTP(S)_PROXY (urllib honors those env vars even for 127.0.0.1
+# unless NO_PROXY lists it), which would leak audio or break inference.
+_LOOPBACK_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 # Prefer the bundled whisper.cpp libs (set by the packaged app) so STT works on
 # a fresh PC; fall back to a local build for development.
@@ -93,8 +99,12 @@ class SttSidecar(BaseSidecar):
                     if remaining <= 0:
                         break
                     self._audio_ready.wait(remaining)
-                pcm = bytes(self._audio_buffer)
-                self._audio_buffer.clear()
+                # 16-bit samples: a WAV payload must be an even byte count. Keep a
+                # trailing odd byte buffered (it pairs with the next PCM chunk)
+                # rather than emitting a misaligned frame.
+                usable = len(self._audio_buffer) & ~1
+                pcm = bytes(self._audio_buffer[:usable])
+                del self._audio_buffer[:usable]
             t0 = time.time()
             try:
                 text = self._transcribe(pcm) if pcm else ""
@@ -162,7 +172,7 @@ class SttSidecar(BaseSidecar):
             headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with _LOOPBACK_OPENER.open(req, timeout=30) as resp:
             raw = resp.read().decode("utf-8", errors="ignore")
         try:
             return json.loads(raw).get("text", "").strip()
@@ -251,16 +261,26 @@ class SttSidecar(BaseSidecar):
                 # is guaranteed to accept requests. Record it, but keep waiting
                 # for a listening log line or a successful port probe.
                 self._detect_gpu_line(line)
-                low = line.lower()
-                if "listening" in low or "http server" in low or "server is listening" in low:
+                # Only whisper-server's own listening announcement proves that
+                # OUR child bound the port. A bare port probe could succeed
+                # against some other local process that grabbed the ephemeral
+                # port between _free_port() and bind, and we'd send audio there.
+                if not ready and self._is_listening_line(line):
                     ready = True
                     ready_grace = time.monotonic() + 0.4  # keep reading a touch for the GPU line
-            if not ready and self._port_open(self._server_port):
+            # whisper-server block-buffers stdout when piped, so its listening
+            # line often only arrives at exit. Fall back to an HTTP probe that
+            # also proves the listener is OUR child (not merely "something is
+            # listening on the port").
+            if not ready and self._port_open(self._server_port) and self._server_identity_ok():
                 ready = True
                 ready_grace = time.monotonic() + 0.4
-            if ready and (self.using_vulkan or (ready_grace and time.monotonic() >= ready_grace)):
+            if ready and self._server_proc.poll() is None and (
+                    self.using_vulkan or (ready_grace and time.monotonic() >= ready_grace)):
                 break
 
+        if ready and self._server_proc.poll() is not None:
+            ready = False
         if not ready:
             self._emit_status("warning", "whisper-server readiness timed out; will use CLI fallback")
             try:
@@ -268,6 +288,68 @@ class SttSidecar(BaseSidecar):
             except Exception:
                 pass
             self._server_proc = None
+
+    def _server_identity_ok(self) -> bool:
+        """True only when the listener on our port is our whisper-server child.
+
+        Linux: the LISTEN socket's inode must be among the child's own fds
+        (authoritative). Elsewhere: the proxy-less /health reply must come from a
+        whisper.cpp server. Either way the child must still be alive."""
+        proc = self._server_proc
+        if not proc or proc.poll() is not None:
+            return False
+        owned = self._listener_owned_by(getattr(proc, "pid", None), self._server_port)
+        if owned is False:
+            return False
+        try:
+            with _LOOPBACK_OPENER.open(f"http://127.0.0.1:{self._server_port}/health", timeout=1) as resp:
+                server_hdr = (resp.headers.get("Server") or "").lower()
+                body = resp.read(256).decode("utf-8", errors="ignore").lower()
+                if resp.status != 200 or '"ok"' not in body:
+                    return False
+        except Exception:
+            return False
+        return owned is True or "whisper" in server_hdr
+
+    @staticmethod
+    def _listener_owned_by(pid, port: int):
+        """Linux: True/False whether pid owns the LISTEN socket on 127.0.0.1:port.
+        None where /proc is unavailable (macOS/Windows) or pid is unknown."""
+        if not sys.platform.startswith("linux") or not isinstance(pid, int):
+            return None
+        inodes = set()
+        for table in ("/proc/net/tcp", "/proc/net/tcp6"):
+            try:
+                with open(table, encoding="ascii") as fh:
+                    next(fh, None)
+                    for row in fh:
+                        cols = row.split()
+                        if len(cols) > 9 and cols[3] == "0A" and int(cols[1].rsplit(":", 1)[1], 16) == port:
+                            inodes.add(cols[9])
+            except (OSError, ValueError):
+                continue
+        if not inodes:
+            return False
+        fd_dir = f"/proc/{pid}/fd"
+        try:
+            fds = os.listdir(fd_dir)
+        except OSError:
+            return None
+        for fd in fds:
+            try:
+                target = os.readlink(os.path.join(fd_dir, fd))
+            except OSError:
+                continue
+            if target.startswith("socket:[") and target[8:-1] in inodes:
+                return True
+        return False
+
+    def _is_listening_line(self, line: str) -> bool:
+        """whisper-server logs e.g. 'whisper server listening at http://127.0.0.1:PORT'.
+        Require the listening phrase AND our own port so an unrelated log line
+        can't be mistaken for readiness."""
+        low = line.lower()
+        return "listening" in low and re.search(rf":{self._server_port}(?!\d)", low) is not None
 
     def _detect_gpu_line(self, line: str) -> bool:
         """Set using_vulkan when a server log line confirms the GPU backend.
@@ -389,13 +471,17 @@ class SttSidecar(BaseSidecar):
         model_file = f"ggml-{model_name}.bin"
         # ARIA_MODELS_DIR is the authoritative location the main process downloads
         # to (set per-OS via os.homedir()); the rest are dev/legacy fallbacks.
+        # When it is set it is exclusive: silently loading a different (possibly
+        # unverified) copy from a legacy path would bypass the pinned download.
         models_dir = os.environ.get("ARIA_MODELS_DIR", "")
-        search_paths = [
-            os.path.join(models_dir, model_file) if models_dir else "",
-            os.path.join(os.path.dirname(__file__), "..", "..", "models", model_file),
-            os.path.expanduser(f"~/.local/share/aria/models/{model_file}"),
-            os.path.expanduser(f"~/.cache/whisper/{model_file}"),
-        ]
+        if models_dir:
+            search_paths = [os.path.join(models_dir, model_file)]
+        else:
+            search_paths = [
+                os.path.join(os.path.dirname(__file__), "..", "..", "models", model_file),
+                os.path.expanduser(f"~/.local/share/aria/models/{model_file}"),
+                os.path.expanduser(f"~/.cache/whisper/{model_file}"),
+            ]
         for p in search_paths:
             if p and os.path.isfile(p):
                 return p

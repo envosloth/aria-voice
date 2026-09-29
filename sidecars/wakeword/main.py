@@ -155,14 +155,16 @@ class WakewordSidecar(BaseSidecar):
         def bundled_path(key: str) -> str:
             path = models[key]["model_path"]
             return path.replace(".tflite", ".onnx")
-        custom_dirs = []
+        # ARIA_MODELS_DIR is exclusive when set (same rule as STT/TTS): the
+        # dev/legacy directories are consulted only when it is unset.
         models_dir = os.environ.get("ARIA_MODELS_DIR")
         if models_dir:
-            custom_dirs.append(os.path.join(models_dir, "wakeword"))
-        custom_dirs.extend([
-            os.path.join(os.path.dirname(__file__), "..", "..", "models", "wakeword"),
-            os.path.expanduser("~/.local/share/aria/models/wakeword"),
-        ])
+            custom_dirs = [os.path.join(models_dir, "wakeword")]
+        else:
+            custom_dirs = [
+                os.path.join(os.path.dirname(__file__), "..", "..", "models", "wakeword"),
+                os.path.expanduser("~/.local/share/aria/models/wakeword"),
+            ]
 
         custom = []
         for d in custom_dirs:

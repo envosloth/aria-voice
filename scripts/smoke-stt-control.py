@@ -70,7 +70,10 @@ check("server-suppresses-nonspeech-tokens", '"--suppress-nst"' in source)
 check("cli-suppresses-nonspeech-tokens", source.count('"--suppress-nst"') >= 2)
 
 # Detecting the Vulkan backend happens before whisper-server opens its HTTP port.
-# The sidecar must keep waiting for the port instead of reporting ready early.
+# The sidecar must keep waiting instead of reporting ready early. Readiness is
+# proven only by whisper-server's own "listening at ...:PORT" line (a bare port
+# probe could hit an unrelated listener), so with only a Vulkan line and an open
+# port it must time out to the CLI fallback.
 class FakeStdout:
     def __init__(self):
         self.lines = iter(["using Vulkan backend\n"])
@@ -93,12 +96,13 @@ class FakeProc:
 startup_sidecar = SttSidecar()
 startup_sidecar.model_path = "/tmp/model.bin"
 startup_sidecar._emit_status = lambda *_args, **_kwargs: None
-port_checks = []
-startup_sidecar._port_open = lambda _port: port_checks.append(True) or len(port_checks) >= 2
+startup_sidecar._port_open = lambda _port: True
 with mock.patch.object(stt_module.subprocess, "Popen", return_value=FakeProc()), \
-     mock.patch.object(stt_module.threading, "Thread"):
+     mock.patch.object(stt_module.threading, "Thread"), \
+     mock.patch.dict(os.environ, {"ARIA_STT_START_TIMEOUT": "0.3"}, clear=False):
     startup_sidecar._start_server("/tmp/whisper-server")
-check("server-waits-for-http-readiness", len(port_checks) >= 2, f"port checks={len(port_checks)}")
+check("server-waits-for-http-readiness", startup_sidecar._server_proc is None,
+      "vulkan line + open port must not count as ready")
 
 # A warm server inference can still fail; keep whisper-cli discovered so the
 # advertised per-call fallback has a real executable instead of an empty path.

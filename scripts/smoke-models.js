@@ -26,8 +26,22 @@ const PAYLOAD = Buffer.alloc(256 * 1024);
 for (let i = 0; i < PAYLOAD.length; i++) PAYLOAD[i] = i % 256;
 const PAYLOAD_SHA = crypto.createHash('sha256').update(PAYLOAD).digest('hex');
 
+let concurrentRequests = 0;
 function makeServer() {
   return http.createServer((req, res) => {
+    if (req.url === '/concurrent.bin') {
+      // Slow body so overlapping callers genuinely overlap.
+      concurrentRequests++;
+      res.writeHead(200, { 'Content-Length': PAYLOAD.length });
+      let off = 0;
+      const t = setInterval(() => {
+        const next = Math.min(PAYLOAD.length, off + 32 * 1024);
+        res.write(PAYLOAD.subarray(off, next));
+        off = next;
+        if (off >= PAYLOAD.length) { clearInterval(t); res.end(); }
+      }, 10);
+      return;
+    }
     if (req.url === '/drop.bin') {
       res.writeHead(200, { 'Content-Length': PAYLOAD.length });
       res.write(PAYLOAD.subarray(0, 1024));
@@ -178,6 +192,19 @@ async function main() {
   const c11 = bad416Rejected && !fs.existsSync(path.join(TMP, 'range-416-bad.bin')) && !fs.existsSync(bad416Partial);
   console.log(`[416-incomplete]     rejected=${bad416Rejected} -> ${c11 ? 'PASS' : 'FAIL'}`);
   pass = pass && c11;
+
+  // Case 12: concurrent downloads of one file are single-flight (one request,
+  // both callers resolve, both progress listeners see completion).
+  const conc = { id: 'test:concurrent', kind: 'stt', file: 'concurrent.bin', url: `${base}/concurrent.bin`, sizeBytes: PAYLOAD.length, sha256: PAYLOAD_SHA, required: true };
+  let pctA = 0; let pctB = 0;
+  const results = await Promise.allSettled([
+    mm.downloadModel(conc, (p) => { pctA = p.percent; }),
+    mm.downloadModel(conc, (p) => { pctB = p.percent; }),
+  ]);
+  const concOk = results.every((r) => r.status === 'fulfilled') && concurrentRequests === 1 && pctA === 100 && pctB === 100 &&
+    crypto.createHash('sha256').update(fs.readFileSync(path.join(TMP, 'concurrent.bin'))).digest('hex') === PAYLOAD_SHA;
+  console.log(`[single-flight]      requests=${concurrentRequests} results=${results.map((r) => r.status)} pct=${pctA}/${pctB} -> ${concOk ? 'PASS' : 'FAIL'}`);
+  pass = pass && concOk;
 
   server.close();
   fs.rmSync(TMP, { recursive: true, force: true });

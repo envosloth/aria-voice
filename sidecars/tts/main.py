@@ -124,13 +124,15 @@ class TtsSidecar(BaseSidecar):
 
     def _find_kokoro_files(self):
         names = ("kokoro-v1.0.onnx", "voices-v1.0.bin")
-        dirs = [
-            os.path.join(os.path.dirname(__file__), "..", "..", "models"),
-            os.path.expanduser("~/.local/share/aria/models"),
-        ]
-        # Allow an explicit override directory (used by frozen builds).
+        # ARIA_MODELS_DIR (set by the main process, which pins + verifies
+        # downloads) is exclusive when present; dev fallbacks only when unset.
         if os.environ.get("ARIA_MODELS_DIR"):
-            dirs.insert(0, os.environ["ARIA_MODELS_DIR"])
+            dirs = [os.environ["ARIA_MODELS_DIR"]]
+        else:
+            dirs = [
+                os.path.join(os.path.dirname(__file__), "..", "..", "models"),
+                os.path.expanduser("~/.local/share/aria/models"),
+            ]
         for d in dirs:
             model = os.path.join(d, names[0])
             voices = os.path.join(d, names[1])
@@ -154,13 +156,14 @@ class TtsSidecar(BaseSidecar):
 
     def _find_piper_voice(self) -> str:
         voice_file = f"{self.voice_name}.onnx"
-        search_paths = [
-            os.path.join(os.environ["ARIA_MODELS_DIR"], voice_file)
-            if os.environ.get("ARIA_MODELS_DIR") else "",
-            os.path.join(os.path.dirname(__file__), "..", "..", "models", voice_file),
-            os.path.expanduser(f"~/.local/share/aria/models/{voice_file}"),
-            os.path.expanduser(f"~/.local/share/piper/voices/{voice_file}"),
-        ]
+        if os.environ.get("ARIA_MODELS_DIR"):
+            search_paths = [os.path.join(os.environ["ARIA_MODELS_DIR"], voice_file)]
+        else:
+            search_paths = [
+                os.path.join(os.path.dirname(__file__), "..", "..", "models", voice_file),
+                os.path.expanduser(f"~/.local/share/aria/models/{voice_file}"),
+                os.path.expanduser(f"~/.local/share/piper/voices/{voice_file}"),
+            ]
         for p in search_paths:
             if os.path.isfile(p):
                 return p

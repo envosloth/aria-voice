@@ -60,6 +60,11 @@ class BaseSidecar(ABC):
 
         try:
             self.initialize()
+            # A SIGTERM, stdin EOF, socket EOF or parent death during a slow model
+            # load clears _running. Announcing 'ready' then would let the
+            # supervisor route controls to a process that is already exiting.
+            if not self._running:
+                return
             self._emit_status("ready")
             self.main_loop()
         except Exception as e:

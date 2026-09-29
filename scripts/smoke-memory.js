@@ -22,22 +22,33 @@ async function main() {
       }
     },
     undefined,
-    { rssLimitsMb: { wakeword: 1 }, memoryCheckMs: 500 }, // 1 MB ceiling, check every 0.5s
+    { memoryCheckMs: 500 }, // default ceiling until the first real ready
   );
   sup.startMonitoring();
 
-  console.log('=== Starting wakeword with 1MB RSS ceiling ===\n');
+  // A sidecar killed during initialize() must NOT report ready (base_sidecar
+  // suppresses ready after SIGTERM), so a ceiling below init RSS would never
+  // recover. Reach a genuine ready first, then drop the ceiling to 1 MB so the
+  // watchdog trips on a running sidecar, and restore it so the restart can
+  // prove a second genuine ready.
+  console.log('=== Starting wakeword with default RSS ceiling ===\n');
   await sup.start('wakeword');
 
-  for (let i = 0; i < 40 && !statuses.some(s => s.status === 'ready'); i++) await sleep(200);
+  for (let i = 0; i < 60 && !statuses.some(s => s.status === 'ready'); i++) await sleep(200);
   const firstPid = pid;
-  console.log(`\nInitial pid=${firstPid}. Waiting for watchdog to trip...\n`);
+  console.log(`\nInitial pid=${firstPid}. Lowering ceiling to 1MB; waiting for watchdog...\n`);
+  sup.rssLimitsMb.wakeword = 1;
 
   // Wait for memory-exceeded + restart
   let recovered = false;
-  for (let i = 0; i < 60; i++) {
+  let restored = false;
+  for (let i = 0; i < 100; i++) {
     await sleep(200);
-    if (statuses.some(s => s.status === 'memory-exceeded') &&
+    if (!restored && statuses.some(s => s.status === 'memory-exceeded')) {
+      sup.rssLimitsMb.wakeword = 4096;
+      restored = true;
+    }
+    if (restored &&
         statuses.filter(s => s.status === 'ready').length >= 2 &&
         pid !== firstPid) {
       recovered = true;

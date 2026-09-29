@@ -15,6 +15,8 @@ const {
   beginUpdateInstall,
   tryBeginUpdateOperation,
   endUpdateOperation,
+  handleAutoUpdaterError,
+  safeReleaseUrl,
 } = require('../dist/main/updater');
 
 let pass = true;
@@ -136,6 +138,41 @@ async function checkLifecycle() {
     );
   } catch {}
   check('partial quiesce failure resumes', partial.join(','), 'quiesce,resume');
+
+  // A background autoUpdater 'error' (check/download failure) while another
+  // operation holds the slot must not run install recovery / release that slot.
+  check('autoUpdater error handler exported', typeof handleAutoUpdaterError, 'function');
+  if (typeof handleAutoUpdaterError === 'function') {
+    check('slot held by in-flight operation', tryBeginUpdateOperation(), true);
+    await handleAutoUpdaterError('network glitch during background check');
+    check('non-install autoUpdater error keeps operation slot', tryBeginUpdateOperation(), false);
+    endUpdateOperation();
+  }
+}
+
+// UPDATE_OPEN URLs come from the renderer: only this repo's GitHub releases.
+const LATEST = 'https://github.com/envosloth/aria-voice/releases/latest';
+check('release url helper exported', typeof safeReleaseUrl, 'function');
+if (typeof safeReleaseUrl === 'function') {
+  const tag = 'https://github.com/envosloth/aria-voice/releases/tag/v1.2.3';
+  const asset = 'https://github.com/envosloth/aria-voice/releases/download/v1.2.3/ARIA-1.2.3.AppImage';
+  check('release tag url allowed', safeReleaseUrl(tag), tag);
+  check('release asset url allowed', safeReleaseUrl(asset), asset);
+  check('missing url -> latest', safeReleaseUrl(undefined), LATEST);
+  for (const bad of [
+    'http://github.com/envosloth/aria-voice/releases/latest',
+    'https://evil.example/envosloth/aria-voice/releases/latest',
+    'https://github.com.evil.example/envosloth/aria-voice/releases',
+    'https://github.com/attacker/aria-voice/releases/latest',
+    'https://github.com/envosloth/aria-voice-evil/releases/latest',
+    'https://github.com/envosloth/aria-voice/releasesX',
+    'https://github.com/envosloth/aria-voice/issues',
+    'https://user:pw@github.com/envosloth/aria-voice/releases',
+    'https://github.com:8443/envosloth/aria-voice/releases',
+    'file:///etc/passwd',
+    'javascript:alert(1)',
+    'not a url',
+  ]) check(`rejects ${bad}`, safeReleaseUrl(bad), LATEST);
 }
 
 checkLifecycle().then(() => {

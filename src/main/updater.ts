@@ -333,6 +333,20 @@ async function recoverFailedInstall(message: string): Promise<void> {
   emit({ state: 'error', message });
 }
 
+/**
+ * electron-updater also reports background check/download failures through
+ * 'error'. Only a failure during a committed install may run install recovery
+ * (resume sidecars, release the operation slot); otherwise recovering would
+ * release a slot owned by another in-flight operation and spuriously resume.
+ */
+export async function handleAutoUpdaterError(message: string): Promise<void> {
+  if (installing || restoreAfterFailedInstall !== null) {
+    await recoverFailedInstall(message);
+    return;
+  }
+  emit({ state: 'error', message });
+}
+
 /** Claim the one update-operation slot before any download or quiescing work. */
 export function tryBeginUpdateOperation(): boolean {
   if (installOperationInProgress) return false;
@@ -374,7 +388,7 @@ export function initUpdater(
       emit({ state: 'downloaded', version: info.version, canAutoInstall: true });
     });
     autoUpdater.on('error', (err) => {
-      void recoverFailedInstall((err && err.message) || String(err));
+      void handleAutoUpdaterError((err && err.message) || String(err));
     });
   } catch (e) {
     autoUpdater = null; // fall back to notify path
@@ -553,5 +567,24 @@ async function installDebUpdate(deb: DebInfo): Promise<boolean> {
 
 /** Open the latest-release page in the user's browser (notify path's CTA). */
 export function openReleasePage(url?: string): void {
-  void shell.openExternal(url || RELEASES_LATEST_PAGE);
+  void shell.openExternal(safeReleaseUrl(url));
+}
+
+/**
+ * The renderer supplies this URL over IPC, so it is untrusted: only this
+ * repository's GitHub releases pages/assets may be handed to the OS opener.
+ * Anything else (other hosts, schemes, repos, credentials, ports) falls back to
+ * the latest-release page.
+ */
+export function safeReleaseUrl(url?: unknown): string {
+  if (typeof url !== 'string' || !url) return RELEASES_LATEST_PAGE;
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return RELEASES_LATEST_PAGE; }
+  const releasesPath = `/${REPO_OWNER}/${REPO_NAME}/releases`;
+  const ok = parsed.protocol === 'https:'
+    && parsed.hostname === 'github.com'
+    && parsed.port === ''
+    && parsed.username === '' && parsed.password === ''
+    && (parsed.pathname === releasesPath || parsed.pathname.startsWith(releasesPath + '/'));
+  return ok ? parsed.href : RELEASES_LATEST_PAGE;
 }

@@ -52,7 +52,12 @@ download_with_resume() {
   fi
 
   echo "  Downloading: $(basename "$dest")"
-  curl -L --retry 3 --retry-delay 5 -C - -o "$dest.partial" "$url"
+  # --fail: an HTTP error page must never be appended to the .partial (it would
+  # poison every later resume); the checksum below remains the final gate.
+  if ! curl --fail -L --retry 3 --retry-delay 5 -C - -o "$dest.partial" "$url"; then
+    echo "  Download failed: $url" >&2
+    return 1
+  fi
   if ! printf '%s  %s\n' "$sha256" "$dest.partial" | sha256sum -c; then
     rm -f "$dest.partial"
     return 1
