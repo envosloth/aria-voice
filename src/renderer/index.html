@@ -1121,30 +1121,8 @@
             <option value="small">small — balanced (244M)</option>
             <option value="medium">medium — accurate (769M)</option>
           </select>
-          <span class="hint">Local model used for offline use and as the automatic fallback.</span>
         </label>
         <label>Backend
-        </label>
-        <label>Where speech is transcribed
-          <select id="cfg-stt-provider">
-            <option value="local">On this computer (whisper.cpp, private, works offline)</option>
-            <option value="groq">Groq cloud — free tier, much more accurate (sends audio to Groq)</option>
-            <option value="openai">OpenAI cloud (sends audio to OpenAI, paid)</option>
-            <option value="custom">Custom OpenAI-compatible endpoint</option>
-          </select>
-          <span class="hint" id="stt-provider-hint"></span>
-        </label>
-        <label id="stt-cloud-key-row" hidden>Cloud transcription API key
-          <input type="password" id="cfg-stt-key" placeholder="Paste the key" autocomplete="off" spellcheck="false">
-          <span class="hint">Stored in your system keyring. Any cloud failure falls back to the local model automatically.</span>
-        </label>
-        <label id="stt-cloud-endpoint-row" hidden>Endpoint
-          <input type="text" id="cfg-stt-endpoint" placeholder="https://…/audio/transcriptions" autocomplete="off" spellcheck="false">
-        </label>
-        <label id="stt-cloud-model-row" hidden>Cloud model
-          <input type="text" id="cfg-stt-cloud-model" placeholder="whisper-large-v3-turbo" autocomplete="off" spellcheck="false">
-        </label>
-        <label>Local engine backend
           <select id="cfg-stt-backend">
             <option value="vulkan">Vulkan (GPU)</option>
             <option value="cpu">CPU</option>

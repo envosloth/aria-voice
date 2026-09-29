@@ -51,15 +51,7 @@ export const VAD_FRAME_MS = 80;
 // crossing ipcMain is shape-checked and bounded before it reaches privileged code.
 
 /** Secure-store keys the renderer may read/write/delete (see app.js settings + onboarding). */
-export const RENDERER_SECRET_KEYS: readonly string[] = ['llm-api-key', 'harness-api-key', 'jev-api-key', 'stt-api-key'];
-
-// Cloud speech-to-text (opt-in). Groq's Whisper endpoint is free at the time of
-// writing and fast; any OpenAI-compatible /audio/transcriptions endpoint works.
-export const STT_CLOUD_PROVIDERS: readonly { id: string; label: string; endpoint: string; model: string; note: string }[] = [
-  { id: 'groq', label: 'Groq (free tier)', endpoint: 'https://api.groq.com/openai/v1/audio/transcriptions', model: 'whisper-large-v3-turbo', note: 'OpenAI-compatible, whisper-large-v3-turbo' },
-  { id: 'openai', label: 'OpenAI', endpoint: 'https://api.openai.com/v1/audio/transcriptions', model: 'whisper-1', note: 'Paid per minute' },
-  { id: 'custom', label: 'Custom endpoint', endpoint: '', model: '', note: 'Any OpenAI-compatible /audio/transcriptions' },
-];
+export const RENDERER_SECRET_KEYS: readonly string[] = ['llm-api-key', 'harness-api-key', 'jev-api-key'];
 export function isRendererSecretKey(key: unknown): key is string {
   return typeof key === 'string' && RENDERER_SECRET_KEYS.includes(key);
 }
