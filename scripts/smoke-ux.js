@@ -132,7 +132,7 @@ check('activity.driver',
   /aria\.llm\.onRoute[\s\S]{0,500}refreshActivity\(\)/.test(app) && /aria\.llm\.onTool[\s\S]{0,300}refreshActivity\(\)/.test(app),
   'phase, route and tool changes must repaint the strip');
 {
-  const onStatus = (app.match(/aria\.sidecar\.onStatus\([\s\S]*?\n\}\);/) || [''])[0];
+  const onStatus = (app.match(/function applySidecarStatus\([\s\S]*?\n\}\n/) || [''])[0];
   check('activity.sidecarAndSetup',
     /function setSetupNeeded[\s\S]{0,900}refreshActivity\(\)/.test(app) && onStatus.includes('refreshActivity()'),
     'setup and sidecar health must be reflected in the strip');
@@ -159,6 +159,11 @@ check('composer.placeholder',
 check('header.singleBadge',
   /\.chat-head \.state-badge \{ display: none/.test(html),
   'the state must not be shown twice on wide layouts');
+
+check('sidecar.snapshotReplay',
+  /SIDECAR_SNAPSHOT/.test(fs.readFileSync(path.join(root, 'src', 'main', 'index.ts'), 'utf8')) &&
+  /aria\.sidecar\.snapshot\(\)/.test(app) && /snapshot: \(\)/.test(fs.readFileSync(path.join(root, 'src', 'preload', 'index.ts'), 'utf8')),
+  'sidebar must recover sidecar status emitted before the renderer subscribed');
 
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

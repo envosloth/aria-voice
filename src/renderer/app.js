@@ -1547,7 +1547,7 @@ const DOT_CLASS_FOR_STATUS = {
   error: 'error', 'circuit-open': 'error', exited: 'error',
   'memory-exceeded': 'error', 'heartbeat-timeout': 'error',
 };
-aria.sidecar.onStatus(({ name, status }) => {
+function applySidecarStatus(name, status) {
   const dot = statusDots[name];
   const statusLabel = statusLabels[name];
   if (!dot) return;
@@ -1562,7 +1562,15 @@ aria.sidecar.onStatus(({ name, status }) => {
   const statusText = statusTexts[name];
   if (statusText) statusText.textContent = { ready: 'Ready', starting: 'Starting…', unavailable: 'Offline' }[state];
   refreshActivity();
-});
+}
+aria.sidecar.onStatus(({ name, status }) => applySidecarStatus(name, status));
+// Events that fired before this renderer subscribed (slow start, reload) are
+// replayed from main so the sidebar never sticks on "Starting…".
+try {
+  aria.sidecar.snapshot().then((snap) => {
+    for (const [name, status] of Object.entries(snap || {})) applySidecarStatus(name, status);
+  }).catch(() => {});
+} catch (e) {}
 
 aria.sidecar.onError(({ name, status, detail }) => {
   showError(`${name}: ${detail || status}`);

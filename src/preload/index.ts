@@ -125,6 +125,7 @@ const api = {
   },
 
   sidecar: {
+    snapshot: (): Promise<Record<string, string>> => ipcRenderer.invoke(IPC.SIDECAR_SNAPSHOT),
     onStatus: (cb: (info: { name: string; status: string; detail?: string }) => void) =>
       ipcRenderer.on(IPC.SIDECAR_STATUS, (_e, info) => cb(info)),
     onError: (cb: (info: { name: string; status: string; detail?: string }) => void) =>

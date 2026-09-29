@@ -1,6 +1,7 @@
 export const IPC = {
   SIDECAR_STATUS: 'sidecar:status',
   SIDECAR_ERROR: 'sidecar:error',
+  SIDECAR_SNAPSHOT: 'sidecar:snapshot', // renderer -> main (invoke): last known lifecycle status per sidecar (covers events sent before the renderer listened)
 
   MODEL_NEEDED: 'model:needed',      // main -> renderer: first-run downloads starting
   MODEL_PROGRESS: 'model:progress',  // main -> renderer: per-file download progress

@@ -563,6 +563,7 @@ function setupIpcHandlers(): void {
   // adopts the value TTS_STOP resolves, so a reloaded renderer (which restarts at
   // 0) can never be stuck below main's epoch with every chunk dropped.
   handle(IPC.TTS_EPOCH, () => ttsEpoch);
+  handle(IPC.SIDECAR_SNAPSHOT, () => ({ ...lastSidecarLifecycle }));
   handle(IPC.TTS_STOP, (_e, request?: { epoch?: unknown }) => {
     const requestedEpoch = Number(request?.epoch);
     // Accept a renderer-proposed epoch only if it moves forward by a sane step.
@@ -708,7 +709,11 @@ function deliverTtsPackets(packets: TtsAudioPacket[]): void {
   }
 }
 
+const lastSidecarLifecycle: Record<string, string> = {};
+const LIFECYCLE_STATUSES = new Set(['ready', 'started', 'initialized', 'restarting', 'circuit-reset', 'error', 'circuit-open', 'exited', 'memory-exceeded', 'heartbeat-timeout']);
+
 function onSidecarStatus(name: SidecarName, status: string, detail?: string): void {
+  if (LIFECYCLE_STATUSES.has(status)) lastSidecarLifecycle[name] = status;
   if (name === 'tts' && (status === 'started' || status === 'exited')) ttsAudioGate.resetTransport();
   if (name === 'stt') failSttTurnOnSidecarDeath(status, detail);
   mainWindow?.webContents.send(IPC.SIDECAR_STATUS, { name, status, detail });
