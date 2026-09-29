@@ -392,7 +392,59 @@
     return true;
   }
 
+  // --- Streaming TTS chunker (moved from app.js so it is unit-tested) --------
+  // A sentence ends at . ! ? (+ closing quote/bracket) before whitespace/end;
+  // "3.5" and "U.S." have no following space and are not split.
+  const TTS_SENTENCE_END = /[.!?]+["')\]]*(?=\s|$)/g;
+  // Clause boundary , ; : before whitespace ("1,000" / "12:30" do not match).
+  const TTS_CLAUSE_END = /[,;:]["')\]]*(?=\s)/g;
+  // Phrase boundary for a long comma-less opening sentence: the space before a
+  // conjunction/preposition, once the word after it is complete. Speaking
+  // "The weather in Longmont today is mostly sunny" while "with a high of…"
+  // is still streaming removes the whole-sentence synth wait (BACKLOG P-TTFA).
+  const TTS_PHRASE_BREAK = /\s(?=(?:with|and|but|which|because|while|so|including|although|though|for|from|until|unless|whereas)\s)/gi;
+  const TTS_FIRST_MIN = 18;          // don't speak a fragment shorter than this
+  const TTS_FIRST_MAX = 90;          // ...but don't wait past this for chunk #1
+  const TTS_LATER_MAX = 220;         // hard cap for subsequent chunks
+  const TTS_PHRASE_MIN_WORDS = 6;    // a phrase-split first chunk has at least this many words
+
+  // Where to cut the next speakable chunk out of `buf`, or -1 to keep buffering.
+  // `isFirst` makes chunk #1 eager so audio starts within a beat.
+  function nextTtsCut(buf, isFirst) {
+    TTS_SENTENCE_END.lastIndex = 0;
+    const sm = TTS_SENTENCE_END.exec(buf);
+    const sentenceEnd = sm ? TTS_SENTENCE_END.lastIndex : -1;
+    if (isFirst) {
+      TTS_CLAUSE_END.lastIndex = 0;
+      let m;
+      while ((m = TTS_CLAUSE_END.exec(buf)) !== null) {
+        const idx = TTS_CLAUSE_END.lastIndex;
+        if (sentenceEnd > 0 && idx > sentenceEnd) break;
+        if (idx >= TTS_FIRST_MIN) return idx;
+      }
+      if (sentenceEnd > 0) return sentenceEnd;
+      TTS_PHRASE_BREAK.lastIndex = 0;
+      while ((m = TTS_PHRASE_BREAK.exec(buf)) !== null) {
+        const idx = m.index;
+        if (idx < TTS_FIRST_MIN) continue;
+        if (buf.slice(0, idx).trim().split(/\s+/).length >= TTS_PHRASE_MIN_WORDS) return idx + 1;
+      }
+      if (buf.length >= TTS_FIRST_MAX) {
+        const sp = buf.lastIndexOf(' ', TTS_FIRST_MAX);
+        if (sp >= TTS_FIRST_MIN) return sp + 1;
+      }
+      return -1;
+    }
+    if (sentenceEnd > 0) return sentenceEnd;
+    if (buf.length >= TTS_LATER_MAX) {
+      const sp = buf.lastIndexOf(' ', TTS_LATER_MAX);
+      if (sp >= 40) return sp + 1;
+    }
+    return -1;
+  }
+
   const api = {
+    nextTtsCut,
     SPECULATIVE_ENDPOINT_OPTS, looksComplete,
     TARGET_RATE, HANDSFREE_ENDPOINT_OPTS, downsampleTo16k, floatToInt16, micFrameToPcm16k, rms, VadEndpointer,
     SttDiscardGate, sanitizeForSpeech, collapseRepeats,

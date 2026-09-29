@@ -1496,25 +1496,11 @@ function flushStream() {
 // as long as stopPlayback() isn't called between them).
 let ttsStreamBuf = '';       // text accumulated from tokens, not yet spoken
 let ttsTurnSpeaking = false;  // have we begun speaking the current response?
-// A sentence ends at . ! ? (with any trailing quote/bracket) followed by
-// whitespace or end-of-buffer. Decimals ("3.5") and "U.S." won't match — they
-// have no following space — so they aren't split mid-number.
-const TTS_SENTENCE_END = /[.!?]+["')\]]*(?=\s|$)/g;
-// A clause boundary: , ; : followed by whitespace. Used only to get the FIRST
-// chunk of a reply out fast (see below); "1,000" / "12:30" won't match (no
-// following space).
-const TTS_CLAUSE_END = /[,;:]["')\]]*(?=\s)/g;
-// The biggest lever on perceived latency is time-to-first-audio. Waiting for a
-// whole sentence meant a long opening sentence ("The weather in San Francisco
-// today is …, with …, and ….") held back all audio until it fully streamed AND
-// synthesized — the "it waits for the text output" feeling, worst on long
-// replies. So chunk #1 is eager: speak at the first clause boundary (or a hard
-// word-boundary cap) once there's enough to sound natural. Later chunks prefer
-// full sentences for prosody, but are still capped so one runaway sentence
-// can't stall playback (or force Kokoro to synth a single huge blocking chunk).
-const TTS_FIRST_MIN = 18;   // don't speak a fragment shorter than this
-const TTS_FIRST_MAX = 90;   // ...but don't wait past this for chunk #1
-const TTS_LATER_MAX = 220;  // hard cap for subsequent chunks
+// Chunking rules (sentence / clause / phrase boundaries, first-chunk eagerness,
+// caps) live in audio-utils.js as AriaAudio.nextTtsCut so smoke-audio tests the
+// shipped tuning. Chunk #1 is eager because time-to-first-audio is the biggest
+// lever on perceived latency; later chunks prefer whole sentences for prosody.
+const nextTtsCut = window.AriaAudio.nextTtsCut;
 
 function speakChunk(text) {
   if (!text) return;
@@ -1535,36 +1521,6 @@ function speakChunk(text) {
   }
   if (!ttsFirstRequestMarked) { ttsFirstRequestMarked = true; perf.mark(currentTurnId, 'tts_first_request'); }
   ttsPlay(text, currentReplyId, false); // queues serially behind earlier sentences in the sidecar
-}
-
-// Where to cut the next speakable chunk out of `buf`, or -1 to keep buffering.
-// `isFirst` makes chunk #1 eager so audio starts within a beat.
-function nextTtsCut(buf, isFirst) {
-  TTS_SENTENCE_END.lastIndex = 0;
-  const sm = TTS_SENTENCE_END.exec(buf);
-  const sentenceEnd = sm ? TTS_SENTENCE_END.lastIndex : -1;
-
-  if (isFirst) {
-    TTS_CLAUSE_END.lastIndex = 0;
-    let m;
-    while ((m = TTS_CLAUSE_END.exec(buf)) !== null) {
-      const idx = TTS_CLAUSE_END.lastIndex;
-      if (idx >= TTS_FIRST_MIN) return sentenceEnd > 0 ? Math.min(idx, sentenceEnd) : idx;
-    }
-    if (sentenceEnd > 0) return sentenceEnd;
-    if (buf.length >= TTS_FIRST_MAX) {
-      const sp = buf.lastIndexOf(' ', TTS_FIRST_MAX);
-      if (sp >= TTS_FIRST_MIN) return sp + 1;
-    }
-    return -1;
-  }
-
-  if (sentenceEnd > 0) return sentenceEnd;
-  if (buf.length >= TTS_LATER_MAX) {
-    const sp = buf.lastIndexOf(' ', TTS_LATER_MAX);
-    if (sp >= 40) return sp + 1;
-  }
-  return -1;
 }
 
 // Pull every ready chunk out of the buffer and speak it; keep the trailing

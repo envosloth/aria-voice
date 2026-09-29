@@ -321,5 +321,26 @@ check('san-keeps-caret-standalone', /\bcaret\b/i.test(S('put the caret at the en
     && A.SPECULATIVE_ENDPOINT_OPTS.earlyHangMs < A.HANDSFREE_ENDPOINT_OPTS.hangMs);
 }
 
+// 12. TTS chunker (nextTtsCut). Chunk #1 is eager: a clause boundary, a
+//     sentence end, or — for a long comma-less opening sentence — a phrase
+//     boundary (before a conjunction/preposition) once there are enough words.
+{
+  const C = A.nextTtsCut;
+  const cutText = (buf, first) => { const i = C(buf, first); return i > 0 ? buf.slice(0, i).trim() : null; };
+  check('tts-short-sentence', cutText('It is 3:30 now. More', true) === 'It is 3:30 now.');
+  check('tts-clause-first', cutText('Absolutely right, Envo, the lights are off', true) === 'Absolutely right, Envo,');
+  check('tts-clause-too-short-waits', C('Well, the lights', true) === -1);
+  check('tts-decimal-not-split', C('The price is 3.5 dollars', true) === -1);
+  check('tts-waits-short-fragment', C('The weather', true) === -1);
+  const long = 'The weather in Longmont today is mostly sunny with a high of seventy two';
+  const first = cutText(long, true);
+  check('tts-phrase-split-long-first', first === 'The weather in Longmont today is mostly sunny', `got ${JSON.stringify(first)}`);
+  check('tts-phrase-split-min-words', C('The dog with a bone', true) === -1);
+  check('tts-later-prefers-sentence', cutText('Second sentence here. Third', false) === 'Second sentence here.');
+  check('tts-later-no-phrase-split', C(long, false) === -1);
+  check('tts-first-hard-cap', C('a'.repeat(10) + ' ' + 'b'.repeat(100), true) === -1
+    && C('word '.repeat(30), true) > 0);
+}
+
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);
