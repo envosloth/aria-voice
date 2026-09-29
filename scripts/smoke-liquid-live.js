@@ -68,7 +68,9 @@ async function connect(port) {
     check('listening waveform and accessible hold label',mic.animation==='liquid-voice-wave'&&/speak|talk/i.test(mic.label));
     await send('Emulation.setEmulatedMedia',{features:[{name:'prefers-reduced-motion',value:'reduce'}]});
     check('reduced motion disables listening animation',await ev(`getComputedStyle(document.querySelector('#mic-btn .voice-wave i')).animationName==='none'&&getComputedStyle(document.getElementById('mic-btn')).animationName==='none'`));
-    await ev(`document.documentElement.dataset.blurOff='';`);
+    await ev(`document.documentElement.dataset.blurOff='false';`);
+    check('enabled glass actually blurs',await ev(`getComputedStyle(document.getElementById('mic-btn')).backdropFilter!=='none'`));
+    await ev(`document.documentElement.dataset.blurOff='true';`);
     check('blur off disables button filters',await ev(`[...document.querySelectorAll('button')].every(b=>getComputedStyle(b).backdropFilter==='none')`));
     await ev(`delete document.documentElement.dataset.blurOff;document.getElementById('mic-btn').classList.remove('listening');document.getElementById('mic-btn').setAttribute('aria-pressed','false');document.getElementById('settings-btn').focus()`);
     check('keyboard focus remains visible',await ev(`document.activeElement.id==='settings-btn'&&getComputedStyle(document.activeElement).outlineStyle!=='none'`));

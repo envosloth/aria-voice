@@ -36,7 +36,7 @@ body :is(button.danger, .activity-stop, .error-action) {
 }
 body button:disabled { opacity: .45; cursor: default; }
 body button:focus-visible { outline: 2px solid var(--accent-active); outline-offset: 3px; }
-html[data-blur-off] body :is(button, [role="button"], input[type="button"], input[type="submit"]) {
+html[data-blur-off="true"] body :is(button, [role="button"], input[type="button"], input[type="submit"]) {
   backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
 }
 /* A compact voice key rather than an oversized solid microphone puck. */
