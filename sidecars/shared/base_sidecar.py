@@ -199,9 +199,61 @@ class BaseSidecar(ABC):
 
     # ---- stdin (control JSON) ----
 
+    def _stdin_lines(self):
+        """Yield control lines from stdin.
+
+        Windows: never keep a synchronous ReadFile pending on the stdin pipe.
+        While one is outstanding, other calls on that handle (notably the CRT
+        start-up GetFileType() run by DLLs such as NumPy's OpenBLAS) block until
+        the read completes, which deadlocks model imports during initialize().
+        Poll with PeekNamedPipe and read only bytes that are already available.
+        """
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                import msvcrt
+                from ctypes import wintypes
+                fd = sys.stdin.fileno()
+                handle = msvcrt.get_osfhandle(fd)
+                kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+                peek = kernel32.PeekNamedPipe
+                peek.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+                                 ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]
+                peek.restype = wintypes.BOOL
+                avail = wintypes.DWORD()
+                if peek(handle, None, 0, None, ctypes.byref(avail), None):
+                    yield from self._poll_pipe_lines(fd, handle, peek)
+                    return
+            except Exception:
+                pass  # not a pipe (console/file): blocking reads are safe enough
+        yield from sys.stdin
+
+    def _poll_pipe_lines(self, fd, handle, peek):
+        import ctypes
+        from ctypes import wintypes
+        pending = b""
+        avail = wintypes.DWORD()
+        while self._running:
+            if not peek(handle, None, 0, None, ctypes.byref(avail), None):
+                break  # broken pipe == EOF (supervisor gone or stdin closed)
+            if not avail.value:
+                time.sleep(0.05)
+                continue
+            chunk = os.read(fd, avail.value)
+            if not chunk:
+                break
+            pending += chunk
+            while b"\n" in pending:
+                raw, pending = pending.split(b"\n", 1)
+                yield raw.decode("utf-8", "replace")
+            if len(pending) > 1024 * 1024:
+                pending = b""  # drop a newline-less runaway line
+        if pending:
+            yield pending.decode("utf-8", "replace")
+
     def _stdin_loop(self) -> None:
         """Read newline-delimited JSON control messages from stdin."""
-        for line in sys.stdin:
+        for line in self._stdin_lines():
             if not self._running:
                 break
             line = line.strip()
