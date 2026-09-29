@@ -40,9 +40,18 @@ async function main() {
     await sup.start(name);
   }
 
-  // Give them time to initialize and emit a few heartbeats
-  console.log('\n=== Waiting 8s for init + heartbeats ===\n');
-  await sleep(8000);
+  // Frozen imports can take longer on cold Windows/antivirus-enabled runners.
+  // Require an actual ready event, within a bounded deadline, rather than
+  // treating an arbitrary sleep as readiness.
+  const configured = Number(process.env.ARIA_SMOKE_READY_TIMEOUT_MS || 60000);
+  const timeout = Number.isFinite(configured) && configured > 0 ? Math.min(configured, 120000) : 60000;
+  const deadline = Date.now() + timeout;
+  console.log(`\n=== Waiting up to ${timeout}ms for readiness ===\n`);
+  while (Date.now() < deadline && !sidecars.every(name => events.some(e => e.name === name && e.status === 'ready'))) {
+    await sleep(100);
+  }
+  // Also exercise steady-state heartbeat handling after initialization.
+  await sleep(1500);
 
   // Assertions
   let pass = true;
@@ -55,7 +64,7 @@ async function main() {
     const alive = hasPid && pidAlive(pids[name]);
 
     report.push({ name, ready, initialized, hasPid, alive });
-    if (!ready && !initialized) pass = false;
+    if (!ready || !initialized) pass = false;
     if (!alive) pass = false;
   }
 

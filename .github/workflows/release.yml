@@ -32,6 +32,8 @@ jobs:
           # deb+AppImage only (no rpmbuild needed on a dev box).
           - os: ubuntu-latest
             platform: linux
+            # openWakeWord 0.6 declares tflite-runtime on Linux; wheels stop at 3.11.
+            python: '3.11'
             target: --linux AppImage deb rpm
             artifact: linux
           - os: windows-latest
@@ -59,7 +61,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: ${{ matrix.python || '3.12' }}
 
       # electron-builder's rpm target shells out to rpmbuild, which ubuntu runners
       # don't ship. The Vulkan build also requires vulkaninfo, headers, shader
@@ -68,6 +70,13 @@ jobs:
       - name: Install rpm and Vulkan build tooling (Linux)
         if: matrix.platform == 'linux'
         run: sudo apt-get update && sudo apt-get install -y rpm vulkan-tools libvulkan-dev mesa-vulkan-drivers glslang-tools glslc
+
+      - name: Install portable shell tooling (macOS)
+        if: matrix.platform == 'mac'
+        run: |
+          brew install bash coreutils
+          echo "$(brew --prefix bash)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> "$GITHUB_PATH"
 
       - name: Install Node dependencies
         run: |
@@ -88,7 +97,7 @@ jobs:
           npm run typecheck
 
       - name: Release packaging guard
-        run: npm run smoke:release-packaging
+        run: npm run smoke:release-packaging && node scripts/smoke-release-platforms.js
 
       # Each sidecar is frozen from its OWN venv (scripts/package-sidecar.sh),
       # which a fresh runner doesn't have — this was the long-standing release
