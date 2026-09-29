@@ -43,10 +43,10 @@ function main() {
       ['panel reported back', !!marks['perf-panel']],
       // A typed turn has no audio stage -> STT shows the em-dash placeholder.
       ['STT row is "—" for a text turn', p.stt === '—'],
-      // The headline "time to first audio" + LLM + total show real durations.
+      // The headline "time to first audio" + LLM show real durations.
       ['first-audio row shows a duration', isMs(p.firstAudio)],
       ['LLM row shows a duration', isMs(p.llm)],
-      ['Total row shows a duration', isMs(p.total)],
+      ['Full reply row removed', p.total === undefined],
       // Voice turn: "time to first audio" + "full reply" must be measured from
       // END of speech, so a 200ms utterance with a ~100ms post-speech path reads
       // ~100ms — NOT ~300ms (the old audio_start bug counted the speaking time).

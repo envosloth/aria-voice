@@ -55,6 +55,17 @@ async function target() {
       const r = {};
       r.cssLoaded = [...document.styleSheets].some(s => /ux\\.css$/.test(s.href || ''));
       // Real path: typed message -> IPC -> coordinator with nothing configured.
+      // First-run auto-connect may have found a local Hermes gateway; clear it
+      // so this deterministically exercises the not-connected error.
+      // Wait for auto-connect to settle (it may set harness.endpoint late).
+      for (let i = 0; i < 40; i++) {
+        if (await aria.config.get('harness.endpoint') || await aria.config.get('ui.onboarded')) break;
+        await wait(100);
+      }
+      await wait(500);
+      for (const k of ['llm.endpoint', 'harness.endpoint']) await aria.config.set(k, '');
+      await wait(200); document.getElementById('error-dismiss').click();
+      r.endpointsCleared = !(await aria.config.get('harness.endpoint')) && !(await aria.config.get('llm.endpoint'));
       const ti = document.getElementById('text-input');
       ti.value = 'what is the weather';
       ti.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));

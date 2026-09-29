@@ -82,7 +82,8 @@
     "smoke:ux-live": "npm run build && node scripts/smoke-ux-live.js",
     "smoke:session-import": "npm run build && node scripts/smoke-session-import.js",
     "smoke:font": "npm run build && node scripts/smoke-font.js",
-    "smoke:sidebar": "npm run build && node scripts/smoke-sidebar.js"
+    "smoke:sidebar": "npm run build && node scripts/smoke-sidebar.js",
+    "smoke:latency-test": "npm run build && node scripts/smoke-latency-test.js"
   },
   "author": "ARIA Project <aria@localhost>",
   "license": "MIT",

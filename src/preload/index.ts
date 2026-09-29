@@ -107,6 +107,7 @@ const api = {
     enabled: () => ipcRenderer.invoke(IPC.PERF_ENABLED),
     mark: (turnId: string, stage: string, extra?: Record<string, unknown>) =>
       ipcRenderer.send(IPC.PERF_MARK, { turn: turnId, stage, t: Date.now(), extra }),
+    latencyTest: () => ipcRenderer.invoke(IPC.PERF_LATENCY_TEST),
   },
 
   // Detected host hardware + the adaptive performance profile for the current GPU

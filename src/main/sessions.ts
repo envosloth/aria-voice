@@ -27,6 +27,8 @@ export interface SessionRecord {
   // Set when the conversation was imported from a harness's own history
   // ('hermes:<id>', 'claude-code:<id>', …). Used to skip re-imports.
   importedFrom?: string;
+  // True when the USER pinned it (imports used to be auto-pinned; see migrate).
+  pinnedByUser?: boolean;
 }
 export interface SessionSummary {
   id: string;
@@ -38,6 +40,7 @@ export interface SessionSummary {
   hasHarnessSession: boolean;
   tokens: SessionTokens;
   importedFrom?: string;
+  startedAt: number;
 }
 
 // The newest unpinned MAX_SESSIONS are retained; pins are exempt. The whole
@@ -48,8 +51,19 @@ const TITLE_MAX = 60;
 
 let store: JsonStore<{ sessions: SessionRecord[] }> | null = null;
 function db(): JsonStore<{ sessions: SessionRecord[] }> {
-  if (!store) store = new JsonStore('sessions', { sessions: [] });
+  if (!store) { store = new JsonStore('sessions', { sessions: [] }); migrate(store); }
   return store;
+}
+// Early imports were auto-pinned, which floated old chats above new ones.
+// Unpin those (never touching a pin the user set); retention keeps imports anyway.
+function migrate(s: JsonStore<{ sessions: SessionRecord[] }>): void {
+  const list = s.get('sessions');
+  if (!Array.isArray(list)) return;
+  let changed = false;
+  for (const r of list as SessionRecord[]) {
+    if (r.importedFrom && r.pinned && !r.pinnedByUser) { r.pinned = false; changed = true; }
+  }
+  if (changed) s.set('sessions', list);
 }
 function all(): SessionRecord[] {
   const s = db().get('sessions');
@@ -67,7 +81,7 @@ export function retainSessions(list: SessionRecord[]): SessionRecord[] {
   );
   let unpinnedRemaining = MAX_SESSIONS;
   return ordered.filter((session) => {
-    if (session.pinned) return true;
+    if (session.pinned || session.importedFrom) return true; // imports are kept, like pins
     if (unpinnedRemaining <= 0) return false;
     unpinnedRemaining--;
     return true;
@@ -129,6 +143,7 @@ export function listSessions(): SessionSummary[] {
       hasHarnessSession: !!s.harnessSessionId,
       tokens: { llm: s.tokens?.llm || 0, harness: s.tokens?.harness || 0 },
       ...(s.importedFrom ? { importedFrom: s.importedFrom } : {}),
+      startedAt: s.startedAt,
     }))
     .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt);
 }
@@ -167,6 +182,7 @@ export function setSessionPinned(id: string, pinned: boolean): SessionRecord | n
   const rec = list.find((s) => s.id === id);
   if (!rec) return null;
   rec.pinned = !!pinned;
+  rec.pinnedByUser = !!pinned;
   persist(list);
   return rec;
 }
@@ -186,8 +202,8 @@ export function importedKeys(): Set<string> {
 }
 
 // Add imported conversations as past sessions. Existing imports (same key) are
-// skipped, never overwritten; imported records are pinned so they survive the
-// 50-session retention cap regardless of how old the originals are.
+// skipped, never overwritten; imported records are exempt from the 50-session
+// retention cap (see retainSessions) regardless of how old the originals are.
 export function addImportedSessions(items: { key: string; title: string; startedAt: number; updatedAt: number; turns: SessionTurn[] }[]): number {
   const list = all();
   const have = new Set(list.map((s) => s.importedFrom).filter(Boolean));
@@ -201,7 +217,7 @@ export function addImportedSessions(items: { key: string; title: string; started
       startedAt: it.startedAt,
       updatedAt: it.updatedAt,
       turns: it.turns.slice(-MAX_TURNS_PER_SESSION),
-      pinned: true,
+      pinned: false,
       importedFrom: it.key,
     });
     added++;

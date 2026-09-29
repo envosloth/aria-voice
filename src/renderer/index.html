@@ -1215,9 +1215,11 @@
           <div class="perf-row perf-sub"><span>· Speech-to-text</span><b id="perf-stt">—</b></div>
           <div class="perf-row perf-sub"><span id="perf-llm-label">· LLM / Agent</span><b id="perf-llm">—</b></div>
           <div class="perf-row perf-sub"><span>· Text-to-speech synthesis</span><b id="perf-tts">—</b></div>
-          <div class="perf-row"><span>Full reply <span class="hint">(until it finishes speaking)</span></span><b id="perf-total">—</b></div>
         </div>
-        <p class="hint" id="perf-hint">From your most recent turn. <b>Time to first audio</b> is the delay you actually feel before ARIA starts talking; the · rows under it are its breakdown. <b>Full reply</b> is the whole turn (it keeps running for seconds while the rest streams + speaks). Dashes mean a stage didn't run (e.g. speech-to-text is blank for a typed message).</p>
+        <div class="perf-test">
+          <button type="button" id="perf-test-btn" class="ghost-btn">Test</button>
+          <span class="hint" id="perf-test-status" aria-live="polite">Measures time to first audio: ARIA hears a test phrase, asks your AI, and times how long until it starts to answer. Nothing is played or saved.</span>
+        </div>
 
         <label>Resource usage
           <select id="cfg-perf-preset">

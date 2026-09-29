@@ -64,6 +64,7 @@ export const IPC = {
   PERF_ENABLED: 'perf:enabled',  // renderer -> main: is latency instrumentation on?
   PERF_MARK: 'perf:mark',        // renderer -> main: a latency stage mark to log
 
+  PERF_LATENCY_TEST: 'perf:latency-test', // renderer -> main: run the time-to-first-audio test
   HARDWARE_INFO: 'hardware:info', // renderer -> main: detected CPU/RAM/GPU + adaptive perf profile
 
   UPDATE_CHECK: 'update:check',     // renderer -> main: check GitHub for a newer release

@@ -423,6 +423,47 @@ export interface CoordinateOptions {
   isCurrent?: () => boolean;
 }
 
+/**
+ * One stand-alone request for the latency test: same endpoint, key and system
+ * prompt the real turn would use, but no history, no persisted session, no
+ * harness session pin and no tools recorded. Prefers the direct LLM (the fast
+ * path real conversation takes) and falls back to the agent harness.
+ */
+export function oneShotChat(
+  text: string,
+  onToken: (token: string) => void,
+  signal: { cancelled: boolean },
+): Promise<{ target: string; text: string }> {
+  const target: Target | null = config.get('llm.endpoint') ? 'llm' : config.get('harness.endpoint') ? 'harness' : null;
+  if (!target) return Promise.reject(new Error('No LLM or agent harness configured yet. Open Settings (gear icon) to add one.'));
+  const which = target === 'harness' ? 'agent harness' : 'LLM';
+  return resolve(target).then(({ endpoint, model, apiKeyName }) => new Promise((done, fail) => {
+    let apiKey: string | null = null;
+    try { apiKey = getSecret(apiKeyName); } catch (e) {
+      fail(new Error(`Can't decrypt the stored ${which} API key: ${(e as Error).message}`)); return;
+    }
+    const ep = endpoint.replace(/^(https?:\/\/[^/]+).*/, '$1');
+    let poll: NodeJS.Timeout | null = null;
+    const settle = (fn: () => void) => { if (poll) { clearInterval(poll); poll = null; } fn(); };
+    const handle = streamChat({
+      endpoint, model, apiKey,
+      messages: [
+        { role: 'system', content: target === 'harness' ? HARNESS_SYSTEM_PROMPT : LLM_SYSTEM_PROMPT },
+        { role: 'user', content: text },
+      ],
+      timeoutMs: target === 'harness' ? 120000 : 30000,
+    }, {
+      onToken: (t) => { if (!signal.cancelled) onToken(t); },
+      onDone: (full) => settle(() => done({ target: TARGET_NAMES[target], text: full })),
+      onError: (err) => settle(() => fail(new Error(
+        isConnectionError(err) ? `Can't reach your ${which} at ${ep} — is it running?`
+          : isAuthError(err) ? `Your ${which} at ${ep} rejected the API key (401/403).` : `${which} error: ${err}`,
+      ))),
+    });
+    poll = setInterval(() => { if (signal.cancelled) settle(() => { try { handle.cancel(); } catch { /* done */ } }); }, 100);
+  }));
+}
+
 export async function coordinate(
   userMessage: string,
   cb: CoordinatorCallbacks,

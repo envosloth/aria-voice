@@ -10,7 +10,9 @@ import { getSecureBackend, isSecureBackendSafe, setSecret, getSecret, deleteSecr
 import { streamChat } from './llm-stream';
 import { listModels, normalizeChatBaseUrl } from './llm-models';
 import { detectHarnessLive } from './harness-detect';
-import { coordinate, cancelCoordination, resetConversation, resumeSession, deletePersistedSession } from './coordinator';
+import { coordinate, cancelCoordination, resetConversation, resumeSession, deletePersistedSession, oneShotChat } from './coordinator';
+import { runLatencyTest } from './latency-test';
+import { performance } from 'perf_hooks';
 import { initTimers } from './timers';
 import * as sessions from './sessions';
 import * as sessionImport from './session-import';
@@ -367,6 +369,23 @@ function setupIpcHandlers(): void {
     if (!isNonEmptyString(id)) throw new Error('Invalid session id');
     return resumeSession(id);
   });
+  handle(IPC.PERF_LATENCY_TEST, async () => {
+    if (latencyTestRunning) return { ok: false, error: 'A test is already running.' };
+    latencyTestRunning = true;
+    const id = `${LATENCY_TEST_PREFIX}-${Date.now().toString(36)}`;
+    try {
+      return await runLatencyTest({
+        synthesize: testSynthesize,
+        transcribe: testTranscribe,
+        chat: oneShotChat,
+        now: () => performance.now(),
+      }, id);
+    } finally {
+      latencyTestRunning = false;
+      for (const [k, w] of sttWaiters) if (isLatencyTestId(k)) { sttWaiters.delete(k); w.reject(new Error('cancelled')); }
+      for (const k of [...ttsCollectors.keys()]) if (isLatencyTestId(k)) ttsCollectors.delete(k);
+    }
+  });
   handle(IPC.SESSIONS_IMPORT_SOURCES, () => sessionImport.listSources());
   handle(IPC.SESSIONS_IMPORT_LIST, (_e, source: unknown) => {
     if (!sessionImport.isImportSource(source)) throw new Error('Unknown import source');
@@ -710,7 +729,69 @@ function queueTtsControl(epoch: number, action: () => Promise<void>): void {
   }).catch((e) => console.error('[ARIA] TTS control failed:', (e as Error).message));
 }
 
+// ---- Latency test plumbing -------------------------------------------------
+// Test audio/transcripts are tagged with a 'latency-test' id and diverted here,
+// so nothing reaches the speakers, the transcript or the conversation.
+const LATENCY_TEST_PREFIX = 'latency-test';
+const isLatencyTestId = (id: unknown) => typeof id === 'string' && id.startsWith(LATENCY_TEST_PREFIX);
+interface TtsCollector { chunks: Buffer[]; sampleRate: number; requestedAt: number; firstChunkAt: number; done: () => void; fail: (e: Error) => void; }
+const ttsCollectors = new Map<string, TtsCollector>();
+const sttWaiters = new Map<string, { resolve: (text: string) => void; reject: (e: Error) => void; onSent: (t: number) => void }>();
+let latencyTestRunning = false;
+
+function failLatencyTest(name: SidecarName, status: string): void {
+  const err = new Error(`${name === 'tts' ? 'The voice' : name === 'stt' ? 'Speech recognition' : name} stopped during the test (${status}).`);
+  if (name === 'tts') for (const c of [...ttsCollectors.values()]) c.fail(err);
+  if (name === 'stt') for (const [k, w] of [...sttWaiters]) { sttWaiters.delete(k); w.reject(err); }
+}
+
+function testSynthesize(text: string, replyId: string) {
+  return new Promise<{ chunks: Buffer[]; sampleRate: number; firstChunkAt: number; requestedAt: number }>((resolveP, rejectP) => {
+    void ensureSidecar('tts').then(() => {
+      const c: TtsCollector = { chunks: [], sampleRate: 24000, requestedAt: 0, firstChunkAt: 0, done: () => {},
+        fail: (e) => { ttsCollectors.delete(replyId); rejectP(e); } };
+      c.done = () => {
+        ttsCollectors.delete(replyId);
+        if (!c.chunks.length) { rejectP(new Error('The voice produced no audio.')); return; }
+        resolveP({ chunks: c.chunks, sampleRate: c.sampleRate, firstChunkAt: c.firstChunkAt, requestedAt: c.requestedAt });
+      };
+      ttsCollectors.set(replyId, c);
+      ttsAudioGate.activate(replyId, ttsEpoch);
+      c.requestedAt = performance.now();
+      supervisor.sendToSidecar('tts', { type: 'synthesize', text, reply_id: replyId, request_id: `${replyId}:1`, epoch: ttsEpoch });
+      supervisor.sendToSidecar('tts', { type: 'reply_done', reply_id: replyId, epoch: ttsEpoch });
+    }, rejectP);
+  });
+}
+
+function testTranscribe(pcm: Buffer, turnId: string, onSent: (t: number) => void) {
+  return new Promise<string>((resolveP, rejectP) => {
+    void ensureSidecar('stt', STT_START_DEADLINE_MS).then(() => {
+      sttWaiters.set(turnId, { resolve: resolveP, reject: rejectP, onSent });
+      // Synchronous: no live-mic IPC can interleave between begin and end, so
+      // only the test audio is captured for this turn.
+      sttActiveTurn = null;
+      sttTurnId = turnId;
+      sttGate.begin(turnId);
+      const FRAME = 3200; // 100 ms at 16 kHz s16le, like real mic frames
+      for (let i = 0; i < pcm.length; i += FRAME) sttGate.pushAudio(pcm.subarray(i, i + FRAME));
+      sttGate.end();
+      if (supervisor.sendToSidecar('stt', { type: 'start', utterance_id: turnId })) sttActiveTurn = turnId;
+    }, rejectP);
+  });
+}
+
 function deliverTtsPackets(packets: TtsAudioPacket[]): void {
+  const forRenderer: TtsAudioPacket[] = [];
+  for (const packet of packets) {
+    const col = ttsCollectors.get(packet.replyId);
+    if (col) {
+      if (!col.chunks.length) col.firstChunkAt = performance.now();
+      col.sampleRate = packet.sampleRate || col.sampleRate;
+      col.chunks.push(Buffer.from(packet.pcm));
+    } else forRenderer.push(packet);
+  }
+  packets = forRenderer;
   for (const packet of packets) {
     mainWindow?.webContents.send(IPC.TTS_AUDIO, {
       pcm: packet.pcm,
@@ -721,6 +802,8 @@ function deliverTtsPackets(packets: TtsAudioPacket[]): void {
     });
   }
   for (const done of ttsAudioGate.takeReplyDone()) {
+    const col = ttsCollectors.get(done.replyId);
+    if (col) { col.done(); continue; }
     mainWindow?.webContents.send(IPC.TTS_STATE, { state: 'reply_done', replyId: done.replyId, epoch: done.epoch });
   }
 }
@@ -731,6 +814,7 @@ const LIFECYCLE_STATUSES = new Set(['ready', 'started', 'initialized', 'restarti
 function onSidecarStatus(name: SidecarName, status: string, detail?: string): void {
   if (LIFECYCLE_STATUSES.has(status)) lastSidecarLifecycle[name] = status;
   if (name === 'tts' && (status === 'started' || status === 'exited')) ttsAudioGate.resetTransport();
+  if (STT_DEATH_STATUSES.has(status)) failLatencyTest(name, status);
   if (name === 'stt') failSttTurnOnSidecarDeath(status, detail);
   mainWindow?.webContents.send(IPC.SIDECAR_STATUS, { name, status, detail });
   if (status === 'error' || status === 'circuit-open') {
@@ -741,6 +825,7 @@ function onSidecarStatus(name: SidecarName, status: string, detail?: string): vo
 
 function sendSttTranscribe(request: TranscribeRequest): void {
   sttActiveTurn = request.turnId;
+  sttWaiters.get(request.turnId)?.onSent(performance.now());
   supervisor.sendToSidecar('stt', {
     type: 'transcribe',
     utterance_id: request.turnId,
@@ -964,7 +1049,6 @@ app.whenReady().then(async () => {
               llm: document.getElementById('perf-llm').textContent,
               llmLabel: document.getElementById('perf-llm-label').textContent,
               tts: document.getElementById('perf-tts').textContent,
-              total: document.getElementById('perf-total').textContent,
               hw: document.getElementById('perf-hw').textContent,
               perfPreset: document.getElementById('cfg-perf-preset').value,
               updVersion: document.getElementById('update-version').textContent,
@@ -1376,6 +1460,9 @@ app.whenReady().then(async () => {
           smokeFailed = true;
         }
       }
+      // Live UI tests that drive the app over CDP (and kill it themselves) set
+      // ARIA_SMOKE_HOLD=1 so sidecars are not torn down under them.
+      if (process.env.ARIA_SMOKE_HOLD === '1') { console.log('[ARIA_SMOKE] holding (ARIA_SMOKE_HOLD)'); return; }
       console.log('[ARIA_SMOKE] shutting down');
       await supervisor.stopAll();
       console.log(smokeFailed ? '[ARIA_SMOKE] FAIL' : '[ARIA_SMOKE] OK');
@@ -1633,6 +1720,8 @@ function routeSidecarMessage(name: SidecarName, msg: Record<string, unknown>): v
         const turnId = typeof msg.utterance_id === 'string' ? msg.utterance_id : '';
         if (!sttGate.acceptResult(turnId)) break;
         if (sttActiveTurn === turnId) sttActiveTurn = null;
+        const waiter = sttWaiters.get(turnId);
+        if (waiter) { sttWaiters.delete(turnId); waiter.resolve(typeof msg.text === 'string' ? msg.text : ''); break; }
         perfMark(turnId, 'stt_result', { chars: typeof msg.text === 'string' ? msg.text.length : 0 });
         mainWindow?.webContents.send(IPC.STT_RESULT, { text: msg.text, turnId });
       }
@@ -1647,6 +1736,8 @@ function routeSidecarMessage(name: SidecarName, msg: Record<string, unknown>): v
       {
         const turnId = typeof msg.utterance_id === 'string' ? msg.utterance_id : '';
         if (sttActiveTurn === turnId) sttActiveTurn = null;
+        const failed = sttWaiters.get(turnId);
+        if (failed) { sttWaiters.delete(turnId); sttGate.failStart(turnId); failed.reject(new Error(String(msg.error || msg.detail || 'Speech recognition failed'))); break; }
         if (sttGate.failStart(turnId)) {
           mainWindow?.webContents.send(IPC.STT_STATE, { state: 'stt_failed', turnId, error: msg.error || msg.detail || 'Speech recognition failed' });
         }
@@ -1670,6 +1761,7 @@ function routeSidecarMessage(name: SidecarName, msg: Record<string, unknown>): v
       }
       break;
     case 'tts_done':
+      if (isLatencyTestId(msg.reply_id)) break;
       mainWindow?.webContents.send(IPC.TTS_STATE, {
         state: 'request_done',
         replyId: msg.reply_id,

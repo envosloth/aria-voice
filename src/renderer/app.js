@@ -2343,7 +2343,6 @@ const perfEls = {
   llm: document.getElementById('perf-llm'),
   llmLabel: document.getElementById('perf-llm-label'),
   tts: document.getElementById('perf-tts'),
-  total: document.getElementById('perf-total'),
   hw: document.getElementById('perf-hw'),
 };
 
@@ -2355,18 +2354,17 @@ function fmtMs(v) {
 // Paint the most-recent turn's per-stage timings into the panel. Cheap; called
 // on every perf mark (live) but only does work while the panel is visible.
 function refreshPerfPanel() {
-  if (!perfEls.total || !settingsOverlay.classList.contains('visible')) return;
+  if (!perfEls.firstAudio || !settingsOverlay.classList.contains('visible')) return;
   const s = perf.lastStages();
   if (!s) {
     perfEls.firstAudio.textContent = perfEls.stt.textContent = perfEls.llm.textContent = '—';
-    perfEls.tts.textContent = perfEls.total.textContent = '—';
+    perfEls.tts.textContent = '—';
     return;
   }
   perfEls.firstAudio.textContent = fmtMs(s.firstAudio);
   perfEls.stt.textContent = fmtMs(s.stt);
   perfEls.llm.textContent = fmtMs(s.llm);
   perfEls.tts.textContent = fmtMs(s.tts);
-  perfEls.total.textContent = fmtMs(s.total);
   perfEls.llmLabel.textContent = s.target ? '· LLM / Agent · ' + s.target : '· LLM / Agent';
   // Flag a slow time-to-first-audio (what the user feels) and a slow LLM stage in
   // the warning colour so the bottleneck is obvious at a glance.
@@ -2374,6 +2372,36 @@ function refreshPerfPanel() {
   perfEls.llm.classList.toggle('warn', typeof s.llm === 'number' && s.llm >= 2500);
 }
 try { perf.onUpdate(() => refreshPerfPanel()); } catch (e) {}
+
+// "Test" button: run the real STT -> AI -> voice pipeline on a test phrase in
+// the main process and show time to first audio with its breakdown. Silent and
+// off the record: no playback, no transcript, no session.
+const perfTestBtn = document.getElementById('perf-test-btn');
+const perfTestStatus = document.getElementById('perf-test-status');
+async function runPerfTest() {
+  if (!perfTestBtn || perfTestBtn.disabled) return;
+  if (orbStateName !== 'idle') { perfTestStatus.textContent = 'Wait until ARIA is idle, then try again.'; return; }
+  perfTestBtn.disabled = true;
+  perfTestBtn.textContent = 'Testing…';
+  perfTestStatus.textContent = 'Running the test — this takes a few seconds.';
+  let r = null;
+  try { r = await aria.perf.latencyTest(); } catch (e) { r = { ok: false, error: (e && e.message) || String(e) }; }
+  perfTestBtn.disabled = false;
+  perfTestBtn.textContent = 'Test again';
+  if (!r || !r.ok) {
+    perfTestStatus.textContent = 'Test failed: ' + friendlyError((r && r.error) || 'unknown error').text;
+    return;
+  }
+  perfEls.firstAudio.textContent = fmtMs(r.firstAudioMs);
+  perfEls.stt.textContent = fmtMs(r.sttMs);
+  perfEls.llm.textContent = fmtMs(r.llmMs);
+  perfEls.tts.textContent = fmtMs(r.ttsMs);
+  perfEls.llmLabel.textContent = r.target ? '· LLM / Agent · ' + r.target : '· LLM / Agent';
+  perfEls.firstAudio.classList.toggle('warn', r.firstAudioMs >= 2000);
+  perfEls.llm.classList.toggle('warn', r.llmMs >= 2500);
+  perfTestStatus.textContent = `Time to first audio: ${fmtMs(r.firstAudioMs)} (test). Heard “${r.transcript}”.`;
+}
+if (perfTestBtn) perfTestBtn.addEventListener('click', runPerfTest);
 
 // Detected hardware + adaptive profile (from the main process). Cached per cap.
 async function loadHardwareInfo() {
@@ -2873,11 +2901,55 @@ function resetConversationViewAfterSessionDelete() {
   orbState('idle');
 }
 
+// Sidebar order. Default: most recent activity first. Pinned conversations
+// stay on top in every order (that is what pinning is for).
+const SESSION_SORTS = [
+  { id: 'recent', label: 'Most recent' },
+  { id: 'oldest', label: 'Oldest first' },
+  { id: 'az', label: 'Name A–Z' },
+  { id: 'za', label: 'Name Z–A' },
+  { id: 'longest', label: 'Most messages' },
+];
+let sessionSort = 'recent';
+function sortSessions(list, mode) {
+  const byName = (a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base', numeric: true });
+  const cmp = {
+    recent: (a, b) => b.updatedAt - a.updatedAt,
+    oldest: (a, b) => a.updatedAt - b.updatedAt,
+    az: byName,
+    za: (a, b) => byName(b, a),
+    longest: (a, b) => b.turns - a.turns || b.updatedAt - a.updatedAt,
+  }[mode] || ((a, b) => b.updatedAt - a.updatedAt);
+  return [...list].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned) || cmp(a, b) || a.id.localeCompare(b.id));
+}
+(function addSessionSort() {
+  if (!sessionListEl || document.getElementById('session-sort')) return;
+  const row = document.createElement('label');
+  row.className = 'session-sort-row';
+  row.textContent = 'Sort';
+  const sel = document.createElement('select');
+  sel.id = 'session-sort';
+  sel.setAttribute('aria-label', 'Sort conversations');
+  for (const o of SESSION_SORTS) { const opt = document.createElement('option'); opt.value = o.id; opt.textContent = o.label; sel.appendChild(opt); }
+  sel.value = sessionSort;
+  sel.addEventListener('change', () => {
+    sessionSort = sel.value;
+    try { aria.config.set('ui.sessionSort', sessionSort); } catch (e) {}
+    renderSessionList();
+  });
+  row.appendChild(sel);
+  sessionListEl.parentNode.insertBefore(row, sessionListEl);
+  aria.config.get('ui.sessionSort').then((v) => {
+    if (v && SESSION_SORTS.some((o) => o.id === v) && v !== sessionSort) { sessionSort = v; sel.value = v; renderSessionList(); }
+  }).catch(() => {});
+})();
+
 async function renderSessionList() {
   if (!sessionListEl) return;
   closeSessionMenus(); // dispose any body-parked menu before we rebuild the items
   let list = [];
   try { list = await aria.sessions.list(); } catch (e) {}
+  list = sortSessions(list || [], sessionSort);
   sessionListEl.replaceChildren();
   // Token meter reflects the live conversation (or zeros for a fresh, unsaved one).
   const curSummary = list && list.find((s) => s.current);
@@ -2987,7 +3059,7 @@ async function renderSessionList() {
 // ---- Import conversations from the user's agent harness -----------------
 // A picker (native <dialog>: focus trap + Esc for free) listing past chats from
 // Hermes / Claude Code / Codex. Main reads the sources read-only; imports land
-// as pinned past sessions and are never re-imported twice.
+// as past sessions (in date order) and are never re-imported twice.
 let importDialog = null;
 function buildImportDialog() {
   const d = document.createElement('dialog');
@@ -3090,7 +3162,7 @@ async function openImportDialog(preferred) {
     await renderSessionList();
     d.close();
     showError(res.added === 0 ? 'Those conversations were already imported.'
-      : `Imported ${res.added} conversation${res.added === 1 ? '' : 's'}. ${res.added === 1 ? "It's" : "They're"} pinned in the sidebar.`, 'warn', null);
+      : `Imported ${res.added} conversation${res.added === 1 ? '' : 's'}. ${res.added === 1 ? "It's" : "They're"} in the sidebar.`, 'warn', null);
   };
   if (!d.open) d.showModal();
   if (available.length) {

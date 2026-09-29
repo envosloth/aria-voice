@@ -122,6 +122,8 @@ interface AppConfig {
     // (the family name of any font installed on the computer).
     font: 'system' | 'sans' | 'humanist' | 'rounded' | 'geometric' | 'serif' | 'mono' | 'readable' | 'custom';
     fontCustom: string;
+    // Sidebar conversation order.
+    sessionSort: 'recent' | 'oldest' | 'az' | 'za' | 'longest';
   };
   debug: {
     // When true, emit [ARIA_PERF] latency stage marks (see perf.ts). Off by
@@ -206,6 +208,7 @@ const defaults: AppConfig = {
     bgDim: 0,
     font: 'system',
     fontCustom: '',
+    sessionSort: 'recent',
   },
   debug: {
     perf: false,
@@ -231,6 +234,7 @@ const ENUMS: Record<string, readonly string[]> = {
   'ui.perfPreset': ['auto', 'power-saver', 'balanced', 'max-performance', 'custom'],
   'ui.background': ['observatory', 'obsidian', 'studio', 'eclipse', 'aurora', 'dusk', 'ocean', 'solid', 'custom'],
   'ui.glassStyle': ['smoked', 'frosted', 'clear'],
+  'ui.sessionSort': ['recent', 'oldest', 'az', 'za', 'longest'],
   'ui.font': ['system', 'sans', 'humanist', 'rounded', 'geometric', 'serif', 'mono', 'readable', 'custom'],
 };
 

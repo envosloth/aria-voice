@@ -69,6 +69,32 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       checks[`h${h}.scrolls`] = m.scrolls;
     }
     checks['usesMoreThanOldCap'] = out[800].listH > 0.34 * 800 + 40;
+    // Sorting: default most-recent, pins on top, each order applied, persisted.
+    const titles = `[...document.querySelectorAll('#session-list .s-title')].map(e => e.textContent)`;
+    const sort = await ev(`(async () => {
+      const wait = (ms) => new Promise(r => setTimeout(r, ms));
+      const sel = document.getElementById('session-sort');
+      const r = { present: !!sel, def: sel && sel.value, options: sel ? [...sel.options].map(o => o.value) : [] };
+      r.recent = ${titles};
+      for (const m of ['oldest', 'az', 'za', 'longest', 'recent', 'oldest']) {
+        sel.value = m; sel.dispatchEvent(new Event('change')); await wait(250); r[m] = ${titles};
+      }
+      r.saved = await aria.config.get('ui.sessionSort');
+      sel.value = 'recent'; sel.dispatchEvent(new Event('change')); await wait(200);
+      return r;
+    })()`);
+    const pins = ['Conversation number 1', 'Conversation number 2', 'Conversation number 3'];
+    const rest = (a) => a.slice(3);
+    const nums = (a) => rest(a).map((t) => Number(t.split(' ').pop()));
+    const asc = (a) => a.every((v, i) => !i || a[i - 1] <= v);
+    checks['sort.controlPresent'] = sort.present && sort.options.join() === 'recent,oldest,az,za,longest';
+    checks['sort.defaultMostRecent'] = sort.def === 'recent' && asc(nums(sort.recent));
+    checks['sort.pinsStayOnTop'] = ['recent', 'oldest', 'az', 'za'].every((m) => sort[m].slice(0, 3).every((t) => pins.includes(t)));
+    checks['sort.oldestReverses'] = asc(nums(sort.oldest).reverse());
+    const byName = (a) => rest(a).every((t, i, arr) => !i || arr[i - 1].localeCompare(t, undefined, { numeric: true, sensitivity: 'base' }) <= 0);
+    checks['sort.az'] = byName(sort.az);
+    checks['sort.za'] = byName([...sort.za.slice(0, 3), ...rest(sort.za).reverse()]);
+    checks['sort.persisted'] = sort.saved === 'oldest';
     for (const [k, v] of Object.entries(checks)) console.log(`[${k}] ${v ? 'PASS' : 'FAIL'}`);
     ok = Object.values(checks).every(Boolean);
     ws.close();

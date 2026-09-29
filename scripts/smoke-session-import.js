@@ -142,7 +142,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       hermesOnlyRealChats: out.hermesRows.join() === 'Channel growth ideas',
       codexSkipsSubagents: out.codexRows.join() === 'Plan my upload schedule',
       claudeUsesAiTitle: out.claudeRows.join() === 'Blender render settings',
-      importsSelected: out.goLabel === 'Import 1' && out.closedAfter && /^Imported 1 conversation\. It.s pinned/.test(out.banner),
+      importsSelected: out.goLabel === 'Import 1' && out.closedAfter && /^Imported 1 conversation\. It.s in the sidebar/.test(out.banner),
       sidebarShowsSource: out.sidebar.some((s) => /^Blender render settings \| from Claude Code/.test(s)),
       transcriptClean: out.transcript.join('\n') === 'user: Fix my render settings\nassistant: Set samples to 128.',
       noLeaks: !leaks.test(JSON.stringify(out.transcript) + JSON.stringify(out.hermesRows) + JSON.stringify(out.codexRows)),
