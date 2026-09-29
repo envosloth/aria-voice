@@ -1700,10 +1700,13 @@ async function detectHarnessInto(id, els, opts) {
   catch { if (statusEl) statusEl.textContent = ''; return null; }
   if (r.endpoint && endpointEl && (force || !endpointEl.value.trim())) endpointEl.value = r.endpoint;
   if (r.model && modelEl && (force || !modelEl.value.trim())) modelEl.value = r.model;
-  if (r.apiKey && keyEl && (force || !keyEl.value.trim())) keyEl.value = r.apiKey;
+  // Never pre-fill a key the running gateway just rejected.
+  if (r.apiKey && r.status !== 'key-rejected' && keyEl && (force || !keyEl.value.trim())) keyEl.value = r.apiKey;
   if (statusEl) {
-    statusEl.textContent = (r.found ? '✓ ' : '') + (r.message || '');
-    statusEl.style.color = r.found ? 'var(--success)' : 'var(--text-muted)';
+    const good = r.verified === true || (r.verified === undefined && r.found);
+    const bad = r.status === 'key-rejected' || r.status === 'weak-key';
+    statusEl.textContent = (good ? '✓ ' : bad ? '✕ ' : '') + (r.message || '');
+    statusEl.style.color = good ? 'var(--success)' : bad ? 'var(--error)' : 'var(--text-muted)';
   }
   return r;
 }
@@ -2929,17 +2932,23 @@ for (const el of [onb.llmKey, onb.llmEndpoint, onb.llmModel, onb.key, onb.endpoi
 
 // If a local harness (Hermes, OpenClaw) already wrote its gateway URL + key,
 // connect to it with zero questions.
+let onbAutoHint = null; // best partial detection, surfaced in the panel when auto-connect can't finish
 async function onbAutoConnect() {
+  let hint = null;
   for (const id of ['hermes', 'openclaw']) {
     const h = window.AriaHarnesses.byId(id);
     if (!h || !h.detect) continue;
     let r;
     try { r = await aria.llm.detectHarness(id); } catch { continue; }
-    if (r && r.found && r.endpoint && r.apiKey) {
+    // Only connect silently when the gateway is up AND accepts the key — a stale
+    // key or a stopped gateway would leave the user with a broken "connected" app.
+    if (r && r.verified && r.status === 'ready' && r.endpoint && r.apiKey) {
       await persistHarnessConnection(id, r.endpoint, r.model || h.defaultModel || '', r.apiKey);
-      return h;
+      return { harness: h, result: r };
     }
+    if (r && (r.found || r.status === 'running-no-key') && !hint) hint = { harness: h, result: r };
   }
+  onbAutoHint = hint;
   return null;
 }
 
@@ -2959,11 +2968,24 @@ async function onbAutoConnect() {
         await aria.config.set('ui.setup-needed', false);
         setSetupNeeded(false);
         await aria.config.set('ui.onboarded', true);
-        showSetupToast(`Connected to ${auto.name} on this machine. Change it any time in Settings.`);
+        showSetupToast(`Connected to ${auto.harness.name} on this machine. Change it any time in Settings.`);
         return;
       }
     }
     onbApplyHarness();
+    // A gateway was found but couldn't be verified: open the harness section
+    // pre-filled, with the exact reason and fix, instead of hiding it.
+    if (onbAutoHint) {
+      const { harness: hh, result: rr } = onbAutoHint;
+      onb.harness.value = hh.id;
+      onbApplyHarness();
+      if (rr.endpoint) onb.endpoint.value = rr.endpoint;
+      if (rr.model) onb.model.value = rr.model;
+      if (rr.apiKey) onb.key.value = rr.apiKey;
+      onb.harnessDetails.open = true;
+      onb.detectStatus.textContent = rr.message || '';
+      onb.detectStatus.style.color = 'var(--text-muted)';
+    }
     // Start on the "Choose a provider…" placeholder; picking a preset fills the
     // endpoint and model, so the user normally only pastes a key.
     onb.llmProvider.value = '';

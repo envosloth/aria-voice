@@ -9,7 +9,7 @@ import { validateConfigSet } from './config';
 import { getSecureBackend, isSecureBackendSafe, setSecret, getSecret, deleteSecret } from './secure-storage';
 import { streamChat } from './llm-stream';
 import { listModels, normalizeChatBaseUrl } from './llm-models';
-import { detectHarness } from './harness-detect';
+import { detectHarnessLive } from './harness-detect';
 import { coordinate, cancelCoordination, resetConversation, resumeSession, deletePersistedSession } from './coordinator';
 import { initTimers } from './timers';
 import * as sessions from './sessions';
@@ -610,7 +610,7 @@ function setupIpcHandlers(): void {
   // (Hermes → ~/.hermes/.env, etc.). Reads the endpoint + gateway key so the
   // Settings/onboarding fields can pre-fill without the user hunting for the
   // key. Read-only; never persists — the renderer saves via the normal path.
-  handle(IPC.LLM_DETECT_HARNESS, (_e, id: string) => detectHarness(id || ''));
+  handle(IPC.LLM_DETECT_HARNESS, (_e, id: string) => detectHarnessLive(typeof id === 'string' ? id : ''));
 
   // Mic PCM from the renderer (getUserMedia, 16kHz mono s16le). Always feed the
   // always-on wake-word sidecar; also feed STT while an utterance is active.
