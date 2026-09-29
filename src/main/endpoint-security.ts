@@ -1,5 +1,10 @@
 import { URL } from 'url';
 
+/** Node request-options hostname is an address, not a bracketed URL authority. */
+export function requestHostname(url: URL): string {
+  return url.hostname.replace(/^\[|\]$/g, '');
+}
+
 // Never resolve names here: a hostname that merely happens to resolve locally
 // today is not a stable transport-security boundary. These are the literal
 // loopback forms users can safely use for local gateways and SSH tunnels.

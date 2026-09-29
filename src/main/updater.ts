@@ -15,6 +15,7 @@
 import { app, BrowserWindow, shell } from 'electron';
 import https from 'https';
 import http from 'http';
+import { requestHostname } from './endpoint-security';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -200,7 +201,7 @@ function httpGet(url: string, onData: (chunk: Buffer) => void, redirectsLeft = 5
     const u = new URL(url);
     const transport = u.protocol === 'https:' ? https : http;
     const req = transport.get(
-      { hostname: u.hostname, port: u.port, path: u.pathname + u.search, headers: { 'User-Agent': `ARIA/${currentVersion()}` } },
+      { hostname: requestHostname(u), port: u.port, path: u.pathname + u.search, headers: { 'User-Agent': `ARIA/${currentVersion()}` } },
       (res) => {
         if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirectsLeft > 0) {
           res.resume();

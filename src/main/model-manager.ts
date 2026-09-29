@@ -3,6 +3,7 @@ import path from 'path';
 import os from 'os';
 import https from 'https';
 import http from 'http';
+import { requestHostname } from './endpoint-security';
 import crypto from 'crypto';
 import { pipeline } from 'stream/promises';
 
@@ -329,7 +330,7 @@ async function downloadModelOnce(spec: ModelSpec, onProgress?: ProgressCallback,
       };
       const timeout = Math.min(requestTimeoutMs, remaining());
       const request = transport.get({
-        hostname: url.hostname,
+        hostname: requestHostname(url),
         port: url.port || (isHttps ? 443 : 80),
         path: url.pathname + url.search,
         headers,

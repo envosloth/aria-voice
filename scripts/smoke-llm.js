@@ -38,7 +38,7 @@ function makeServer() {
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       // No final newline/event separator: a compliant client must still parse
       // the trailing record when the response ends.
-      res.end(`data: ${JSON.stringify({ choices: [{ delta: { content: 'tail' } }] })}`);
+      res.end(`data: ${JSON.stringify({ choices: [{ delta: { content: 'tail' }, finish_reason: 'stop' }] })}`);
       return;
     }
 

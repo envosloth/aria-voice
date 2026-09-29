@@ -2,7 +2,7 @@ import https from 'https';
 import http from 'http';
 import { URL } from 'url';
 import { StringDecoder } from 'string_decoder';
-import { credentialedEndpointSecurityError } from './endpoint-security';
+import { credentialedEndpointSecurityError, requestHostname } from './endpoint-security';
 
 // Keep-alive connection pools, shared across every request. Without these Node
 // opens a fresh TCP (and, for https providers, a full TLS) connection for every
@@ -176,7 +176,7 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
   try {
     req = transport.request(
       {
-        hostname: url.hostname,
+        hostname: requestHostname(url),
         port: url.port || (isHttps ? 443 : 80),
         path: url.pathname + url.search,
         method: 'POST',
@@ -227,6 +227,13 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
           return;
         }
 
+        const contentType = (res.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+        if (contentType !== 'text/event-stream') {
+          finishError('LLM protocol error: expected text/event-stream Content-Type.');
+          return;
+        }
+
+        let sawFinishReason = false;
         let fullText = '';
         let buffer = '';
         let usage: TokenUsage | null = null;
@@ -267,6 +274,8 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
                 if (!cancelled) callbacks.onTool?.({ name: tool.name, args: tool.args });
               }
             }
+            const finishReason = parsed.choices?.[0]?.finish_reason;
+            if (typeof finishReason === 'string' && finishReason) sawFinishReason = true;
             const delta = parsed.choices?.[0]?.delta?.content;
             if (typeof delta === 'string' && delta) {
               if (fullText.length + delta.length > maxCompletionChars) {
@@ -314,7 +323,10 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
           if (settled) return;
           buffer += decoder.end();
           consumeRecords(true);
-          if (!settled) finishDone(fullText, usage);
+          if (!settled) {
+            if (sawFinishReason) finishDone(fullText, usage);
+            else finishError('LLM stream incomplete: response ended without a completion marker.', false);
+          }
         });
       },
     );

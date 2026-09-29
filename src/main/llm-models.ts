@@ -14,7 +14,7 @@ import http from 'http';
 import https from 'https';
 import { URL } from 'url';
 import { StringDecoder } from 'string_decoder';
-import { credentialedEndpointSecurityError } from './endpoint-security';
+import { credentialedEndpointSecurityError, requestHostname } from './endpoint-security';
 
 // Same wiring as llm-stream.ts: shared keep-alive agent pool so repeated
 // discovery probes across navigations in Settings don't handshake each time.
@@ -108,7 +108,7 @@ export function listModels(rawEndpoint: string, apiKey: string): Promise<Discove
     try {
       req = transport.request(
         {
-          hostname: url.hostname,
+          hostname: requestHostname(url),
           port: url.port || (isHttps ? 443 : 80),
           path: url.pathname + url.search,
           method: 'GET',
