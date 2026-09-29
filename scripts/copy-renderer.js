@@ -14,7 +14,7 @@ const outDir = path.join(__dirname, '..', 'dist', 'renderer');
 const files = [
   'index.html', 'app.js', 'audio-utils.js', 'mic-lifecycle.js', 'mic-worklet.js',
   'harnesses.js', 'orb.js', 'perf.js', 'appearance.js', 'ux.css', 'speech-settings.js',
-  'tactile.css', 'tactile.js',
+  'tactile.css', 'tactile.js', 'liquid.css', 'liquid.js',
 ];
 // The orb is procedural (orb.js); no runtime media ships with the renderer.
 const outAssetsDir = path.join(outDir, 'assets');

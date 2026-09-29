@@ -1,0 +1,67 @@
+/* A single button material, including dynamic menus and reply actions.
+ * Finish-only overrides intentionally beat legacy per-ID solid fills.
+ * Scene swatches keep their miniature wallpaper beneath the glass rim. */
+body :is(button, [role="button"], input[type="button"], input[type="submit"]) {
+  --liquid-glass: 1;
+  --liquid-tint: var(--ink-chip, rgba(255,255,255,.07));
+  background-color: var(--liquid-tint) !important;
+  border-color: color-mix(in srgb, var(--text) 20%, transparent) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.45), inset 0 -1px 0 rgba(0,0,0,.15),
+    inset 0 0 0 1px color-mix(in srgb, var(--text) 12%, transparent), 0 3px 9px rgba(0,0,0,.13) !important;
+  backdrop-filter: blur(calc(var(--glass-blur, 26px) * .28)) saturate(1.45);
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur, 26px) * .28)) saturate(1.45);
+  color: var(--liquid-ink, var(--text)) !important;
+  border-radius: var(--liquid-radius, 10px);
+  transition: transform .18s ease, box-shadow .2s ease, background-color .2s ease, color .2s ease, opacity .2s ease;
+}
+body :is(button, [role="button"], input[type="button"], input[type="submit"]):not(.bg-swatch) {
+  background-image: radial-gradient(ellipse at 18% 0%, rgba(255,255,255,.22), transparent 65%),
+    linear-gradient(160deg, rgba(255,255,255,.1), transparent 45%, rgba(255,255,255,.035)) !important;
+}
+body :is(button, [role="button"]):hover:not(:disabled) {
+  --liquid-tint: var(--ink-chip-hover, rgba(255,255,255,.13));
+}
+body :is(button, [role="button"]):is(:active, .is-pressed):not(:disabled) {
+  box-shadow: inset 0 2px 5px rgba(0,0,0,.22), inset 0 0 0 1px rgba(255,255,255,.22),
+    0 0 0 transparent, 0 1px 3px rgba(0,0,0,.08) !important;
+  transform: translateY(1px) scale(.97) !important;
+}
+body :is(button.primary, #send-btn:not(:disabled), .setup-connection, .snav-item.active,
+  button[aria-checked="true"], button[aria-pressed="true"]) {
+  --liquid-tint: color-mix(in srgb, var(--accent-active) 18%, var(--ink-chip, transparent));
+}
+body :is(button.danger, .activity-stop, .error-action) {
+  --liquid-ink: var(--error);
+  --liquid-tint: color-mix(in srgb, var(--error) 12%, var(--ink-chip, transparent));
+}
+body button:disabled { opacity: .45; cursor: default; }
+body button:focus-visible { outline: 2px solid var(--accent-active); outline-offset: 3px; }
+html[data-blur-off] body :is(button, [role="button"], input[type="button"], input[type="submit"]) {
+  backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+}
+/* A compact voice key rather than an oversized solid microphone puck. */
+#mic-btn {
+  --liquid-radius: 999px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+  width: 96px; min-width: 96px; height: 42px; flex: 0 0 96px;
+  padding: 0 14px; border-radius: 999px;
+  font-size: 12px; font-weight: 650; letter-spacing: .015em;
+}
+#mic-btn > svg { display: none; }
+.voice-wave { display: inline-flex; align-items: center; justify-content: center; gap: 2px; height: 20px; width: 22px; }
+.voice-wave i { display: block; width: 2px; height: 7px; border-radius: 2px; background: currentColor; opacity: .8; }
+.voice-wave i:nth-child(2), .voice-wave i:nth-child(4) { height: 13px; }
+.voice-wave i:nth-child(3) { height: 18px; }
+#mic-btn.listening { --liquid-tint: color-mix(in srgb, var(--accent-active) 23%, var(--ink-chip, transparent)); animation: liquid-mic-ring 1.8s ease-in-out infinite; }
+#mic-btn.listening .voice-wave i { animation: liquid-voice-wave .8s ease-in-out infinite alternate; }
+#mic-btn.listening .voice-wave i:nth-child(2) { animation-delay: -.3s; }
+#mic-btn.listening .voice-wave i:nth-child(3) { animation-delay: -.6s; }
+#mic-btn.listening .voice-wave i:nth-child(4) { animation-delay: -.15s; }
+#mic-btn.listening .voice-wave i:nth-child(5) { animation-delay: -.45s; }
+@keyframes liquid-voice-wave { from { transform: scaleY(.45); } to { transform: scaleY(1); } }
+@keyframes liquid-mic-ring { 0%,100% { outline: 1px solid transparent; outline-offset: 1px; } 50% { outline: 1px solid color-mix(in srgb, var(--accent-active) 40%, transparent); outline-offset: 4px; } }
+@media (prefers-reduced-motion: reduce) {
+  body :is(button, [role="button"]) { transition: none !important; }
+  #mic-btn.listening, #mic-btn.listening .voice-wave i { animation: none !important; }
+  body :is(button, [role="button"]):is(:active, .is-pressed):not(:disabled) { transform: none !important; }
+}
