@@ -118,6 +118,10 @@ interface AppConfig {
     glassBlur: number;    // backdrop blur radius in px, 0..60
     glassOpacity: number; // glass tint strength in percent, 0..100
     bgDim: number;        // darkening over the background in percent, 0..80
+    // One typeface for the whole UI: a preset id, or 'custom' + fontCustom
+    // (the family name of any font installed on the computer).
+    font: 'system' | 'sans' | 'humanist' | 'rounded' | 'geometric' | 'serif' | 'mono' | 'readable' | 'custom';
+    fontCustom: string;
   };
   debug: {
     // When true, emit [ARIA_PERF] latency stage marks (see perf.ts). Off by
@@ -200,6 +204,8 @@ const defaults: AppConfig = {
     glassBlur: 26,
     glassOpacity: 30,
     bgDim: 0,
+    font: 'system',
+    fontCustom: '',
   },
   debug: {
     perf: false,
@@ -225,6 +231,7 @@ const ENUMS: Record<string, readonly string[]> = {
   'ui.perfPreset': ['auto', 'power-saver', 'balanced', 'max-performance', 'custom'],
   'ui.background': ['observatory', 'obsidian', 'studio', 'eclipse', 'aurora', 'dusk', 'ocean', 'solid', 'custom'],
   'ui.glassStyle': ['smoked', 'frosted', 'clear'],
+  'ui.font': ['system', 'sans', 'humanist', 'rounded', 'geometric', 'serif', 'mono', 'readable', 'custom'],
 };
 
 // Inclusive numeric bounds (and integer-ness) for leaves where an out-of-range
@@ -312,6 +319,11 @@ export function validateConfigSet(
   }
   if (typeof value === 'string' && value.length > 4096) {
     return { ok: false, error: `${key} is too long` };
+  }
+  // A font family name ends up inside a CSS font-family value: keep it to
+  // characters real family names use, so it can never break out of the rule.
+  if (key === 'ui.fontCustom' && typeof value === 'string' && !/^[\p{L}\p{N} _.-]{0,64}$/u.test(value)) {
+    return { ok: false, error: 'ui.fontCustom must be a plain font name (letters, numbers, spaces, - _ .)' };
   }
   if (key === 'remote.rawCommand' && opts.rejectRawCommand && typeof value === 'string' && value.trim()) {
     return { ok: false, error: 'remote.rawCommand cannot be set from the renderer' };

@@ -80,7 +80,9 @@
     "smoke:classifier-check": "npm run build && node scripts/smoke-classifier-check.js",
     "smoke:orb-truth": "node scripts/smoke-orb-truth.js",
     "smoke:ux-live": "npm run build && node scripts/smoke-ux-live.js",
-    "smoke:session-import": "npm run build && node scripts/smoke-session-import.js"
+    "smoke:session-import": "npm run build && node scripts/smoke-session-import.js",
+    "smoke:font": "npm run build && node scripts/smoke-font.js",
+    "smoke:sidebar": "npm run build && node scripts/smoke-sidebar.js"
   },
   "author": "ARIA Project <aria@localhost>",
   "license": "MIT",

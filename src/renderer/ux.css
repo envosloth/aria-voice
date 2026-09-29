@@ -43,11 +43,17 @@
 
 /* ── Import conversations ── */
 .import-btn {
-  border: 0; border-radius: 999px; padding: 3px 8px; cursor: pointer; white-space: nowrap;
-  font: inherit; font-size: 11px; background: var(--chip-fill, rgba(255,255,255,.06)); color: var(--text-muted, #aab);
-  box-shadow: var(--chip-rim, 0 0 0 1px rgba(255,255,255,.1));
+  -webkit-app-region: no-drag; display: inline-flex; align-items: center; justify-content: center;
+  margin-left: auto; padding: 3px 6px; border-radius: 7px; cursor: pointer; flex: none;
+  border: 1px solid var(--border, rgba(255,255,255,.1)); background: rgba(255,255,255,.04);
+  color: var(--text-muted, #aab); transition: color .18s ease, background .18s ease;
 }
-.import-btn:hover, .import-btn:focus-visible { color: var(--text, #fff); background: var(--chip-fill-hover, rgba(255,255,255,.12)); outline: none; }
+.import-btn:hover, .import-btn:focus-visible { color: var(--text, #fff); background: rgba(255,255,255,.1); outline: none; }
+.import-btn:focus-visible { box-shadow: 0 0 0 2px var(--accent-active, #7aa2ff); }
+/* The header row: buttons never shrink or clip; the caption gives way first. */
+.side-cap-actions { min-width: 0; }
+.side-cap-actions > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-cap-actions > button { flex: none; }
 .import-dialog {
   width: min(560px, 92vw); max-height: 80vh; padding: 0; border: 1px solid var(--glass-border, rgba(255,255,255,.14));
   border-radius: 18px; color: var(--text, #eef);
@@ -82,3 +88,12 @@
 .import-cancel { background: transparent; color: var(--text-muted, #aab); box-shadow: var(--chip-rim, 0 0 0 1px rgba(255,255,255,.12)); }
 .import-go { background: var(--accent-active, #7aa2ff); color: #0b0e16; font-weight: 600; }
 .import-go:disabled { opacity: .45; cursor: default; }
+
+/* ── Font preview (Settings → Appearance) ── */
+.font-preview {
+  margin: 6px 0 14px; padding: 10px 14px; border-radius: 12px; font-size: 15px;
+  background: var(--chip-fill, rgba(255,255,255,.05)); box-shadow: var(--chip-rim, 0 0 0 1px rgba(255,255,255,.1));
+}
+
+/* Form controls don't inherit the page font by default — make them. */
+button, input, select, textarea, optgroup { font-family: inherit; }

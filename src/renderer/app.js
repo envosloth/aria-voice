@@ -173,6 +173,88 @@ function setupAppearanceControls() {
   paintAppearanceControls();
 }
 
+// ---- Font: one typeface for the whole app --------------------------------
+// Presets are system font stacks (ARIA is offline-first: nothing is fetched);
+// each falls back to a sensible generic family when its first choices aren't
+// installed. 'custom' uses any font installed on this computer by name.
+const FONT_PRESETS = [
+  { id: 'system', label: 'System default', stack: 'system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, "Noto Sans", sans-serif' },
+  { id: 'sans', label: 'Clean sans', stack: 'Inter, "Helvetica Neue", Helvetica, Arial, "Liberation Sans", sans-serif' },
+  { id: 'humanist', label: 'Humanist', stack: '"Segoe UI", "Fira Sans", "Source Sans 3", "Source Sans Pro", "Open Sans", "Noto Sans", sans-serif' },
+  { id: 'rounded', label: 'Rounded', stack: 'ui-rounded, "SF Pro Rounded", Nunito, "Varela Round", Quicksand, "Arial Rounded MT Bold", sans-serif' },
+  { id: 'geometric', label: 'Geometric', stack: '"Space Grotesk", Futura, "Century Gothic", Poppins, Montserrat, "Avenir Next", sans-serif' },
+  { id: 'serif', label: 'Serif', stack: 'ui-serif, Charter, "Iowan Old Style", Georgia, "Noto Serif", "DejaVu Serif", serif' },
+  { id: 'mono', label: 'Monospace', stack: 'ui-monospace, "JetBrains Mono", "Cascadia Code", "SF Mono", "Fira Code", Menlo, "DejaVu Sans Mono", monospace' },
+  { id: 'readable', label: 'High legibility', stack: '"Atkinson Hyperlegible", "Lexend", Verdana, "DejaVu Sans", sans-serif' },
+  { id: 'custom', label: 'Custom (installed font)…', stack: '' },
+];
+const FONT_NAME_OK = /^[\p{L}\p{N} _.-]{1,64}$/u;
+function fontStack(id, custom) {
+  const preset = FONT_PRESETS.find((f) => f.id === id) || FONT_PRESETS[0];
+  if (preset.id !== 'custom') return preset.stack;
+  const name = String(custom || '').trim();
+  return FONT_NAME_OK.test(name) ? `"${name}", ${FONT_PRESETS[0].stack}` : FONT_PRESETS[0].stack;
+}
+function applyFont(id, custom) {
+  document.documentElement.style.setProperty('--font-ui', fontStack(id, custom));
+}
+// Is a family actually installed? Compare its rendered width against two
+// different generic fallbacks; an installed font changes at least one.
+function fontInstalled(name) {
+  try {
+    const c = document.createElement('canvas').getContext('2d');
+    const sample = 'mmmmmmmmmmlli1WQ@#';
+    return ['monospace', 'serif'].some((base) => {
+      c.font = `32px ${base}`; const w0 = c.measureText(sample).width;
+      c.font = `32px "${name}", ${base}`; return c.measureText(sample).width !== w0;
+    });
+  } catch (e) { return true; }
+}
+async function setupFontControls() {
+  const sel = document.getElementById('cfg-font');
+  const row = document.getElementById('cfg-font-custom-row');
+  const input = document.getElementById('cfg-font-custom');
+  const status = document.getElementById('cfg-font-custom-status');
+  const preview = document.getElementById('cfg-font-preview');
+  if (!sel || sel.childElementCount) return;
+  for (const f of FONT_PRESETS) {
+    const o = document.createElement('option');
+    o.value = f.id; o.textContent = f.label;
+    if (f.stack) o.style.fontFamily = f.stack;
+    sel.appendChild(o);
+  }
+  let id = 'system'; let custom = '';
+  try { id = (await aria.config.get('ui.font')) || 'system'; custom = (await aria.config.get('ui.fontCustom')) || ''; } catch (e) {}
+  sel.value = id; input.value = custom;
+  const paint = () => {
+    row.hidden = sel.value !== 'custom';
+    if (preview) preview.style.fontFamily = fontStack(sel.value, input.value);
+    if (sel.value === 'custom') {
+      const name = input.value.trim();
+      status.textContent = !name ? 'Type the name of a font installed on this computer.'
+        : !FONT_NAME_OK.test(name) ? 'Use letters, numbers, spaces, - _ or . only.'
+          : fontInstalled(name) ? `Using ${name}.` : `“${name}” isn't installed here — showing the system font instead.`;
+    }
+  };
+  const save = async () => {
+    const name = input.value.trim();
+    applyFont(sel.value, name);
+    paint();
+    try {
+      await aria.config.set('ui.font', sel.value);
+      if (sel.value !== 'custom' || !name || FONT_NAME_OK.test(name)) await aria.config.set('ui.fontCustom', FONT_NAME_OK.test(name) ? name : '');
+    } catch (e) { console.warn('[font] save failed', e); }
+  };
+  sel.addEventListener('change', () => { save(); if (sel.value === 'custom') input.focus(); });
+  let t = null;
+  input.addEventListener('input', () => { paint(); clearTimeout(t); t = setTimeout(save, 350); });
+  paint();
+}
+(async () => {
+  try { applyFont(await aria.config.get('ui.font'), await aria.config.get('ui.fontCustom')); } catch (e) {}
+  setupFontControls();
+})();
+
 // Apply the saved theme as early as possible to avoid a flash.
 (async () => {
   try { applyTheme((await aria.config.get('ui.theme')) || 'midnight'); } catch (e) {}
@@ -2712,7 +2794,6 @@ settingsOverlay.addEventListener('keydown', (e) => {
 // as a clickable list under "Current conversation"; clicking one reopens it —
 // main restores that transcript as the live history so you can continue it.
 const sessionListEl = document.getElementById('session-list');
-const currentSessionTile = document.getElementById('current-session-tile');
 const tokLlmEl = document.getElementById('ops-tok-llm');
 const tokHarnessEl = document.getElementById('ops-tok-harness');
 
@@ -2798,11 +2879,6 @@ async function renderSessionList() {
   let list = [];
   try { list = await aria.sessions.list(); } catch (e) {}
   sessionListEl.replaceChildren();
-  // Highlight the "Current conversation" tile only when the live conversation is
-  // a fresh, unsaved one (no persisted session is current); otherwise the active
-  // list item below carries the highlight.
-  const anyCurrent = !!(list && list.some((s) => s.current));
-  if (currentSessionTile) currentSessionTile.classList.toggle('sel', !anyCurrent);
   // Token meter reflects the live conversation (or zeros for a fresh, unsaved one).
   const curSummary = list && list.find((s) => s.current);
   updateTokenMeter(curSummary ? curSummary.tokens : null);
@@ -3035,12 +3111,14 @@ async function openImportDialog(preferred) {
   b.className = 'import-btn';
   b.title = 'Import conversations from your agent (Hermes, Claude Code, Codex)';
   b.setAttribute('aria-label', 'Import conversations');
-  b.textContent = 'Import';
+  // Icon-only, same chip style as "New": the sidebar header is ~200px wide, and
+  // a second text button pushed "New" past the edge.
+  b.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>';
   b.addEventListener('click', () => openImportDialog());
-  // Sit left of "New" (which owns margin-left:auto) so the pair never clips.
-  b.style.marginLeft = 'auto';
+  const header = newBtn.parentNode;
+  header.classList.add('side-cap-actions');
   newBtn.style.marginLeft = '4px';
-  newBtn.parentNode.insertBefore(b, newBtn);
+  header.insertBefore(b, newBtn);
 })();
 
 async function reopenSession(id) {

@@ -66,7 +66,10 @@
        gradient rim that catches light on the top edge and fades down the
        sides, as on real bevelled glass. */
     :root {
-      --mono: ui-monospace, 'IBM Plex Mono', 'SF Mono', 'Cascadia Code', Menlo, monospace;
+      /* One typeface for the whole app (Settings → Appearance → Font).
+         --mono is kept as an alias so every label follows the chosen font. */
+      --font-ui: system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, "Noto Sans", sans-serif;
+      --mono: var(--font-ui);
       --glass-blur: 26px; --glass-tint: .30; --bg-dim: 0; --ink-scrim: transparent;
       --glass-rgb: 16, 18, 24;          /* smoked: dark smoked glass */
       --glass-k: 1;                     /* tint multiplier per style */
@@ -112,7 +115,7 @@
     }
 
     body {
-      font-family: 'Space Grotesk', system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      font-family: var(--font-ui);
       background: var(--bg);
       color: var(--text);
       height: 100vh;
@@ -228,7 +231,8 @@
     .cap { font: 500 9.5px var(--mono); letter-spacing: .16em; color: color-mix(in srgb, var(--text) 45%, transparent); }
 
     /* ── Sidebar ── */
-    .sidebar { padding: 16px 14px; display: flex; flex-direction: column; gap: 6px; -webkit-app-region: drag; }
+    .sidebar { padding: 16px 14px; display: flex; flex-direction: column; gap: 6px; -webkit-app-region: drag; min-height: 0; overflow: hidden; }
+    .sidebar > :not(.session-list) { flex-shrink: 0; }
     .sidebar > * { -webkit-app-region: no-drag; }
     .brand { display: flex; align-items: center; gap: 9px; padding: 2px 4px 12px; border-bottom: 1px solid var(--border); }
     .brand-mark { width: 22px; height: 22px; border-radius: 7px; flex: none;
@@ -241,14 +245,14 @@
     #new-session-btn:active { transform: scale(.95); }
     #new-session-btn svg { flex: none; }
     /* Inline past-conversation list under the "Current conversation" tile. */
-    .session-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; overflow-y: auto; max-height: 34vh; }
+    .session-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; overflow-y: auto; flex: 1 1 auto; min-height: 0; padding-bottom: 8px; }
     .session-item { -webkit-app-region: no-drag; position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 28px; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: 10px; color: var(--text-muted); transition: background .16s ease, color .16s ease; }
     .session-item:hover { background: rgba(255,255,255,.05); color: var(--text); }
     .session-item.active { background: linear-gradient(160deg, rgba(255,255,255,.1), rgba(255,255,255,.035)); color: var(--text); border-color: rgba(255,255,255,.14); }
     .session-item.pinned { border-color: color-mix(in srgb, var(--accent-active) 22%, transparent); }
     .session-open { min-width: 0; display: flex; flex-direction: column; gap: 2px; align-items: stretch; text-align: left; border: 0; background: transparent; color: inherit; padding: 7px 0 7px 10px; cursor: pointer; font: inherit; }
     .session-item .s-title { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .session-item .s-meta { font: 400 9.5px var(--mono); color: var(--text-muted); }
+    .session-item .s-meta { font: 400 9.5px var(--mono); color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .session-menu-btn { width: 24px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 18px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
     .session-menu-btn:hover, .session-menu-btn[aria-expanded="true"] { color: var(--text); background: rgba(255,255,255,.08); }
     /* Fixed + re-parented onto <body> at open time (see app.js): the sidebar
@@ -787,12 +791,6 @@
           New
         </button>
       </div>
-      <div class="session sel" id="current-session-tile">
-        <div>
-          <div class="title">Current conversation</div>
-          <div class="meta">local · on-device</div>
-        </div>
-      </div>
       <!-- Past conversations: persisted sessions, newest first, click to reopen. -->
       <div class="session-list" id="session-list"></div>
 
@@ -1169,6 +1167,16 @@
             <option value="light">Light</option>
           </select>
         </label>
+        <label>Font
+          <select id="cfg-font"></select>
+        </label>
+        <div id="cfg-font-custom-row" hidden>
+          <label>Font name
+            <input type="text" id="cfg-font-custom" maxlength="64" spellcheck="false" autocomplete="off" placeholder="e.g. Inter, Fira Sans, Atkinson Hyperlegible">
+          </label>
+          <p class="hint" id="cfg-font-custom-status" aria-live="polite"></p>
+        </div>
+        <p class="font-preview" id="cfg-font-preview">The quick brown fox — ARIA speaks 0123456789.</p>
       </section>
 
       <section id="appearance-background">

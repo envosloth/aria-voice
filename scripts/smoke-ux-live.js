@@ -14,7 +14,7 @@ const electron = require('electron');
 const child = spawn(electron, ['--no-sandbox', `--remote-debugging-port=${port}`, `--user-data-dir=${userData}`,
   path.join(root, 'dist', 'main', 'index.js')], {
   cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
-  env: { ...process.env, ARIA_SMOKE: '1', ARIA_SMOKE_HOLD: '1', ARIA_SMOKE_USER_DATA: userData,
+  env: { ...process.env, ARIA_IMPORT_HOME: userData, HERMES_HOME: path.join(userData, 'no-hermes'), ARIA_SMOKE: '1', ARIA_SMOKE_HOLD: '1', ARIA_SMOKE_USER_DATA: userData,
     XDG_CONFIG_HOME: path.join(userData, 'x'), XDG_CACHE_HOME: path.join(userData, 'c') },
 });
 let log = '';
