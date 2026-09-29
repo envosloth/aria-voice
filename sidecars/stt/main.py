@@ -21,8 +21,12 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 import wave
+
+sys.path.insert(0, os.path.dirname(__file__))
+import cloud_stt
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "shared"))
 from base_sidecar import BaseSidecar
@@ -56,7 +60,11 @@ class SttSidecar(BaseSidecar):
 
     @staticmethod
     def _cloud_config():
-        if os.environ.get("ARIA_STT_PROVIDER", "local") != "groq":
+        provider = os.environ.get("ARIA_STT_PROVIDER", "local")
+        if provider in ("deepgram", "assemblyai"):
+            key = os.environ.get("ARIA_STT_CLOUD_KEY", "").strip()
+            return {"provider": provider, "key": key} if key else None
+        if provider != "groq":
             return None
         key = os.environ.get("ARIA_STT_GROQ_KEY", "").strip()
         if not key:
@@ -64,7 +72,7 @@ class SttSidecar(BaseSidecar):
         model = os.environ.get("ARIA_STT_GROQ_MODEL", "whisper-large-v3-turbo")
         if model not in ("whisper-large-v3-turbo", "whisper-large-v3"):
             raise ValueError("Unsupported Groq transcription model")
-        return {"endpoint": "https://api.groq.com/openai/v1/audio/transcriptions", "model": model, "key": key}
+        return {"provider": "groq", "endpoint": "https://api.groq.com/openai/v1/audio/transcriptions", "model": model, "key": key}
 
     def initialize(self) -> None:
         self.model_path = self._find_model()
@@ -84,9 +92,10 @@ class SttSidecar(BaseSidecar):
 
         backend = "vulkan" if self.using_vulkan else "cpu"
         mode = "server(warm)" if self._server_proc else "cli(cold)"
-        provider = "groq" if self._cloud else "local"
-        if os.environ.get("ARIA_STT_PROVIDER") == "groq" and not self._cloud:
-            self._emit_status("warning", "Groq key unavailable; transcription stays local")
+        provider = self._cloud["provider"] if self._cloud else "local"
+        requested = os.environ.get("ARIA_STT_PROVIDER", "local")
+        if requested in ("groq", "deepgram", "assemblyai") and not self._cloud:
+            self._emit_status("warning", f"{requested} key unavailable; transcription stays local")
         self._emit_status("initialized", f"provider={provider} backend={backend} mode={mode} model={os.path.basename(self.model_path)}")
 
     # ---- audio handling ----
@@ -225,10 +234,12 @@ class SttSidecar(BaseSidecar):
                 return self._transcribe_cloud(pcm_data)
             except Exception as exc:
                 # Never log exception text from a credentialed endpoint.
-                reason = f"HTTP {exc.code}" if isinstance(exc, urllib.error.HTTPError) else type(exc).__name__
+                reason = (str(exc) if isinstance(exc, cloud_stt.CloudError) else
+                          f"HTTP {exc.code}" if isinstance(exc, urllib.error.HTTPError) else type(exc).__name__)
                 if isinstance(exc, urllib.error.HTTPError):
                     exc.close()
-                self._emit_status("warning", f"Groq unavailable ({reason}); transcribing locally")
+                provider = self._cloud["provider"]
+                self._emit_status("warning", f"{provider} unavailable ({reason}); transcribing locally")
         if self._server_proc and self._server_proc.poll() is None:
             try:
                 return self._transcribe_server(pcm_data)
@@ -239,6 +250,9 @@ class SttSidecar(BaseSidecar):
     _CLOUD_TIMEOUT_S = 5
 
     def _transcribe_cloud(self, pcm_data: bytes) -> str:
+        assert self._cloud is not None
+        if self._cloud["provider"] in ("deepgram", "assemblyai"):
+            return cloud_stt.transcribe(self._cloud, self._pcm_to_wav(pcm_data), self._CLOUD_TIMEOUT_S)
         class NoRedirect(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, headers, newurl):
                 return None
