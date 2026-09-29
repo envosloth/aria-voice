@@ -2009,6 +2009,8 @@ const cfg = {
   sttModel: document.getElementById('cfg-stt-model'),
   sttBackend: document.getElementById('cfg-stt-backend'),
   ttsVoice: document.getElementById('cfg-tts-voice'),
+  ttsEngine: document.getElementById('cfg-tts-engine'),
+  ttsEngineHint: document.getElementById('cfg-tts-engine-hint'),
   ttsSpeed: document.getElementById('cfg-tts-speed'),
   ttsSpeedVal: document.getElementById('cfg-tts-speed-val'),
   volume: document.getElementById('cfg-volume'),
@@ -2336,6 +2338,76 @@ if (cfg.tunnelCopyUrl) {
   });
 }
 
+// --- Text-to-speech: engine and voice chosen separately ---------------------
+// Kokoro ships one model + a voice pack (every voice below is in it, no extra
+// download). Piper ships one model file per voice; the two below are the ones
+// ARIA knows how to fetch and verify (model-manager.ts PIPER_MODELS).
+const TTS_VOICES = {
+  kokoro: [
+    { id: 'bm_george', label: 'George — British male (Jarvis, recommended)' },
+    { id: 'bm_lewis', label: 'Lewis — British male' },
+    { id: 'bm_daniel', label: 'Daniel — British male' },
+    { id: 'bm_fable', label: 'Fable — British male' },
+    { id: 'bf_emma', label: 'Emma — British female' },
+    { id: 'bf_isabella', label: 'Isabella — British female' },
+    { id: 'bf_alice', label: 'Alice — British female' },
+    { id: 'bf_lily', label: 'Lily — British female' },
+    { id: 'af_heart', label: 'Heart — American female, warm' },
+    { id: 'af_bella', label: 'Bella — American female, expressive' },
+    { id: 'af_nicole', label: 'Nicole — American female, soft' },
+    { id: 'af_sarah', label: 'Sarah — American female' },
+    { id: 'af_sky', label: 'Sky — American female' },
+    { id: 'af_nova', label: 'Nova — American female' },
+    { id: 'af_river', label: 'River — American female' },
+    { id: 'af_jessica', label: 'Jessica — American female' },
+    { id: 'af_kore', label: 'Kore — American female' },
+    { id: 'af_aoede', label: 'Aoede — American female' },
+    { id: 'af_alloy', label: 'Alloy — American female' },
+    { id: 'am_michael', label: 'Michael — American male, clear' },
+    { id: 'am_adam', label: 'Adam — American male' },
+    { id: 'am_eric', label: 'Eric — American male' },
+    { id: 'am_liam', label: 'Liam — American male' },
+    { id: 'am_echo', label: 'Echo — American male' },
+    { id: 'am_onyx', label: 'Onyx — American male, deep' },
+    { id: 'am_fenrir', label: 'Fenrir — American male' },
+    { id: 'am_puck', label: 'Puck — American male, playful' },
+    { id: 'am_santa', label: 'Santa — American male, jolly' },
+  ],
+  piper: [
+    { id: 'en_GB-alan-medium', label: 'Alan — British male' },
+    { id: 'en_US-lessac-medium', label: 'Lessac — American female' },
+  ],
+};
+const TTS_DEFAULT_VOICE = { kokoro: 'bm_george', piper: 'en_GB-alan-medium' };
+const TTS_ENGINE_HINT = {
+  kokoro: 'Kokoro sounds natural but takes a little longer before it starts speaking. All its voices share one download.',
+  piper: 'Piper starts speaking fastest and uses the least CPU, but sounds more robotic. Each voice is a separate ~60 MB download.',
+};
+function engineForVoice(voice) { return /^(af_|am_|bf_|bm_)/.test(String(voice || '')) ? 'kokoro' : 'piper'; }
+// Fill the voice list for `engine`, keeping `preferVoice` if it belongs to it,
+// else the voice last chosen for that engine, else the engine's default.
+const lastVoiceFor = {};
+function setTtsEngineUi(engine, preferVoice) {
+  if (!cfg.ttsEngine || !cfg.ttsVoice) return;
+  const eng = TTS_VOICES[engine] ? engine : 'kokoro';
+  cfg.ttsEngine.value = eng;
+  cfg.ttsVoice.replaceChildren();
+  for (const v of TTS_VOICES[eng]) {
+    const o = document.createElement('option');
+    o.value = v.id; o.textContent = v.label;
+    cfg.ttsVoice.appendChild(o);
+  }
+  const pick = [preferVoice, lastVoiceFor[eng], TTS_DEFAULT_VOICE[eng]].find((v) => TTS_VOICES[eng].some((x) => x.id === v));
+  cfg.ttsVoice.value = pick;
+  lastVoiceFor[eng] = pick;
+  if (cfg.ttsEngineHint) cfg.ttsEngineHint.textContent = TTS_ENGINE_HINT[eng];
+}
+if (cfg.ttsEngine) {
+  setTtsEngineUi('kokoro');
+  cfg.ttsEngine.addEventListener('change', () => setTtsEngineUi(cfg.ttsEngine.value));
+  cfg.ttsVoice.addEventListener('change', () => { lastVoiceFor[cfg.ttsEngine.value] = cfg.ttsVoice.value; });
+}
+
 // --- Performance panel: live per-stage latency + hardware-adaptive GPU cap ---
 const perfEls = {
   firstAudio: document.getElementById('perf-first-audio'),
@@ -2635,7 +2707,11 @@ async function loadSettings() {
   cfg.sttModel.value = (await aria.config.get('stt.model')) || 'small';
   cfg.sttBackend.value = (await aria.config.get('stt.backend')) || 'vulkan';
   applyOrbSttBackend(cfg.sttBackend.value);
-  cfg.ttsVoice.value = (await aria.config.get('tts.voice')) || 'bm_george';
+  {
+    const savedVoice = (await aria.config.get('tts.voice')) || TTS_DEFAULT_VOICE.kokoro;
+    const savedEngine = (await aria.config.get('tts.engine')) || engineForVoice(savedVoice);
+    setTtsEngineUi(savedEngine, savedVoice);
+  }
   if (cfg.ttsSpeed) {
     const sp = await aria.config.get('tts.speed');
     cfg.ttsSpeed.value = (typeof sp === 'number' ? sp : 1.0);
@@ -3340,9 +3416,12 @@ settingsSave.addEventListener('click', async () => {
     await aria.config.set('stt.model', cfg.sttModel.value);
     await aria.config.set('stt.backend', cfg.sttBackend.value);
     applyOrbSttBackend(cfg.sttBackend.value);
+    const ttsEngine = cfg.ttsEngine.value;
     const ttsVoice = cfg.ttsVoice.value.trim();
-    await aria.config.set('tts.engine', /^(af_|am_|bf_|bm_)/.test(ttsVoice) ? 'kokoro' : 'piper');
-    await aria.config.set('tts.voice', ttsVoice);
+    // Never persist a voice that doesn't belong to the chosen engine.
+    const voiceOk = (TTS_VOICES[ttsEngine] || []).some((v) => v.id === ttsVoice);
+    await aria.config.set('tts.engine', ttsEngine);
+    await aria.config.set('tts.voice', voiceOk ? ttsVoice : TTS_DEFAULT_VOICE[ttsEngine]);
     await aria.config.set('wakeword.enabled', cfg.wwEnabled.checked);
     await aria.config.set('wakeword.phrase', cfg.wwPhrase.value.trim());
     loadWakeConfig();

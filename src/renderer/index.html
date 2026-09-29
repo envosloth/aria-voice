@@ -1109,17 +1109,16 @@
 
       <section>
         <h3>Text-to-Speech</h3>
-        <label>Voice
-          <select id="cfg-tts-voice">
-            <option value="bm_george">Jarvis — British male, Kokoro (recommended)</option>
-            <option value="af_heart">Aria — warm female, Kokoro (US)</option>
-            <option value="af_bella">Bella — expressive female, Kokoro (US)</option>
-            <option value="am_michael">Michael — clear male, Kokoro (US)</option>
-            <option value="bf_emma">Emma — British female, Kokoro</option>
-            <option value="en_GB-alan-medium">Piper — fast &amp; light (lowest latency, more robotic)</option>
+        <label>Engine
+          <select id="cfg-tts-engine">
+            <option value="kokoro">Kokoro — natural, neural (recommended)</option>
+            <option value="piper">Piper — fastest, lighter, more robotic</option>
           </select>
         </label>
-        <p class="hint">Kokoro-82M neural voices are natural but heavier to first audio; the Piper voice is small &amp; very low-latency. Both run locally on CPU.</p>
+        <label>Voice
+          <select id="cfg-tts-voice"></select>
+        </label>
+        <p class="hint" id="cfg-tts-engine-hint"></p>
         <label>Speaking speed <span class="hint" id="cfg-tts-speed-val">1.00×</span>
           <input type="range" id="cfg-tts-speed" min="0.5" max="2" step="0.05" value="1">
         </label>
