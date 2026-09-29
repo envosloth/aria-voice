@@ -55,6 +55,27 @@ check('onboarding.singleScreen',
 check('onboarding.autoConnectsLocalHarness',
   /async function onbAutoConnect\(/.test(app) && /await onbAutoConnect\(\)/.test(app) && /id="setup-toast"/.test(html),
   'a local Hermes/OpenClaw gateway with a readable key must connect with zero questions');
+const appearance = fs.readFileSync(path.join(root, 'src', 'renderer', 'appearance.js'), 'utf8');
+const copyRenderer = fs.readFileSync(path.join(root, 'scripts', 'copy-renderer.js'), 'utf8');
+check('glass.shipped',
+  /<script src="appearance\.js"><\/script>\s*<script src="app\.js">/.test(html) && /'appearance\.js'/.test(copyRenderer),
+  'appearance.js must load before app.js and be copied into dist');
+check('glass.material',
+  /--glass-blur/.test(html) && /backdrop-filter: var\(--glass-filter\)/.test(html) && /\.panel::before/.test(html) &&
+  /html\[data-glass="frosted"\]/.test(html) && /html\[data-glass="clear"\]/.test(html),
+  'panels need the tunable glass material, rim, and three material styles');
+check('glass.backgrounds',
+  ['obsidian', 'studio', 'eclipse', 'aurora', 'dusk', 'ocean', 'observatory', 'solid', 'custom'].every((b) => appearance.includes(`id: '${b}'`)) &&
+  /id="bg-swatches"[^>]*role="radiogroup"/.test(html),
+  'every background scene must be offered as an accessible radio');
+check('glass.customImage',
+  /id="custom-bg-file"[^>]*accept="image\//.test(html) && /indexedDB\.open/.test(appearance) &&
+  /MAX_IMAGE_BYTES/.test(appearance) && /img-src 'self' blob:/.test(html) && /id="custom-bg-clear"/.test(html),
+  'a custom image must be pickable, size-checked, kept out of JSON config, and removable');
+check('glass.controlsBound',
+  /bind\('cfg-glass-blur', 'glassBlur'\)/.test(app) && /host\.addEventListener\('keydown'/.test(app) &&
+  /addEventListener\('drop'/.test(app),
+  'blur/tint/dim sliders, keyboard swatch navigation, and drag-and-drop must be wired');
 check('onboarding.keyNotStoredByTest',
   !/onb\.llmTest\.addEventListener[\s\S]{0,400}aria\.secure\.set/.test(app),
   'testing a connection must not persist the key before the user presses Start');
