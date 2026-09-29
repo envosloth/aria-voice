@@ -1,0 +1,379 @@
+{
+  "cases": [
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What's the weather like in Denver in July?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What's the weather like in Denver right now?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How do I set a timer for twenty minutes?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Set a timer for twenty minutes."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What's a good way to get marker out of the couch?"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "Look up the best way to get marker out of the couch."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "What should I make for dinner with ground beef?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Order dinner for tonight from the usual place."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "When does the school year usually start around here?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "When does school start this year?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "How much should I budget for the kids' party?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "How much did we spend on the kids' party?"
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "What's a nice thing to write to the teacher?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Write the teacher a thank-you note."
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "How do I convert Celsius to Fahrenheit?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What's the temperature outside in Fahrenheit?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How do I print a return label from my phone?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Print the return label."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "Should I set up parental controls on the tablet?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Set up parental controls on the tablet."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "What's a good chore chart for three kids?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Make a chore chart for the kids."
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "What's a fun game for a rainy day?"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "Find a rainy-day game for the kids."
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "Remind me how many ounces are in a cup?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Remind me to pack snacks tonight."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What's a good age to start swim lessons?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How do I get red wine out of a tablecloth?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What's the capital of Portugal again?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How long is cooked chicken good in the fridge?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Why do toddlers get hiccups so much?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What does net thirty mean on a bill?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How do you fold a fitted sheet?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "My phone keeps saying the storage is almost full, what's that about?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "Should I let my nine-year-old walk to school alone?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "Is a second freezer worth it for a family of five?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "We have three birthday parties Saturday, which one should we skip?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "Do you think a minivan makes sense for us, or is that overkill?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "My son won't eat anything green, any ideas?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "How do I get everyone out the door on time without yelling?"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "What's fifteen percent of two hundred and forty?"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "If I double the recipe, how much butter do I need?"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "How many cups are in a gallon?"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "If each kid eats two slices, how many pizzas do we need?"
+    },
+    {
+      "cat": "chat-language",
+      "expect": "llm",
+      "text": "How do you say where's the bathroom in Spanish?"
+    },
+    {
+      "cat": "chat-language",
+      "expect": "llm",
+      "text": "What's another word for exhausted that sounds nicer?"
+    },
+    {
+      "cat": "chat-language",
+      "expect": "llm",
+      "text": "Translate please pick up your shoes into Portuguese."
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "Write a silly bedtime story about a raccoon who loves pancakes."
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "Make up a pirate name for my daughter's costume."
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "Give me a two-line rhyme about brushing teeth."
+    },
+    {
+      "cat": "chat-smalltalk",
+      "expect": "llm",
+      "text": "Honestly, I'm so tired today."
+    },
+    {
+      "cat": "chat-smalltalk",
+      "expect": "llm",
+      "text": "Tell me something nice about Mondays."
+    },
+    {
+      "cat": "explicit-llm",
+      "expect": "llm",
+      "text": "Just chat with me, no tools, how do I keep my cool at bedtime?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What's on the calendar for tomorrow morning?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "How long's the drive to the airport right now?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What time does the pharmacy on Oak Street close tonight?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Did the electric bill go up this month?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Who's picking up the kids today?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Do we have anything on Thursday afternoon?"
+    },
+    {
+      "cat": "explicit-harness",
+      "expect": "harness",
+      "text": "Hey agent, remind me to call the plumber tomorrow."
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Text the sitter that we're running late."
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "The printer's jammed again and I can't get it to stop."
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Can you get the dishwasher started? I already loaded it."
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Note that we're out of dishwasher tablets."
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Turn the porch light off, would you?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "I keep losing the wifi in the back bedroom."
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Reset the thermostat to sixty-eight."
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "Search for what time the zoo opens on Saturday."
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "See if the library has that dragon book for kids."
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Figure out what we need for the beach trip and add it to the list."
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "What about Saturday?"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "Did you get the thing I asked for?"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "Can you handle it?"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "llm",
+      "text": "Is that a lot?"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "llm",
+      "text": "What should I do about the leak under the sink?"
+    }
+  ]
+}

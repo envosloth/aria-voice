@@ -20,6 +20,9 @@ const Module = require('module');
 const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'aria-hardening-'));
 process.env.HOME = tmpHome;
 process.env.USERPROFILE = tmpHome;
+// Point $HERMES_HOME at the fake home too: detectHarness reads it FIRST, so a
+// real Hermes home in the ambient environment would shadow these fixtures.
+process.env.HERMES_HOME = path.join(tmpHome, '.hermes');
 
 // Electron stub: no app (JsonStore falls back to ~/.aria), safeStorage unavailable
 // (getSecret -> null, so no API key is attached).

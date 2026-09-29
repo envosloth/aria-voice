@@ -1,0 +1,379 @@
+{
+  "cases": [
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What's the weather in Denver right now?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What's the weather usually like in Denver in April?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Turn off the kitchen lights."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How do I turn off the kitchen lights on this speaker?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Set a timer for ten minutes."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How do timers work on this speaker?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Add milk to my shopping list."
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "Give me ideas for what belongs on a shopping list."
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "Search the web for the new Pixel review."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "What do you think the new Pixel review will say?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Who won the 2018 World Cup?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Who's winning the match right now?"
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "Translate 'where is the station' into French."
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Translate the page I'm looking at into French."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Summarize Romeo and Juliet in one line."
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Summarize the document on my screen."
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Don't set an alarm for tomorrow."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "Do I need an alarm if I always wake up early?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Play some jazz."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Explain what makes jazz sound like jazz."
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Remind me to call Dad at six."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How do reminders work on this thing?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What time is it in Tokyo right now?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What time zone is Tokyo in?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How do I unlink an old account from this app?"
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "If you had a smart home, what would you automate?"
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "Pretend you're a barista and take my order."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "No need to check anything, is Tuesday usually quiet at that place?"
+    },
+    {
+      "cat": "chat-smalltalk",
+      "expect": "llm",
+      "text": "Don't add anything to my calendar, I'm just thinking out loud."
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "Rewrite that last sentence I said to sound warmer."
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "Fix the grammar in this: 'me and him went to the store'."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Don't bother searching, roughly how far away is the moon?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "No need to look that up, who wrote Frankenstein?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "We don't need to schedule anything, what's a good gift for a new dad?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Supposing I wanted to build a birdhouse, where do I start?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "If I were repainting my kitchen, what colors go with oak?"
+    },
+    {
+      "cat": "chat-explain-code",
+      "expect": "llm",
+      "text": "Why does a loop never end if I forget to increase the counter?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How do people usually train for a five k race?"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "What's fifteen percent of two hundred forty?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Was it raining in London yesterday?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Who won the game last night?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Can you tell me how to change a car tire?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Change the input to HDMI two."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "What should I pack for a trip to Norway in January?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Is this speaker compatible with my phone?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Check whether the speaker is still connected to my phone."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How many steps does it take to set up a new profile?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Set up a guest profile on the speaker."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "Pretend I asked you to book a flight, what would you need from me?"
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Book a flight to Austin for next Thursday."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What's the best way to wash a cast iron pan?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Read out my last message."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "No need to play anything, just tell me who wrote that song."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Without searching, what's the tallest building in the world?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Without checking the calendar, when is Easter this year?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "What's on my calendar tomorrow?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Read the note on my screen out loud."
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "Make that sound less formal."
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "Say that again but shorter."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "What's a cheaper alternative to that suggestion?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Take a screenshot of this and save it."
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Tap the button labeled Save on the screen."
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "llm",
+      "text": "Was it raining in London yesterday? Just curious, no need to check."
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "How long until the pasta is done?"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "Is it going to rain, or should I just bring a jacket?"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "Rewrite my calendar invite to sound friendlier."
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "llm",
+      "text": "Explain how you'd look something up, without actually doing it."
+    },
+    {
+      "cat": "explicit-harness",
+      "expect": "harness",
+      "text": "Use the agent for this one, please."
+    },
+    {
+      "cat": "explicit-harness",
+      "expect": "harness",
+      "text": "Go ahead and use your tools to find that out."
+    },
+    {
+      "cat": "explicit-llm",
+      "expect": "llm",
+      "text": "Don't use any tools, just answer from what you know."
+    },
+    {
+      "cat": "explicit-llm",
+      "expect": "llm",
+      "text": "Answer without looking anything up."
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Plan a two day trip to Portland and email me the itinerary."
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "Run the tests and tell me what broke."
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Send a message to the team that I'll be late."
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Set the thermostat to twenty one degrees."
+    }
+  ]
+}

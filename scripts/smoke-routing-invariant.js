@@ -133,7 +133,10 @@ async function main() {
     advice.rec.llmRequests.length === 1 && advice.rec.harnessTasks.length === 0);
   check(checks, 'advice answer reaches the user', /direct explanation/i.test(advice.final));
 
-  const onScreen = await drive('summarize the document i am looking at', 'auto');
+  // A hard on-screen cue is the agent's job (only it can see the screen). The
+  // softer "I'm looking at" phrasing deliberately stays with the chat model
+  // unless the sentence asks for an ACTION on it — see router.ts rule 3.
+  const onScreen = await drive('what is on my screen', 'auto');
   check(checks, 'on-screen reference goes to the agent, not the chat model',
     onScreen.rec.harnessTasks.length === 1 && onScreen.rec.llmRequests.length === 0);
 
