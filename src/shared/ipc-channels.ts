@@ -52,6 +52,9 @@ export const IPC = {
   SESSIONS_DELETE: 'sessions:delete', // renderer -> main: remove a saved session
   SESSIONS_PIN: 'sessions:pin',       // renderer -> main: pin/unpin a saved session
   SESSIONS_RESUME: 'sessions:resume', // renderer -> main: reopen a session as the live one
+  SESSIONS_IMPORT_SOURCES: 'sessions:import-sources', // renderer -> main: which harness histories exist
+  SESSIONS_IMPORT_LIST: 'sessions:import-list',       // renderer -> main: importable conversations of one source
+  SESSIONS_IMPORT: 'sessions:import',                 // renderer -> main: import chosen conversations
 
   SECURE_STORE_GET: 'secure:get',
   SECURE_STORE_SET: 'secure:set',

@@ -13,6 +13,7 @@ import { detectHarnessLive } from './harness-detect';
 import { coordinate, cancelCoordination, resetConversation, resumeSession, deletePersistedSession } from './coordinator';
 import { initTimers } from './timers';
 import * as sessions from './sessions';
+import * as sessionImport from './session-import';
 import { buildManifest, missingOrInvalidModels, downloadModel } from './model-manager';
 import { perfEnabled, setPerfEnabled, perfMark, perfMarkExternal } from './perf';
 import { detectHardware, perfProfile, clampCap, resolveProfile, isPerfPreset, PerfPreset, ResourceProfile } from './hardware';
@@ -365,6 +366,21 @@ function setupIpcHandlers(): void {
   handle(IPC.SESSIONS_RESUME, (_e, id: unknown) => {
     if (!isNonEmptyString(id)) throw new Error('Invalid session id');
     return resumeSession(id);
+  });
+  handle(IPC.SESSIONS_IMPORT_SOURCES, () => sessionImport.listSources());
+  handle(IPC.SESSIONS_IMPORT_LIST, (_e, source: unknown) => {
+    if (!sessionImport.isImportSource(source)) throw new Error('Unknown import source');
+    const done = sessions.importedKeys();
+    return sessionImport.listCandidates(source).map((c) => ({ ...c, imported: done.has(`${source}:${c.externalId}`) }));
+  });
+  handle(IPC.SESSIONS_IMPORT, (_e, source: unknown, ids: unknown) => {
+    if (!sessionImport.isImportSource(source)) throw new Error('Unknown import source');
+    if (!Array.isArray(ids) || ids.length > 500 || !ids.every((v) => isNonEmptyString(v))) throw new Error('Invalid import selection');
+    const convs = sessionImport.loadConversations(source, ids as string[]);
+    const added = sessions.addImportedSessions(convs.map((c) => ({
+      key: `${source}:${c.externalId}`, title: c.title, startedAt: c.startedAt, updatedAt: c.updatedAt, turns: c.turnList,
+    })));
+    return { requested: ids.length, found: convs.length, added };
   });
 
   handle(IPC.CONFIG_GET, (_e, key: unknown) => (isNonEmptyString(key) ? config.get(key) : undefined));

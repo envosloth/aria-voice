@@ -13,6 +13,9 @@ const api = {
     delete: (id: string) => ipcRenderer.invoke(IPC.SESSIONS_DELETE, id),
     pin: (id: string, pinned: boolean) => ipcRenderer.invoke(IPC.SESSIONS_PIN, id, pinned),
     resume: (id: string) => ipcRenderer.invoke(IPC.SESSIONS_RESUME, id),
+    importSources: () => ipcRenderer.invoke(IPC.SESSIONS_IMPORT_SOURCES),
+    importList: (source: string) => ipcRenderer.invoke(IPC.SESSIONS_IMPORT_LIST, source),
+    import: (source: string, ids: string[]) => ipcRenderer.invoke(IPC.SESSIONS_IMPORT, source, ids),
   },
 
   secure: {

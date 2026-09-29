@@ -2823,7 +2823,8 @@ async function renderSessionList() {
     open.title = `Open ${s.title}`;
     const t = document.createElement('div'); t.className = 's-title'; t.textContent = s.title;
     const m = document.createElement('div'); m.className = 's-meta';
-    m.textContent = `${s.pinned ? 'pinned · ' : ''}${relTime(s.updatedAt)} · ${s.turns} message${s.turns === 1 ? '' : 's'}`;
+    const from = s.importedFrom ? (s.importedFrom.split(':')[0] === 'claude-code' ? 'Claude Code' : s.importedFrom.split(':')[0] === 'codex' ? 'Codex' : 'Hermes') : '';
+    m.textContent = `${from ? 'from ' + from + ' · ' : s.pinned ? 'pinned · ' : ''}${relTime(s.updatedAt)} · ${s.turns} message${s.turns === 1 ? '' : 's'}`;
     open.append(t, m);
     open.addEventListener('click', () => reopenSession(s.id));
 
@@ -2907,6 +2908,141 @@ async function renderSessionList() {
 
 // Reopen a past conversation: main restores it as the live history, and we
 // repaint its transcript into the main view so the user can continue it.
+// ---- Import conversations from the user's agent harness -----------------
+// A picker (native <dialog>: focus trap + Esc for free) listing past chats from
+// Hermes / Claude Code / Codex. Main reads the sources read-only; imports land
+// as pinned past sessions and are never re-imported twice.
+let importDialog = null;
+function buildImportDialog() {
+  const d = document.createElement('dialog');
+  d.id = 'import-dialog';
+  d.className = 'import-dialog';
+  d.setAttribute('aria-labelledby', 'import-title');
+  d.innerHTML = `
+    <form method="dialog" class="import-form">
+      <h2 id="import-title">Import conversations</h2>
+      <p class="import-sub">Bring past chats from your agent into ARIA. Only the words you and the agent said are copied; the originals are not changed.</p>
+      <div class="import-sources" role="tablist" aria-label="Import from"></div>
+      <div class="import-toolbar">
+        <label class="import-all"><input type="checkbox" id="import-select-all"> Select all</label>
+        <span class="import-count" id="import-count" aria-live="polite"></span>
+      </div>
+      <div class="import-list" id="import-list" role="group" aria-label="Conversations"></div>
+      <div class="import-actions">
+        <button type="submit" value="cancel" class="import-cancel">Cancel</button>
+        <button type="button" id="import-go" class="import-go" disabled>Import</button>
+      </div>
+    </form>`;
+  document.body.appendChild(d);
+  return d;
+}
+
+async function openImportDialog(preferred) {
+  if (!importDialog) importDialog = buildImportDialog();
+  const d = importDialog;
+  const tabs = d.querySelector('.import-sources');
+  const listEl = d.querySelector('#import-list');
+  const countEl = d.querySelector('#import-count');
+  const all = d.querySelector('#import-select-all');
+  const go = d.querySelector('#import-go');
+  let sources = [];
+  try { sources = await aria.sessions.importSources(); } catch (e) {}
+  const available = sources.filter((s) => s.available);
+  tabs.replaceChildren();
+  let current = null;
+
+  const selected = () => [...listEl.querySelectorAll('input[type=checkbox]:checked:not(:disabled)')].map((c) => c.value);
+  const refreshCount = () => {
+    const n = selected().length;
+    const open = listEl.querySelectorAll('input[type=checkbox]:not(:disabled)').length;
+    go.disabled = n === 0;
+    go.textContent = n ? `Import ${n}` : 'Import';
+    all.checked = open > 0 && n === open;
+    all.disabled = open === 0;
+  };
+
+  async function showSource(id) {
+    current = id;
+    tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.src === id)));
+    listEl.replaceChildren();
+    countEl.textContent = 'Loading…';
+    let items = [];
+    try { items = await aria.sessions.importList(id); } catch (e) { countEl.textContent = 'Could not read that history.'; return; }
+    if (current !== id) return;
+    const fresh = items.filter((i) => !i.imported).length;
+    countEl.textContent = items.length ? `${items.length} found${fresh < items.length ? ` · ${items.length - fresh} already imported` : ''}` : 'No conversations found.';
+    for (const it of items) {
+      const row = document.createElement('label');
+      row.className = 'import-row' + (it.imported ? ' done' : '');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox'; cb.value = it.externalId; cb.disabled = !!it.imported; cb.checked = false;
+      cb.addEventListener('change', refreshCount);
+      const t = document.createElement('span'); t.className = 'import-row-title'; t.textContent = it.title;
+      const m = document.createElement('span'); m.className = 'import-row-meta';
+      m.textContent = it.imported ? 'Already imported' : `${relTime(it.updatedAt)} · ${it.turns} message${it.turns === 1 ? '' : 's'}`;
+      row.append(cb, t, m);
+      listEl.appendChild(row);
+    }
+    refreshCount();
+  }
+
+  if (!available.length) {
+    const p = document.createElement('p');
+    p.className = 'import-empty';
+    p.textContent = 'No agent history found on this computer. ARIA can import from Hermes Agent, Claude Code and Codex.';
+    tabs.appendChild(p);
+    listEl.replaceChildren(); countEl.textContent = ''; go.disabled = true; all.disabled = true;
+  } else {
+    for (const s of available) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.role = 'tab'; b.dataset.src = s.id; b.textContent = s.name;
+      b.addEventListener('click', () => showSource(s.id));
+      tabs.appendChild(b);
+    }
+  }
+  all.onchange = () => {
+    listEl.querySelectorAll('input[type=checkbox]:not(:disabled)').forEach((c) => { c.checked = all.checked; });
+    refreshCount();
+  };
+  go.onclick = async () => {
+    const ids = selected();
+    if (!ids.length || !current) return;
+    go.disabled = true; go.textContent = 'Importing…';
+    let res = null;
+    try { res = await aria.sessions.import(current, ids); } catch (e) {}
+    if (!res) { countEl.textContent = 'Import failed. Nothing was changed.'; refreshCount(); return; }
+    await renderSessionList();
+    d.close();
+    showError(res.added === 0 ? 'Those conversations were already imported.'
+      : `Imported ${res.added} conversation${res.added === 1 ? '' : 's'}. ${res.added === 1 ? "It's" : "They're"} pinned in the sidebar.`, 'warn', null);
+  };
+  if (!d.open) d.showModal();
+  if (available.length) {
+    const harnessId = String((await aria.config.get('harness.id').catch(() => '')) || '');
+    const pick = [preferred, harnessId, available[0].id].find((x) => x && available.some((s) => s.id === x));
+    await showSource(pick);
+    const firstTab = tabs.querySelector(`button[data-src="${pick}"]`);
+    if (firstTab) firstTab.focus();
+  }
+}
+
+(function addImportButton() {
+  const newBtn = document.getElementById('new-session-btn');
+  if (!newBtn || document.getElementById('import-sessions-btn')) return;
+  const b = document.createElement('button');
+  b.id = 'import-sessions-btn';
+  b.type = 'button';
+  b.className = 'import-btn';
+  b.title = 'Import conversations from your agent (Hermes, Claude Code, Codex)';
+  b.setAttribute('aria-label', 'Import conversations');
+  b.textContent = 'Import';
+  b.addEventListener('click', () => openImportDialog());
+  // Sit left of "New" (which owns margin-left:auto) so the pair never clips.
+  b.style.marginLeft = 'auto';
+  newBtn.style.marginLeft = '4px';
+  newBtn.parentNode.insertBefore(b, newBtn);
+})();
+
 async function reopenSession(id) {
   bargeIn(); // stop anything in flight before swapping conversations
   let rec = null;

@@ -24,6 +24,9 @@ export interface SessionRecord {
   // session instead of only hiding ARIA's local transcript.
   harnessSessionId?: string;
   tokens?: SessionTokens;
+  // Set when the conversation was imported from a harness's own history
+  // ('hermes:<id>', 'claude-code:<id>', …). Used to skip re-imports.
+  importedFrom?: string;
 }
 export interface SessionSummary {
   id: string;
@@ -34,6 +37,7 @@ export interface SessionSummary {
   pinned: boolean;
   hasHarnessSession: boolean;
   tokens: SessionTokens;
+  importedFrom?: string;
 }
 
 // The newest unpinned MAX_SESSIONS are retained; pins are exempt. The whole
@@ -124,6 +128,7 @@ export function listSessions(): SessionSummary[] {
       pinned: !!s.pinned,
       hasHarnessSession: !!s.harnessSessionId,
       tokens: { llm: s.tokens?.llm || 0, harness: s.tokens?.harness || 0 },
+      ...(s.importedFrom ? { importedFrom: s.importedFrom } : {}),
     }))
     .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt - a.updatedAt);
 }
@@ -173,6 +178,36 @@ export function deleteSession(id: string): SessionRecord | null {
   persist(list.filter((s) => s.id !== id));
   if (currentId === id) currentId = null;
   return rec;
+}
+
+// Keys ('source:externalId') of conversations already imported.
+export function importedKeys(): Set<string> {
+  return new Set(all().map((s) => s.importedFrom).filter((k): k is string => !!k));
+}
+
+// Add imported conversations as past sessions. Existing imports (same key) are
+// skipped, never overwritten; imported records are pinned so they survive the
+// 50-session retention cap regardless of how old the originals are.
+export function addImportedSessions(items: { key: string; title: string; startedAt: number; updatedAt: number; turns: SessionTurn[] }[]): number {
+  const list = all();
+  const have = new Set(list.map((s) => s.importedFrom).filter(Boolean));
+  let added = 0;
+  for (const it of items) {
+    if (!it.key || have.has(it.key) || !it.turns.length) continue;
+    have.add(it.key);
+    list.push({
+      id: randomUUID(),
+      title: it.title.length > TITLE_MAX ? it.title.slice(0, TITLE_MAX - 1) + '…' : it.title,
+      startedAt: it.startedAt,
+      updatedAt: it.updatedAt,
+      turns: it.turns.slice(-MAX_TURNS_PER_SESSION),
+      pinned: true,
+      importedFrom: it.key,
+    });
+    added++;
+  }
+  if (added) persist(list);
+  return added;
 }
 
 // --- self-check (run: `node -e "require('./dist/main/sessions').__selftest()"`) --

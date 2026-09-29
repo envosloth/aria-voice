@@ -40,3 +40,45 @@
     transition-duration: .001ms !important; scroll-behavior: auto !important;
   }
 }
+
+/* ── Import conversations ── */
+.import-btn {
+  border: 0; border-radius: 999px; padding: 3px 8px; cursor: pointer; white-space: nowrap;
+  font: inherit; font-size: 11px; background: var(--chip-fill, rgba(255,255,255,.06)); color: var(--text-muted, #aab);
+  box-shadow: var(--chip-rim, 0 0 0 1px rgba(255,255,255,.1));
+}
+.import-btn:hover, .import-btn:focus-visible { color: var(--text, #fff); background: var(--chip-fill-hover, rgba(255,255,255,.12)); outline: none; }
+.import-dialog {
+  width: min(560px, 92vw); max-height: 80vh; padding: 0; border: 1px solid var(--glass-border, rgba(255,255,255,.14));
+  border-radius: 18px; color: var(--text, #eef);
+  position: fixed; inset: 0; margin: auto; height: fit-content;
+  background: color-mix(in srgb, var(--bg, #0e1017) 94%, white 6%);
+  box-shadow: 0 30px 90px rgba(0,0,0,.6);
+}
+.import-dialog::backdrop { background: rgba(0,0,0,.45); }
+.import-form { display: flex; flex-direction: column; gap: 10px; padding: 20px; max-height: 80vh; box-sizing: border-box; }
+.import-form h2 { margin: 0; font-size: 16px; }
+.import-sub { margin: 0; font-size: 12px; color: var(--text-muted, #aab); }
+.import-sources { display: flex; gap: 6px; flex-wrap: wrap; }
+.import-sources button {
+  border: 0; border-radius: 999px; padding: 6px 14px; cursor: pointer; font: inherit; font-size: 12px;
+  background: transparent; color: var(--text-muted, #aab); box-shadow: var(--chip-rim, 0 0 0 1px rgba(255,255,255,.1));
+}
+.import-sources button[aria-selected="true"] { background: var(--chip-fill-hover, rgba(255,255,255,.14)); color: var(--text, #fff); }
+.import-toolbar { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-muted, #aab); }
+.import-all { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.import-list { overflow-y: auto; min-height: 120px; max-height: 46vh; display: flex; flex-direction: column; gap: 2px; }
+.import-row {
+  display: grid; grid-template-columns: auto 1fr; column-gap: 10px; padding: 8px 10px; border-radius: 10px; cursor: pointer;
+}
+.import-row:hover { background: var(--chip-fill, rgba(255,255,255,.05)); }
+.import-row input { grid-row: span 2; align-self: center; }
+.import-row-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.import-row-meta { font-size: 11px; color: var(--text-muted, #aab); }
+.import-row.done { opacity: .55; cursor: default; }
+.import-empty { font-size: 13px; color: var(--text-muted, #aab); margin: 8px 0; }
+.import-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.import-actions button { border: 0; border-radius: 999px; padding: 8px 16px; cursor: pointer; font: inherit; font-size: 13px; }
+.import-cancel { background: transparent; color: var(--text-muted, #aab); box-shadow: var(--chip-rim, 0 0 0 1px rgba(255,255,255,.12)); }
+.import-go { background: var(--accent-active, #7aa2ff); color: #0b0e16; font-weight: 600; }
+.import-go:disabled { opacity: .45; cursor: default; }
