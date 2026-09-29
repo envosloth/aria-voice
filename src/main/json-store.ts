@@ -20,6 +20,8 @@ export function splitKey(key: unknown): string[] | null {
 export class JsonStore<T extends Record<string, any>> {
   private filePath: string;
   private data: T;
+  private loadError: string | null = null;
+  private lastGoodSnapshot: string | null = null;
 
   constructor(name: string, defaults: T) {
     // app.getPath('userData') is the real location in the packaged app; the
@@ -48,6 +50,7 @@ export class JsonStore<T extends Record<string, any>> {
   set<K extends string>(key: K, value: unknown): void {
     const parts = splitKey(key);
     if (!parts) throw new Error(`Invalid config key: ${String(key)}`);
+    this.assertWritable();
     let current: Record<string, unknown> = this.data;
     for (let i = 0; i < parts.length - 1; i++) {
       const child = Object.hasOwn(current, parts[i]) ? current[parts[i]] : undefined;
@@ -65,6 +68,7 @@ export class JsonStore<T extends Record<string, any>> {
   }
 
   delete(key: string): void {
+    this.assertWritable();
     const parts = splitKey(key);
     if (!parts) return;
     let current: Record<string, unknown> = this.data;
@@ -82,22 +86,51 @@ export class JsonStore<T extends Record<string, any>> {
   }
 
   private load(): void {
+    let raw: string;
     try {
-      if (fs.existsSync(this.filePath)) {
-        const raw = fs.readFileSync(this.filePath, 'utf8');
-        const parsed = JSON.parse(raw, (k, v) => (FORBIDDEN_SEGMENTS.has(k) ? undefined : v));
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) Object.assign(this.data, parsed);
-      }
-    } catch {
-      // Use defaults on corrupt file
+      raw = fs.readFileSync(this.filePath, 'utf8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      this.markUnreadable(error);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw, (k, v) => (FORBIDDEN_SEGMENTS.has(k) ? undefined : v));
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Expected a JSON object');
+      Object.assign(this.data, parsed);
+      this.lastGoodSnapshot = JSON.stringify(this.data, null, 2);
+    } catch (error) {
+      this.markUnreadable(error);
     }
   }
 
+  private markUnreadable(error: unknown): void {
+    // Never print the file body: this store also holds encrypted credentials.
+    this.loadError = `Refusing to overwrite unreadable store ${this.filePath}. ` +
+      `Original preserved; recover it or its .bak before restarting ARIA. ` +
+      `Reason: ${(error as NodeJS.ErrnoException).code || (error instanceof SyntaxError ? 'invalid JSON' : 'invalid store')}`;
+    console.error(`[ARIA] ${this.loadError}`);
+  }
+
+  private assertWritable(): void {
+    if (this.loadError) throw new Error(this.loadError);
+  }
+
   private save(): void {
+    this.assertWritable();
     const dir = path.dirname(this.filePath);
     fs.mkdirSync(dir, { recursive: true });
     const tmp = this.filePath + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2));
+    const next = JSON.stringify(this.data, null, 2);
+    fs.writeFileSync(tmp, next, { mode: 0o600 });
+    // Bounded backup of the last successfully loaded/saved state, not an
+    // unchecked disk copy that could itself have been corrupted since load.
+    if (this.lastGoodSnapshot !== null) {
+      const backup = this.filePath + '.bak';
+      fs.writeFileSync(backup + '.tmp', this.lastGoodSnapshot, { mode: 0o600 });
+      fs.renameSync(backup + '.tmp', backup);
+    }
     fs.renameSync(tmp, this.filePath);
+    this.lastGoodSnapshot = next;
   }
 }
