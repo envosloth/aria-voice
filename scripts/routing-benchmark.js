@@ -19,6 +19,13 @@
  *     correct answer for them depends on the previous turn, which a
  *     single-utterance benchmark cannot supply (the app always has one)
  *
+ * Tuning history (kept here so a number is never read as better than it is):
+ *   sets b, c, h1-h6 were graded in sequence; each fresh set measured 75-90% and
+ *   the rules were then extended for the classes it exposed. h6 was the last
+ *   measurement and no rules were changed afterwards, so it is the most recent
+ *   honest estimate of unseen accuracy (81.7%). The fitted corpus scores ~99%,
+ *   and that gap is the real state of this heuristic router.
+ *
  * Honesty rules: a set used while tuning is never reported as a holdout; cases
  * this project deliberately decides the other way live in
  * scripts/routing-disputes.json where they are PRINTED and excluded from the

@@ -1,0 +1,604 @@
+{
+  "cases": [
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What's the capital of Peru?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How does a microwave heat food?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What's a good way to fix a leaky tap?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What's the difference between a metaphor and a simile?"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "What's the difference between these two files?"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "How many miles is 10 kilometres?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "How many miles is it to the airport from here?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Who won the World Cup in 1998?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Who's winning the match right now?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What's the population of Toronto?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What's the traffic like in Toronto right now?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How long is the flight from London to New York?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "How long is the drive from here to York today?"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "How many days until Christmas?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "How many days until my dentist appointment?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "Should I buy an umbrella or a raincoat?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Should I take an umbrella today?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Does it usually rain a lot in April?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Is it going to rain this afternoon?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What's the all-time record temperature in Death Valley?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What's the temperature in Death Valley right now?"
+    },
+    {
+      "cat": "chat-language",
+      "expect": "llm",
+      "text": "Translate good morning into Japanese."
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Translate this email into Japanese."
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "Write a poem about the sea."
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "Write this poem into a file on my desktop."
+    },
+    {
+      "cat": "chat-smalltalk",
+      "expect": "llm",
+      "text": "Tell me a joke."
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Tell me when my next train leaves."
+    },
+    {
+      "cat": "explicit-llm",
+      "expect": "llm",
+      "text": "Just answer from what you know."
+    },
+    {
+      "cat": "explicit-harness",
+      "expect": "harness",
+      "text": "Don't guess, actually check it."
+    },
+    {
+      "cat": "chat-explain-code",
+      "expect": "llm",
+      "text": "Explain how DNS works."
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "Explain this error message."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "What's the best way to learn guitar?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Book me a guitar lesson."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Summarise the plot of Hamlet."
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "Summarise the document I have open."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What's the date of the Battle of Hastings?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What's the date today?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Turn on the kitchen lights."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "Will turning the lights on at night mess up my sleep?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Play that song again."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What's the story behind that song?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Check my battery health."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How do I check my battery health?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Remind me to call Mum at six."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Remind me how the water cycle works."
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "How much do eggs cost at the shop down the road?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How much do eggs cost on average?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What's the exchange rate for euros today?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What was the price of a pint of beer in 1990?"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "llm",
+      "text": "What's the usual price of a pint in London?"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "Find me the nearest bookshop."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "Find me a good book about Rome."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Give me a recipe for sourdough."
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "Find me a sourdough recipe online."
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Set an alarm for seven."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "How do I set an alarm on my phone?"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "What's 15 percent of 240?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "What's 15 percent of my rent?"
+    },
+    {
+      "cat": "chat-language",
+      "expect": "llm",
+      "text": "Give me three synonyms for happy."
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "llm",
+      "text": "Make this shorter."
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Send a message to my brother saying I'm running late."
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "Look up the opening hours of the post office."
+    },
+    {
+      "cat": "chat-smalltalk",
+      "expect": "llm",
+      "text": "How's your day going?"
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "Yes, do that."
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "No, the other one."
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "Go with the second option."
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "Make it a bit later."
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "Send it."
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "Add that too."
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "Try again."
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "Book it."
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "Do the same for tomorrow."
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "Cancel that."
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "Turn it down a bit."
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Put the heating on to 21 degrees."
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "Convert 20 degrees Celsius to Fahrenheit."
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Is my heating on?"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "Rename all the JPEGs in my downloads folder."
+    },
+    {
+      "cat": "chat-explain-code",
+      "expect": "llm",
+      "text": "What does a for loop do?"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "What does the function on line 40 do?"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "Run the tests for the routing project."
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "Why does my script crash on startup?"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "llm",
+      "text": "Why is my app so slow?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "Should I rent or buy a flat?"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "llm",
+      "text": "Is it worth upgrading my laptop?"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "What's the best price for a used bike near me?"
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "Write a short story about a lighthouse."
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Plan a weekend in York and email me the itinerary."
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Find three plumbers, compare prices, then book the cheapest."
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Book a table for four at eight and add it to my calendar."
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Check tomorrow's weather and tell me what to pack."
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Download the invoice, rename it, and file it under accounting."
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Water the plants and turn off the lights at ten."
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "Can you take a look at this?"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "What does this say?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What's happening in the news today?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What was the main news story the day the Berlin Wall fell?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What's the score in the Arsenal match?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What's the highest score ever in a football match?"
+    },
+    {
+      "cat": "chat-language",
+      "expect": "llm",
+      "text": "Fix the grammar in 'me and him went to the shops'."
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "Count the lines in this file."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How many lines are in a sonnet?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "When's my next meeting?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "What's on my calendar tomorrow?"
+    },
+    {
+      "cat": "explicit-llm",
+      "expect": "llm",
+      "text": "No tools, just chat with me."
+    },
+    {
+      "cat": "explicit-harness",
+      "expect": "harness",
+      "text": "Use your tools for this one."
+    },
+    {
+      "cat": "explicit-llm",
+      "expect": "llm",
+      "text": "Don't look anything up, just tell me what you think."
+    },
+    {
+      "cat": "explicit-harness",
+      "expect": "harness",
+      "text": "Just use the browser and find it."
+    },
+    {
+      "cat": "explicit-llm",
+      "expect": "llm",
+      "text": "Answer without searching, please."
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "Check if that's true."
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "Search the web for reviews of that coffee machine."
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What's the current price of bitcoin?"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "If I earn 22 an hour for 37 hours, what's my weekly pay?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "How much have I spent on coffee this month?"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "If I split 84 pounds three ways, how much each?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "How many steps did I do yesterday?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Did I reply to the landlord?"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "What's in the config file?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What is a config file?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Draft a reply to that email."
+    }
+  ]
+}
