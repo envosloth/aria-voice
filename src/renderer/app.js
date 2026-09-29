@@ -1598,6 +1598,12 @@ const secureWarning = document.getElementById('secure-warning');
 
 const cfg = {
   routingMode: document.getElementById('cfg-routing-mode'),
+  routerCoordinator: document.getElementById('cfg-router-coordinator'),
+  routerNote: document.getElementById('cfg-router-note'),
+  jevBlock: document.getElementById('cfg-jev-block'),
+  jevKey: document.getElementById('cfg-jev-key'),
+  jevEndpoint: document.getElementById('cfg-jev-endpoint'),
+  jevModel: document.getElementById('cfg-jev-model'),
   llmProvider: document.getElementById('cfg-llm-provider'),
   llmEndpoint: document.getElementById('cfg-llm-endpoint'),
   llmModel: document.getElementById('cfg-llm-model'),
@@ -2193,6 +2199,11 @@ aria.updates.onStatus((s) => {
 
 async function loadSettings() {
   cfg.routingMode.value = (await aria.config.get('routing.mode')) || 'auto';
+  cfg.routerCoordinator.value = (await aria.config.get('routing.coordinator')) || 'builtin';
+  cfg.jevEndpoint.value = (await aria.config.get('routing.jevEndpoint')) || '';
+  cfg.jevModel.value = (await aria.config.get('routing.jevModel')) || '';
+  cfg.jevKey.value = (await aria.secure.get('jev-api-key').catch(() => null)) || '';
+  applyCoordinatorSelection();
   cfg.llmEndpoint.value = (await aria.config.get('llm.endpoint')) || '';
   cfg.llmModel.value = (await aria.config.get('llm.model')) || '';
   // Show saved keys so they don't look lost (password field keeps them masked).
@@ -2265,6 +2276,20 @@ async function loadSettings() {
   }
 }
 
+// The routing coordinator: which second opinion reads the requests the rules
+// cannot classify. Only one is active at a time, so the Jev fields appear only
+// when Jev is the one answering, and the note says what actually happens.
+function applyCoordinatorSelection() {
+  const jev = cfg.routerCoordinator.value === 'jev';
+  if (cfg.jevBlock) cfg.jevBlock.hidden = !jev;
+  if (cfg.routerNote) {
+    cfg.routerNote.textContent = jev
+      ? 'Jev answers one typed question about the few requests the rules cannot read (about 100ms). If it is unreachable or unsure, ARIA falls back to your chat model and then to the rules.'
+      : 'Your chat model answers one short question about the few requests the rules cannot read (up to 1.5s). Clear the key below to use the rules alone.';
+  }
+}
+if (cfg.routerCoordinator) cfg.routerCoordinator.addEventListener('change', applyCoordinatorSelection);
+
 // Status card at the top of Settings → Connections: what is configured, and
 // (for a local Hermes) whether it is actually reachable right now.
 function setConnRow(kind, tone, text) {
@@ -2291,6 +2316,21 @@ async function refreshConnectionSummary() {
     // Under Automatic routing the agent can answer everything, so a missing chat
     // model is a suggestion, not a fault.
     setConnRow('chat', hEp ? 'warn' : 'warn', hEp ? 'Optional — the agent answers everything for now' : 'Not set up');
+  }
+  if (seq !== connSummarySeq) return;
+  // The coordinator row reports the thing that silently degrades: Jev selected
+  // with no key, or with the rules' second opinion switched off entirely.
+  const [coordinator, jevKey, classifierMode] = await Promise.all([
+    aria.config.get('routing.coordinator'), aria.secure.get('jev-api-key').catch(() => null),
+    aria.config.get('routing.classifier'),
+  ]);
+  if (seq !== connSummarySeq) return;
+  if (classifierMode === 'off') {
+    setConnRow('router', 'warn', 'Rules only — second opinion turned off');
+  } else if (coordinator === 'jev') {
+    setConnRow('router', jevKey ? 'ok' : 'warn', jevKey ? 'Jev (TypeSafe)' : 'Jev — add your API key');
+  } else {
+    setConnRow('router', llmEp ? 'ok' : 'warn', llmEp ? 'Built-in — rules + your chat model' : 'Rules only — no chat model for a second opinion');
   }
   if (seq !== connSummarySeq) return;
   if (!hEp) { setConnRow('agent', 'warn', 'Not set up'); return; }
@@ -2689,8 +2729,13 @@ settingsSave.addEventListener('click', async () => {
     lk ? await aria.secure.set('llm-api-key', lk) : await aria.secure.delete('llm-api-key');
     const hk = cfg.harnessKey.value.trim();
     hk ? await aria.secure.set('harness-api-key', hk) : await aria.secure.delete('harness-api-key');
+    const jk = cfg.jevKey.value.trim();
+    jk ? await aria.secure.set('jev-api-key', jk) : await aria.secure.delete('jev-api-key');
 
     await aria.config.set('routing.mode', cfg.routingMode.value);
+    await aria.config.set('routing.coordinator', cfg.routerCoordinator.value);
+    await aria.config.set('routing.jevEndpoint', cfg.jevEndpoint.value.trim());
+    await aria.config.set('routing.jevModel', cfg.jevModel.value.trim());
     await aria.config.set('llm.endpoint', cfg.llmEndpoint.value.trim());
     await aria.config.set('llm.model', cfg.llmModel.value.trim());
     await aria.config.set('harness.id', cfg.harness.value);

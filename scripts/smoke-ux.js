@@ -65,8 +65,21 @@ check('settings.plainLanguage',
   /id="conn-summary"/.test(html) && /function refreshConnectionSummary\(/.test(app) &&
   !/Conversational LLM|Agent harness <span|>Discover</.test(html.slice(html.indexOf('id="settings-connections"'), html.indexOf('id="settings-remote"'))),
   'Connections must lead with a live status card and use plain names (Chat model / Agent), not LLM/harness jargon');
+// Endpoint/model fields belong behind a disclosure so the common path stays
+// provider + key. Assert the property (each one is inside a disclosure), not a
+// count — a count silently breaks the moment another provider is added, which is
+// exactly what happened when the routing coordinator gained its own endpoint.
+const connections = html.slice(html.indexOf('id="settings-connections"'), html.indexOf('id="settings-remote"'));
+const insideDisclosure = (id) => {
+  const at = connections.indexOf(`id="${id}"`);
+  if (at < 0) return false;
+  const open = connections.lastIndexOf('<details class="adv">', at);
+  const close = connections.lastIndexOf('</details>', at);
+  return open >= 0 && open > close;
+};
 check('settings.advancedCollapsed',
-  (html.slice(html.indexOf('id="settings-connections"'), html.indexOf('id="settings-remote"')).match(/<details class="adv">/g) || []).length === 2,
+  ['cfg-llm-endpoint', 'cfg-harness-endpoint', 'cfg-jev-endpoint'].every(insideDisclosure)
+    && /<details class="adv">/.test(connections),
   'endpoint/model fields belong behind a disclosure so the common path is provider + key');
 check('settings.tabSemantics',
   /role="tablist"/.test(html) && /role="tab"/.test(html) && /setAttribute\('aria-selected'/.test(app),
@@ -172,5 +185,31 @@ check('sidecar.snapshotReplay',
   /aria\.sidecar\.snapshot\(\)/.test(app) && /snapshot: \(\)/.test(fs.readFileSync(path.join(root, 'src', 'preload', 'index.ts'), 'utf8')),
   'sidebar must recover sidecar status emitted before the renderer subscribed');
 
+
+// Settings → Connections → Routing brain: the coordinator selector. The two
+// options must both be offered, the Jev fields must only appear when Jev is
+// selected, and the choice has to survive a save/load round trip.
+check('routing.coordinatorControl',
+  /<select id="cfg-router-coordinator">/.test(html)
+    && /<option value="builtin">/.test(html) && /<option value="jev">/.test(html),
+  'both coordinators must be selectable');
+check('routing.coordinatorPersisted',
+  /aria\.config\.set\('routing\.coordinator'/.test(app)
+    && /aria\.config\.get\('routing\.coordinator'\)/.test(app),
+  'the choice must be saved and restored');
+const jevKeyInput = (/<input[^>]*id="cfg-jev-key"[^>]*>/.exec(html) || [''])[0];
+check('routing.jevKeyIsSecret',
+  /aria\.secure\.set\('jev-api-key'/.test(app) && /type="password"/.test(jevKeyInput),
+  'the Jev key belongs in the keyring, never in config');
+check('routing.jevFieldsRevealed',
+  /function applyCoordinatorSelection\(\)/.test(app) && /cfg\.jevBlock\.hidden = !jev/.test(app)
+    && /cfg\.routerCoordinator\.addEventListener\('change', applyCoordinatorSelection\)/.test(app),
+  'the Jev fields appear only when Jev is the coordinator');
+check('routing.explainsTheCost',
+  /about 100ms/.test(app) && /up to 1\.5s/.test(app),
+  'each coordinator must say what it costs in the hint');
+check('routing.statusRow',
+  /id="conn-router-dot"/.test(html) && /setConnRow\('router'/.test(app),
+  'the status card must report the routing brain');
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);

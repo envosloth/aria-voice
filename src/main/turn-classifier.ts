@@ -22,6 +22,7 @@ import https from 'https';
 import { URL } from 'url';
 import type { Target } from './router';
 import { credentialedEndpointSecurityError } from './endpoint-security';
+import { classifyTargetWithJev, JevOptions, JEV_DEFAULT_ENDPOINT, JEV_DEFAULT_MODEL, JEV_TIMEOUT_MS } from './jev-classifier';
 
 const httpAgent = new http.Agent({ keepAlive: true, keepAliveMsecs: 15000, maxSockets: 2 });
 const httpsAgent = new https.Agent({ keepAlive: true, keepAliveMsecs: 15000, maxSockets: 2 });
@@ -127,4 +128,60 @@ export async function classifyTarget(message: string, opts: ClassifyOptions): Pr
     setTimeout(() => { req.destroy(); done(null); }, timeoutMs + 250).unref();
     req.end(body);
   });
+}
+
+
+// ---------------------------------------------------------------------------
+// Coordinator selection
+// ---------------------------------------------------------------------------
+
+export type CoordinatorId = 'builtin' | 'jev';
+
+export interface CoordinatorOptions {
+  coordinator: CoordinatorId;
+  timeoutMs: number;
+  /** The chat-model path ('builtin'). Omitted when no chat model is configured. */
+  llm?: ClassifyOptions;
+  /** TypeSafe Jev. Omitted when Jev is not the coordinator. */
+  jev?: JevOptions;
+}
+
+export interface CoordinatorVerdict {
+  target: Target;
+  /** Which coordinator produced it. */
+  by: CoordinatorId;
+  ms: number;
+  confidence?: number;
+}
+
+/**
+ * Ask the configured coordinator who should handle `message`.
+ *
+ * Returns null when nobody could answer usefully, and the caller keeps the
+ * rule-based decision. Jev is tried first when selected; if it is unreachable,
+ * answers below its confidence floor, or has no key, the built-in chat-model
+ * path gets a turn before giving up — a slow second opinion beats no opinion,
+ * and the alternative is a coin flip on exactly the sentences the rules cannot
+ * read.
+ */
+export async function classifyTurn(message: string, opts: CoordinatorOptions): Promise<CoordinatorVerdict | null> {
+  const started = Date.now();
+
+  if (opts.coordinator === 'jev') {
+    const verdict = await classifyTargetWithJev(message, {
+      endpoint: opts.jev?.endpoint || JEV_DEFAULT_ENDPOINT,
+      model: opts.jev?.model || JEV_DEFAULT_MODEL,
+      apiKey: opts.jev?.apiKey ?? null,
+      timeoutMs: opts.jev?.timeoutMs || JEV_TIMEOUT_MS,
+      confidenceFloor: opts.jev?.confidenceFloor,
+    });
+    if (verdict) return { target: verdict.target, by: 'jev', ms: Date.now() - started, confidence: verdict.confidence };
+  }
+
+  if (opts.llm?.endpoint) {
+    const target = await classifyTarget(message, { ...opts.llm, timeoutMs: opts.timeoutMs });
+    if (target) return { target, by: 'builtin', ms: Date.now() - started };
+  }
+
+  return null;
 }

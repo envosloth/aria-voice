@@ -8,7 +8,8 @@
  * Plain Node against a local mock server (needs `npm run build`). */
 const http = require('http');
 const path = require('path');
-const { classifyTarget, parseClassifierReply, CLASSIFIER_SYSTEM_PROMPT, CLASSIFIER_MAX_MESSAGE_CHARS } = require('../dist/main/turn-classifier');
+const { classifyTarget, classifyTurn, parseClassifierReply, CLASSIFIER_SYSTEM_PROMPT, CLASSIFIER_MAX_MESSAGE_CHARS } = require('../dist/main/turn-classifier');
+const { classifyTargetWithJev, parseJevReply, JEV_DEFAULT_ENDPOINT, JEV_DEFAULT_MODEL, JEV_CONFIDENCE_FLOOR } = require('../dist/main/jev-classifier');
 
 let pass = true;
 const check = (name, ok, detail = '') => {
@@ -107,7 +108,93 @@ async function main() {
     (await classifyTarget('x', { endpoint: remoteUrl, apiKey: 'secret', timeoutMs: 500 })) === null && !contacted && Date.now() - t1 < 300,
     `${Date.now() - t1}ms`);
 
-  for (const s of [good, authServer, fiveHundred, garbage, rambling, broken, slow, remoteish]) { s.closeAllConnections?.(); s.close(); }
+  // ---- Jev (TypeSafe) coordinator ----
+  // The mock mirrors the published API reference: state + model + questions, and
+  // answers typed per question key.
+  const jevReply = (choice, confidence, extra = {}) => JSON.stringify({
+    model: 'jev-1.13.0',
+    answers: { target: { type: 'choice', choice, confidence, probabilities: { [choice]: confidence }, ...extra } },
+    usage: { input_tokens: 300, output_tokens: 20 },
+  });
+
+  let jevBody = null;
+  let jevAuth = null;
+  const jevServer = (payload, status = 200) => server((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      jevBody = JSON.parse(body);
+      jevAuth = req.headers.authorization;
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(payload);
+    });
+  });
+
+  const jevOk = await jevServer(jevReply('agent', 0.92));
+  const verdict = await classifyTargetWithJev('how many miles is it to the airport from here', { endpoint: url(jevOk), apiKey: 'jev-key' });
+  check('jev-maps-agent-to-harness', verdict && verdict.target === 'harness' && verdict.confidence === 0.92);
+  check('jev-request-shape', jevBody.state === 'how many miles is it to the airport from here'
+    && jevBody.model === JEV_DEFAULT_MODEL
+    && jevBody.questions.target.type === 'choice'
+    && !!jevBody.questions.target.criteria.chat && !!jevBody.questions.target.criteria.agent,
+    JSON.stringify({ model: jevBody.model, type: jevBody.questions.target.type }));
+  check('jev-sends-bearer-key', jevAuth === 'Bearer jev-key');
+  check('jev-sends-no-tools-or-history', jevBody.tools === undefined && jevBody.messages === undefined && Object.keys(jevBody).sort().join(',') === 'model,questions,state');
+  const longState = 'y'.repeat(4000);
+  await classifyTargetWithJev(longState, { endpoint: url(jevOk) });
+  check('jev-state-is-bounded', jevBody.state.length <= 1000, `${jevBody.state.length}`);
+
+  const jevChat = await jevServer(jevReply('chat', 0.8));
+  check('jev-maps-chat-to-llm', (await classifyTargetWithJev('what is the capital of france', { endpoint: url(jevChat) }))?.target === 'llm');
+
+  // A typed choice cannot go off-schema, but a weak or missing confidence can
+  // still make the answer unusable — the rules are a better bet than a coin flip.
+  const jevUnsure = await jevServer(jevReply('agent', 0.51));
+  check('jev-below-confidence-floor-is-null', (await classifyTargetWithJev('x', { endpoint: url(jevUnsure) })) === null);
+  check('jev-floor-is-configurable', (await classifyTargetWithJev('x', { endpoint: url(jevUnsure), confidenceFloor: 0.5 }))?.target === 'harness');
+  const jevNoConfidence = await jevServer(JSON.stringify({ answers: { target: { type: 'choice', choice: 'agent', probabilities: { agent: 0.9, chat: 0.1 } } } }));
+  check('jev-falls-back-to-probabilities', (await classifyTargetWithJev('x', { endpoint: url(jevNoConfidence) }))?.target === 'harness');
+  const jevOffSchema = await jevServer(JSON.stringify({ answers: { target: { choice: 'maybe', confidence: 0.99 } } }));
+  check('jev-off-schema-is-null', (await classifyTargetWithJev('x', { endpoint: url(jevOffSchema) })) === null);
+  const jevNoAnswer = await jevServer(JSON.stringify({ answers: {} }));
+  check('jev-missing-answer-is-null', (await classifyTargetWithJev('x', { endpoint: url(jevNoAnswer) })) === null);
+  const jevUnauthorized = await jevServer('{}', 401);
+  check('jev-401-is-null', (await classifyTargetWithJev('x', { endpoint: url(jevUnauthorized), apiKey: 'bad' })) === null);
+  const jevSlow = await server(() => { /* never answers */ });
+  const jt0 = Date.now();
+  check('jev-timeout-is-null-and-bounded', (await classifyTargetWithJev('x', { endpoint: url(jevSlow), timeoutMs: 300 })) === null && Date.now() - jt0 < 1500, `${Date.now() - jt0}ms`);
+  const jevRefused = await classifyTargetWithJev('x', { endpoint: 'http://192.0.2.10:1/v1/systemone', apiKey: 'secret', timeoutMs: 300 });
+  check('jev-refuses-plaintext-remote-key', jevRefused === null);
+  check('jev-default-endpoint-is-typesafe-https', JEV_DEFAULT_ENDPOINT === 'https://api.typesafe.ai/v1/systemone');
+  check('jev-parse-tolerates-junk', parseJevReply(null) === null && parseJevReply({ answers: { target: { choice: 'agent', confidence: 'high' } } }) === null);
+
+  // ---- the coordinator the app actually calls ----
+  const coordJev = await classifyTurn('how many miles is it to the airport', {
+    coordinator: 'jev', timeoutMs: 500,
+    jev: { endpoint: url(jevOk), apiKey: 'jev-key' },
+    llm: { endpoint: url(good) },
+  });
+  check('coordinator-jev-uses-jev', coordJev?.by === 'jev' && coordJev.target === 'harness', JSON.stringify(coordJev));
+
+  const coordFallback = await classifyTurn('how many miles is it to the airport', {
+    coordinator: 'jev', timeoutMs: 500,
+    jev: { endpoint: 'http://127.0.0.1:1/v1/systemone', apiKey: 'k' },
+    llm: { endpoint: url(good) },
+  });
+  check('coordinator-jev-falls-back-to-chat-model', coordFallback?.by === 'builtin' && coordFallback.target === 'harness', JSON.stringify(coordFallback));
+
+  const coordBuiltin = await classifyTurn('how many miles is it to the airport', {
+    coordinator: 'builtin', timeoutMs: 500,
+    llm: { endpoint: url(good) },
+    jev: { endpoint: url(jevUnsure), apiKey: 'k' },
+  });
+  check('coordinator-builtin-ignores-jev', coordBuiltin?.by === 'builtin');
+
+  const coordNothing = await classifyTurn('x', { coordinator: 'jev', timeoutMs: 300, jev: { endpoint: 'http://127.0.0.1:1/v1/systemone' } });
+  check('coordinator-returns-null-when-nobody-answers', coordNothing === null);
+  check('confidence-floor-is-documented', JEV_CONFIDENCE_FLOOR > 0.5 && JEV_CONFIDENCE_FLOOR < 0.9, String(JEV_CONFIDENCE_FLOOR));
+
+  for (const s of [good, authServer, fiveHundred, garbage, rambling, broken, slow, remoteish, jevOk, jevChat, jevUnsure, jevNoConfidence, jevOffSchema, jevNoAnswer, jevUnauthorized, jevSlow]) { s.closeAllConnections?.(); s.close(); }
   console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
   process.exit(pass ? 0 : 1);
 }

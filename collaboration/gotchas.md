@@ -16,6 +16,22 @@ made "translate this into French" an agent task, and letting a bare `best way to
 into the navigation rule made "the best way to back up my files" an agent task.
 Both were caught only by the labeled benchmark, never by inspection.
 
+Which second opinion answers is a user setting: `routing.coordinator` is
+`builtin` (one short question to the chat model) or `jev` (TypeSafe's decision
+model, a typed choice with a calibrated confidence). Jev is tried first when
+selected and falls back to the built-in chat-model path if it is unreachable,
+unkeyed, or answers below `JEV_CONFIDENCE_FLOOR` (0.6) — a coin-flip verdict is
+worse than the rule. The fallback is logged, never silent: `[ARIA] routing: …
+the <coordinator> coordinator had no answer` means nobody answered and the rules
+alone decided. `routing:classifier-check` prints `answered by jev|builtin|none`
+so a coordinator that is quietly falling back cannot hide.
+
+The Jev adapter is written against the published API reference and pinned by
+`smoke:turn-classifier` against a mock of that reference; there was no TypeSafe
+account on this machine when it was written, so the live path is unverified.
+TypeSafe paused new signups in September 2026 — a key also works through Vercel's
+AI Gateway (`typesafe-ai/jev`), whose body shape is the same.
+
 `routeDetailed()` also reports whether a RULE recognised the message. Two cases
 do not: a match on nothing but the broad keyword list, and the final default.
 Those go to `turn-classifier.ts`, which asks the configured chat model one

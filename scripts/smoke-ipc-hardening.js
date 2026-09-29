@@ -55,6 +55,8 @@ check('llm-send-rejects-oversize-image', C.parseLlmSendPayload({
   check('llm-send-rejection-emits-llm-error', /validateLlmSendPayload/.test(sendBlock) && /IPC\.LLM_ERROR/.test(sendBlock.split('return;')[0]));
 }
 check('secret-key-llm', C.isRendererSecretKey('llm-api-key'));
+check('secret-key-jev', C.isRendererSecretKey('jev-api-key'), 'the routing coordinator key is set from Settings');
+check('secret-key-jev-typo-refused', !C.isRendererSecretKey('jev-key') && !C.isRendererSecretKey('JEV-API-KEY'));
 check('secret-key-harness', C.isRendererSecretKey('harness-api-key'));
 check('secret-key-other-refused', !C.isRendererSecretKey('ssh-key') && !C.isRendererSecretKey('') && !C.isRendererSecretKey(null));
 // Every key the renderer actually uses must be allowlisted.
@@ -130,6 +132,8 @@ if (out) {
   check('secure-good-key-allowed', out.secureGoodKey === 'allowed');
   check('config-bad-value-rejected', out.configBad === 'rejected');
   check('config-good-value-allowed', out.configGood === 'allowed');
+  check('config-coordinator-typo-rejected', out.coordinatorBad === 'rejected', out.coordinatorBad);
+  check('config-coordinator-accepted', out.coordinatorGood === 'allowed', out.coordinatorGood);
 }
 
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);

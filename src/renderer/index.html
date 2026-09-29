@@ -758,6 +758,7 @@
         <h3>Status</h3>
         <div class="conn-row"><span class="conn-dot" id="conn-chat-dot"></span><span class="conn-name">Everyday chat</span><span class="conn-state" id="conn-chat-state">Checking…</span></div>
         <div class="conn-row"><span class="conn-dot" id="conn-agent-dot"></span><span class="conn-name">Agent for tasks</span><span class="conn-state" id="conn-agent-state">Checking…</span></div>
+        <div class="conn-row"><span class="conn-dot" id="conn-router-dot"></span><span class="conn-name">Routing brain</span><span class="conn-state" id="conn-router-state">Checking…</span></div>
       </section>
 
       <section>
@@ -770,6 +771,32 @@
           </select>
         </label>
         <p class="hint">Say “use the agent…” at any time to hand a single request to the agent.</p>
+      </section>
+
+      <section>
+        <h3>Routing brain <span class="hint">decides who gets each request</span></h3>
+        <label>Coordinator
+          <select id="cfg-router-coordinator">
+            <option value="builtin">Built-in — rules, with your chat model as tiebreaker</option>
+            <option value="jev">Jev (TypeSafe) — decision model, faster and typed</option>
+          </select>
+        </label>
+        <p class="hint" id="cfg-router-note"></p>
+        <div id="cfg-jev-block" hidden>
+          <label>Jev API key <span class="hint">stored in your system keyring</span>
+            <input type="password" id="cfg-jev-key" placeholder="paste your key" autocomplete="off">
+          </label>
+          <details class="adv">
+            <summary>Endpoint &amp; model</summary>
+            <label>Endpoint URL
+              <input type="url" id="cfg-jev-endpoint" placeholder="https://api.typesafe.ai/v1/systemone">
+            </label>
+            <label>Model
+              <input type="text" id="cfg-jev-model" placeholder="jev-latest">
+            </label>
+          </details>
+          <p class="hint">Jev answers one typed question and returns a choice with a confidence, so there is nothing to parse. TypeSafe paused new signups; a key also works through Vercel's AI Gateway.</p>
+        </div>
       </section>
 
       <section>

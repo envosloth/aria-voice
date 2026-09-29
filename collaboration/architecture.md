@@ -12,10 +12,14 @@ model with NO tools, or the agent harness. There is no mid-turn handoff.
 1. `router.routeDetailed()` runs an ordered rule list and returns the target plus
    a `confident` flag.
 2. If no rule recognised the message and both targets are configured,
-   `turn-classifier.classifyTarget()` asks the chat model one short, non-streaming
-   question (bounded prompt, 6-token answer, `routing.classifierTimeoutMs`
-   deadline) and uses that answer. Any failure keeps the heuristic answer, so a
-   dead or slow chat model degrades to the old behavior instead of blocking.
+   `turn-classifier.classifyTurn()` asks the selected coordinator for a second
+   opinion: `routing.coordinator` is `builtin` (one short non-streaming question
+   to the chat model, 6-token answer, `routing.classifierTimeoutMs` deadline) or
+   `jev` (`jev-classifier.ts` → TypeSafe, one typed Choice returning a choice and
+   a calibrated confidence, `JEV_TIMEOUT_MS` deadline). Jev falls back to the
+   built-in path, and then to the rules; any failure keeps the heuristic answer,
+   so a dead, slow, or unkeyed coordinator degrades to the old behavior instead
+   of blocking. `routing.classifier = off` disables the second opinion entirely.
 3. `routing.mode` (auto | llm | harness) still overrides everything, and an
    attached screen frame is always the agent's job.
 

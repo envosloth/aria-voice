@@ -7,7 +7,7 @@ import { getSecret } from './secure-storage';
 import { streamChat, LlmCallbacks, ChatMessage, ChatHandle, TokenUsage } from './llm-stream';
 import { credentialedEndpointSecurityError } from './endpoint-security';
 import { routeDetailed, visionDetailFor, Target } from './router';
-import { classifyTarget } from './turn-classifier';
+import { classifyTurn, CoordinatorId } from './turn-classifier';
 import { matchLocalIntent, answerFor, nextOccurrence, humanizeMs, formatClock, LocalIntent } from './local-intents';
 import * as timers from './timers';
 import { perfMark } from './perf';
@@ -493,25 +493,39 @@ export async function coordinate(
     primary = decision.target;
     // The rules recognised this message with a specific cue (an imperative, a
     // knowledge framing, a live lookup, …) — no need to ask anyone else. When
-    // they only matched a broad noun or nothing at all, ask the chat model for a
-    // one-word second opinion. See turn-classifier.ts.
+    // they only matched a broad noun or nothing at all, ask the coordinator set
+    // in Settings for a second opinion. See turn-classifier.ts.
     // Only for 'auto' mode with both targets configured: a forced target is a
     // user instruction, not a guess.
     const classifierOn = (config.get('routing.classifier') as string) !== 'off';
+    const coordinator = ((config.get('routing.coordinator') as CoordinatorId) || 'builtin');
     if (!decision.confident && classifierOn && mode === 'auto' && hasLlm && hasHarness) {
       const started = Date.now();
-      const second = await classifyTarget(userMessage, {
-        endpoint: llmEndpoint,
-        model: (config.get('llm.model') as string) || undefined,
-        apiKey: readSecretSafely('llm-api-key'),
+      const verdict = await classifyTurn(userMessage, {
+        coordinator,
         timeoutMs: Number(config.get('routing.classifierTimeoutMs')) || 1500,
+        llm: {
+          endpoint: llmEndpoint,
+          model: (config.get('llm.model') as string) || undefined,
+          apiKey: readSecretSafely('llm-api-key'),
+        },
+        jev: {
+          endpoint: (config.get('routing.jevEndpoint') as string) || undefined,
+          model: (config.get('routing.jevModel') as string) || undefined,
+          apiKey: readSecretSafely('jev-api-key'),
+        },
       });
-      perfMark(turnId, 'route_classified', { ms: Date.now() - started, heuristic: decision.target, picked: second || decision.target });
-      if (second) {
-        primary = second;
-      }
-      if (second && second !== decision.target) {
-        console.log(`[ARIA] routing: rules said ${decision.target} (${decision.reason}); chat model said ${second} — using ${second}`);
+      perfMark(turnId, 'route_classified', {
+        ms: Date.now() - started,
+        heuristic: decision.target,
+        picked: verdict?.target || decision.target,
+        by: verdict?.by || 'heuristic',
+      });
+      if (verdict) primary = verdict.target;
+      if (verdict && verdict.target !== decision.target) {
+        console.log(`[ARIA] routing: rules said ${decision.target} (${decision.reason}); ${verdict.by} said ${verdict.target} in ${verdict.ms}ms — using ${verdict.target}`);
+      } else if (!verdict) {
+        console.log(`[ARIA] routing: rules alone decided ${decision.target} (${decision.reason}); the ${coordinator} coordinator had no answer`);
       }
     }
   }

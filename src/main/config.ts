@@ -31,12 +31,19 @@ interface AppConfig {
   routing: {
     mode: 'auto' | 'llm' | 'harness';
     // The regex router matches nouns, so some sentence shapes are simply
-    // unclassifiable by rule (see turn-classifier.ts). 'auto' asks the chat
-    // model for a one-word second opinion on exactly those; 'off' never does.
-    // The classifier is only as useful as it is fast: past this many
-    // milliseconds the turn stops waiting and keeps the heuristic answer.
+    // unclassifiable by rule (see turn-classifier.ts). 'auto' asks a second
+    // opinion on exactly those; 'off' never does. The second opinion is only as
+    // useful as it is fast: past this many milliseconds the turn stops waiting
+    // and keeps the heuristic answer.
     classifier: 'auto' | 'off';
     classifierTimeoutMs: number;
+    // Which second opinion answers. 'builtin' asks the chat model in one short
+    // sentence; 'jev' asks TypeSafe's decision model, which returns a typed
+    // choice with a calibrated confidence and cannot answer off-schema. Jev
+    // falls back to the built-in path when it is unreachable or unsure.
+    coordinator: 'builtin' | 'jev';
+    jevEndpoint: string;
+    jevModel: string;
   };
   conversation: {
     // After a spoken reply to a voice turn, re-open the mic for a few seconds so
@@ -146,6 +153,9 @@ const defaults: AppConfig = {
     mode: 'auto',
     classifier: 'auto',
     classifierTimeoutMs: 1500,
+    coordinator: 'builtin',
+    jevEndpoint: 'https://api.typesafe.ai/v1/systemone',
+    jevModel: 'jev-latest',
   },
   conversation: {
     enabled: false,
@@ -196,6 +206,7 @@ const ENUMS: Record<string, readonly string[]> = {
   'tts.engine': ['piper', 'kokoro'],
   'routing.mode': ['auto', 'llm', 'harness'],
   'routing.classifier': ['auto', 'off'],
+  'routing.coordinator': ['builtin', 'jev'],
   'remote.target': ['harness', 'llm', 'custom'],
   'ui.theme': ['midnight', 'nord', 'solarized', 'synthwave', 'forest', 'light'],
   'ui.perfPreset': ['auto', 'power-saver', 'balanced', 'max-performance', 'custom'],

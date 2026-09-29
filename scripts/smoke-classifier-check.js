@@ -40,39 +40,56 @@ function answerFor(text) {
 }
 
 (async () => {
+  // Answers both coordinator shapes: the chat-model one (a word in a message)
+  // and the Jev one (a typed choice with a confidence).
   const server = http.createServer((req, res) => {
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
-      let text = '';
-      try { text = (JSON.parse(body).messages || []).find((m) => m.role === 'user')?.content || ''; } catch { /* answer chat */ }
+      let parsed = {};
+      try { parsed = JSON.parse(body); } catch { /* answer chat */ }
+      const text = parsed.state || (parsed.messages || []).find((m) => m.role === 'user')?.content || '';
+      const answer = answerFor(text);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: answerFor(text) } }] }));
+      if (parsed.questions) {
+        const choice = answer === 'agent' ? 'agent' : 'chat';
+        res.end(JSON.stringify({
+          model: 'jev-mock',
+          answers: { target: { type: 'choice', choice, confidence: 0.9, probabilities: { [choice]: 0.9 } } },
+          usage: { input_tokens: 300, output_tokens: 20 },
+        }));
+        return;
+      }
+      res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: answer } }] }));
     });
   });
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const port = server.address().port;
 
-  // An isolated profile so nothing here touches the user's own config or keyring.
-  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'aria-cls-'));
-  fs.writeFileSync(path.join(userData, 'aria-config.json'), JSON.stringify({
-    ui: { onboarded: true, 'setup-needed': false },
-    llm: { endpoint: `http://127.0.0.1:${port}/v1/chat/completions`, model: 'mock-classifier' },
-    harness: { endpoint: '' },
-    routing: { mode: 'auto', classifier: 'auto', classifierTimeoutMs: 1500 },
-  }));
-
-  const out = await new Promise((resolve) => {
-    const child = spawn(electron, ['--no-sandbox', '--ozone-platform-hint=auto', 'dist/main/index.js'], {
-      cwd: root,
-      env: { ...process.env, ARIA_VERIFY_CLASSIFIER: '1', ARIA_SMOKE: '1', ARIA_SMOKE_USER_DATA: userData },
+  const runApp = async (coordinator) => {
+    // An isolated profile so nothing here touches the user's own config or keyring.
+    const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'aria-cls-'));
+    fs.writeFileSync(path.join(userData, 'aria-config.json'), JSON.stringify({
+      ui: { onboarded: true, 'setup-needed': false },
+      llm: { endpoint: `http://127.0.0.1:${port}/v1/chat/completions`, model: 'mock-classifier' },
+      harness: { endpoint: `http://127.0.0.1:${port}/v1/chat/completions` },
+      routing: { mode: 'auto', classifier: 'auto', classifierTimeoutMs: 1500, coordinator, jevEndpoint: `http://127.0.0.1:${port}/v1/systemone`, jevModel: 'jev-mock' },
+    }));
+    return new Promise((resolve) => {
+      const child = spawn(electron, ['--no-sandbox', '--ozone-platform-hint=auto', 'dist/main/index.js'], {
+        cwd: root,
+        env: { ...process.env, ARIA_VERIFY_CLASSIFIER: '1', ARIA_SMOKE: '1', ARIA_SMOKE_USER_DATA: userData },
+      });
+      let buf = '';
+      child.stdout.on('data', (d) => { buf += d; });
+      child.stderr.on('data', (d) => { buf += d; });
+      const kill = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already gone */ } }, 45000);
+      child.on('exit', (code) => { clearTimeout(kill); resolve({ code, buf }); });
     });
-    let buf = '';
-    child.stdout.on('data', (d) => { buf += d; });
-    child.stderr.on('data', (d) => { buf += d; });
-    const kill = setTimeout(() => { try { child.kill('SIGKILL'); } catch { /* already gone */ } }, 45000);
-    child.on('exit', (code) => { clearTimeout(kill); resolve({ code, buf }); });
-  });
+  };
+
+  const out = await runApp('builtin');
+  const jout = await runApp('jev');
 
   server.close();
   const report = out.buf.split('\n').filter((l) => l.includes('[classifier-check]') || /answered before|classifier accuracy|heuristic on the same|latency|budget/.test(l)).join('\n');
@@ -83,7 +100,14 @@ function answerFor(text) {
   check('mock classifier answered the unsure cases', /answered before the deadline\s+(\d+)\/(\d+)/.test(out.buf) && Number(/(\d+)\//.exec(/answered before the deadline\s+(\d+)\/(\d+)/.exec(out.buf)[0])[1]) > 0);
   check('report states what the budget bought', /budget \d+ms:/.test(out.buf));
   check('report shows a latency figure', /latency\s+p50 \d+ms, p95 \d+ms/.test(out.buf));
+  check('report names the coordinator', /coordinator builtin/.test(out.buf));
   check('nothing was written to the real profile', !fs.existsSync(path.join(os.homedir(), '.config', 'Electron', 'aria-config.json')) || true);
+
+  // The Jev coordinator, measured the same way inside the app.
+  console.log(jout.buf.split('\n').filter((l) => l.includes('[classifier-check]') || /answered before|classifier accuracy|latency|budget|answered by/.test(l)).join('\n'));
+  check('jev coordinator is reported', /coordinator jev/.test(jout.buf));
+  check('jev coordinator answers the unsure cases', /answered by\s+jev \d+/.test(jout.buf), 'the app must reach Jev, not silently fall back');
+  check('jev run exits cleanly', jout.code === 0, `exit ${jout.code}`);
 
   console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
   process.exit(pass ? 0 : 1);

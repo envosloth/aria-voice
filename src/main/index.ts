@@ -1062,6 +1062,10 @@ app.whenReady().then(async () => {
           out.secureGoodKey = await wc.executeJavaScript(`aria.secure.get('llm-api-key').then(()=> 'allowed', ()=> 'rejected')`);
           out.configBad = await wc.executeJavaScript(`aria.config.set('tts.speed','fast').then(()=> 'allowed', ()=> 'rejected')`);
           out.configGood = await wc.executeJavaScript(`aria.config.set('audio.volume',0.5).then(()=> 'allowed', ()=> 'rejected')`);
+          // The routing coordinator is a two-value enum the renderer writes; a
+          // typo must be refused rather than silently stored and ignored.
+          out.coordinatorBad = await wc.executeJavaScript(`aria.config.set('routing.coordinator','jev-typo').then(()=> 'allowed', ()=> 'rejected')`);
+          out.coordinatorGood = await wc.executeJavaScript(`aria.config.set('routing.coordinator','jev').then(()=> 'allowed', ()=> 'rejected')`);
         } catch (e) {
           out.error = (e as Error).message;
         }
