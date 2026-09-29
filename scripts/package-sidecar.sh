@@ -23,9 +23,9 @@ OUT="$ROOT/build/sidecars"
 if [ ! -d "$VENV" ]; then echo "Missing venv: $VENV"; exit 1; fi
 # venv tool dir is bin/ on Linux/macOS, Scripts/ on Windows (Git Bash runner).
 BIN="$VENV/bin"; [ -d "$VENV/Scripts" ] && BIN="$VENV/Scripts"
-if [ ! -x "$BIN/pyinstaller" ] && [ ! -f "$BIN/pyinstaller.exe" ]; then
+if ! "$BIN/python" -c "import PyInstaller" >/dev/null 2>&1; then
   echo "Installing PyInstaller into $NAME venv..."
-  "$BIN/pip" install -q pyinstaller
+  "$BIN/python" -m pip install -q pyinstaller
 fi
 
 echo "=== Freezing sidecar '$NAME' (onedir) ==="
@@ -60,7 +60,7 @@ if [ "$NAME" = "tts" ]; then
   fi
 fi
 
-"$BIN/pyinstaller" \
+"$BIN/python" -m PyInstaller \
   --onedir \
   --name "$NAME" \
   --paths "$SHARED" \

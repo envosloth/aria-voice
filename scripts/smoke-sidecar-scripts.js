@@ -69,6 +69,19 @@ function packageNameAllowlist() {
   check('package-sidecar traversal cannot rm -rf outside build', fs.existsSync(path.join(root, 'victim', 'marker')));
   const bad = spawnSync('bash', [path.join(root, 'scripts', 'package-sidecar.sh'), 'nonsense'], { encoding: 'utf8' });
   check('package-sidecar rejects unknown name', bad.status === 2, `status=${bad.status} ${bad.stderr.trim()}`);
+  // Copied venv entrypoints can retain absolute shebangs from another host.
+  // The configured interpreter must run both pip and PyInstaller as modules.
+  const relocated = path.join(root, 'sidecars', 'stt', 'venv', 'bin');
+  fs.mkdirSync(relocated, { recursive: true });
+  const invocationLog = path.join(t, 'module-calls');
+  const launcher = '#!/bin/sh\nprintf "%s\\n" "$*" >> "$ARIA_FIXTURE_MODULE_LOG"\nif [ "$1" = "-c" ]; then exit 1; fi\nif [ "$2" = "PyInstaller" ]; then mkdir -p "$ARIA_FIXTURE_OUT/stt"; touch "$ARIA_FIXTURE_OUT/stt/stt"; fi\nexit 0\n';
+  fs.writeFileSync(path.join(relocated, 'python'), launcher);
+  fs.chmodSync(path.join(relocated, 'python'), 0o755);
+  const relocatedRun = spawnSync('bash', [path.join(root, 'scripts', 'package-sidecar.sh'), 'stt'], {
+    encoding: 'utf8', env: { ...process.env, ARIA_FIXTURE_MODULE_LOG: invocationLog, ARIA_FIXTURE_OUT: path.join(root, 'build', 'sidecars') },
+  });
+  const calls = fs.existsSync(invocationLog) ? fs.readFileSync(invocationLog, 'utf8') : '';
+  check('package-sidecar uses interpreter modules despite missing entrypoints', relocatedRun.status === 0 && calls.includes('-m pip install') && calls.includes('-m PyInstaller'), `${relocatedRun.status}`);
   fs.rmSync(t, { recursive: true, force: true });
 }
 
