@@ -41,9 +41,39 @@ async function connect(port) {
   return { ws, ev, send };
 }
 
+// Seed a few conversations so sidebar rows and per-message action pills render.
+function seedSessions() {
+  const now = Date.now();
+  const sessions = ['Weather in Longmont', 'Blender render settings', 'Thumbnail ideas', 'Grocery list'].map((title, i) => ({
+    id: `seed-${i}`, title, startedAt: now - i * 36e5, updatedAt: now - i * 36e5, pinned: false,
+    turns: [{ role: 'user', content: 'What is the plan today?', ts: now - i * 36e5 },
+      { role: 'assistant', content: 'Finish the animatic, then block out shot three.', ts: now - i * 36e5 + 2000 }],
+  }));
+  fs.writeFileSync(path.join(userData, 'sessions.json'), JSON.stringify({ sessions }));
+}
+// Adjacent visible buttons: >= 8px side by side (6px inside a segmented
+// control), >= 6px stacked. Every button is a raised chip, so less reads as jammed.
+const SPACING = `(() => {
+  const vis = (b) => { const r = b.getBoundingClientRect(); if (!r.width || !r.height) return false;
+    for (let e = b; e; e = e.parentElement) { const s = getComputedStyle(e); if (s.display === 'none' || s.visibility === 'hidden' || Number(s.opacity) === 0) return false; }
+    return true; };
+  const name = (b) => b.id || String(b.className).split(' ')[0] || b.textContent.trim().slice(0, 14);
+  const bs = [...document.querySelectorAll('button')].filter(vis); const bad = new Set();
+  for (const a of bs) for (const b of bs) {
+    if (a === b || a.contains(b) || b.contains(a)) continue;
+    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    const vOver = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top), hOver = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
+    const minH = a.closest('.seg') && b.closest('.seg') ? 6 : 8;
+    if (vOver > 4 && rb.left >= ra.right - 2 && rb.left - ra.right < minH - 0.5) bad.add('H ' + name(a) + '|' + name(b) + ' ' + Math.round(rb.left - ra.right));
+    if (hOver > 4 && rb.top >= ra.bottom - 2 && rb.top - ra.bottom < 5.5) bad.add('V ' + name(a) + '|' + name(b) + ' ' + Math.round(rb.top - ra.bottom));
+  }
+  return [...bad];
+})()`;
+
 (async () => {
   let ok = false; let child = null;
   try {
+    seedSessions();
     const port = 9800 + Math.floor(Math.random() * 150);
     child = boot(port);
     const { ws, ev, send } = await connect(port);
@@ -143,7 +173,25 @@ async function connect(port) {
       out.arrowMoves = nav.querySelector('.snav-item.active').dataset.tab;
       const act2 = nav.querySelector('.snav-item.active');
       out.indicatorFollowsKeys = Math.abs(ind.getBoundingClientRect().top - act2.getBoundingClientRect().top) < 1.5;
-      // Nothing inside the dialog clips horizontally at a narrow width.
+      // ── Spacing between buttons (main window + every Settings tab) ──
+      out.spacing = {};
+      // Entrance animations (msg-in, panel-in) never advance in the hidden
+      // window and would leave content at opacity 0; freeze them for the audit.
+      const still = document.createElement('style'); still.textContent = '*,*::before,*::after{animation:none!important}'; document.head.appendChild(still);
+      document.getElementById('settings-close').click(); await wait(80);
+      (document.querySelector('.session-open') || { click() {} }).click(); await wait(500);
+      document.querySelectorAll('.msg-actions').forEach(e => { e.style.opacity = '1'; });
+      out.spacing.main = ${SPACING};
+      document.querySelectorAll('.msg-actions').forEach(e => { e.style.opacity = ''; });
+      out.sessionRows = document.querySelectorAll('.session-item').length;
+      out.msgPills = document.querySelectorAll('.message .msg-actions').length;
+      document.getElementById('settings-btn').click(); await wait(80);
+      for (const t of ['connections', 'voice', 'context', 'memory', 'appearance', 'performance', 'remote', 'updates']) {
+        document.getElementById('settings-tab-' + t).click();
+        document.querySelectorAll('#settings-' + t + ' details').forEach(d => { d.open = true; });
+        await wait(120);
+        out.spacing[t] = ${SPACING};
+      }
       return out;
     })()`);
     ws.close();
@@ -161,6 +209,7 @@ async function connect(port) {
       settingsTabsIntact: ['connections', 'voice', 'context', 'memory', 'appearance', 'performance', 'remote', 'updates'].every((t) => r.tabsStillWork.includes(t)),
       indicatorTracksTab: r.indicatorTracksActive && r.indicatorFollowsKeys && r.arrowMoves !== 'voice',
       headerDescribesTab: r.headerDesc.length > 10,
+      buttonsNotCrowded: r.sessionRows >= 4 && r.msgPills >= 2 && Object.values(r.spacing).every((v) => v.length === 0),
       switchesAndSliders: r.switchStyled && r.switchToggles && /%$/.test(r.rangeFill) && r.selectChevron,
     };
     for (const [k, v] of Object.entries(checks)) console.log(`[${k}] ${v ? 'PASS' : 'FAIL'}`);

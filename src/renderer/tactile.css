@@ -338,6 +338,23 @@ html[data-theme="light"] .settings-panel input[type="range"]::-webkit-slider-run
   .snav-group-label { display: none; }
 }
 
+/* ── Spacing between controls ──
+   Every button is now a raised chip (liquid.css), so rows sized for flat items
+   (2–4px apart) read as jammed. Give each group a real gutter. */
+.settings-nav { gap: 6px; }
+.snav-group-label { padding-top: 16px; }
+.session-list { gap: 6px; padding-right: 2px; }
+.session-item { gap: 8px; grid-template-columns: minmax(0, 1fr) 30px; }
+.session-menu-btn { width: 30px; }
+.message .msg-actions { gap: 8px; padding: 3px; }
+/* The roomier pill (3 × 24px keys + gaps ≈ 100px) must still fit beside the
+   longest bubble, so the bubble cap leaves that room instead of a flat 82%. */
+.message { max-width: min(82%, calc(100% - 112px)); }
+.seg { gap: 6px; }
+.remote-actions { gap: 10px; margin-top: 10px; }
+.discover-row, .memory-add, .custom-bg-row, .update-row, .memory-actions, .import-actions { gap: 10px; }
+.input-area { gap: 10px; }
+
 /* Reduced motion: no press scaling or sliding; colour still changes. */
 @media (prefers-reduced-motion: reduce) {
   .tac:is(:active, .is-pressed), #mic-btn.tac:is(:active, .is-pressed) { transform: none !important; }
