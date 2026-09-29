@@ -51,9 +51,133 @@ async function updateChatSub() {
   } catch (e) { /* keep placeholder */ }
 }
 
+// ── Appearance: background scene + glass material (appearance.js) ──
+// Changes apply and persist immediately (no Save needed): the point is to
+// audition glass settings against a background live.
+const APPEARANCE_KEYS = { background: 'ui.background', glassStyle: 'ui.glassStyle', glassBlur: 'ui.glassBlur', glassOpacity: 'ui.glassOpacity', bgDim: 'ui.bgDim' };
+async function readAppearance() {
+  const out = {};
+  await Promise.all(Object.entries(APPEARANCE_KEYS).map(async ([k, key]) => {
+    try { const v = await aria.config.get(key); if (v !== undefined && v !== null) out[k] = v; } catch (e) {}
+  }));
+  return out;
+}
+function paintAppearanceControls(st) {
+  const ap = window.AriaAppearance;
+  if (!ap) return;
+  st = st || ap.state;
+  document.documentElement.dataset.blurOff = st.glassBlur === 0 ? 'true' : 'false';
+  document.querySelectorAll('#bg-swatches .bg-swatch').forEach((b) => {
+    const on = b.dataset.bg === st.background;
+    b.setAttribute('aria-checked', on ? 'true' : 'false');
+    b.tabIndex = on ? 0 : -1;
+  });
+  document.querySelectorAll('#glass-style button').forEach((b) => b.setAttribute('aria-checked', b.dataset.style === st.glassStyle ? 'true' : 'false'));
+  const sliders = [['cfg-glass-blur', st.glassBlur, 'px'], ['cfg-glass-opacity', st.glassOpacity, '%'], ['cfg-bg-dim', st.bgDim, '%']];
+  for (const [id, v, unit] of sliders) {
+    const el = document.getElementById(id); const out = document.getElementById(id + '-val');
+    if (el) el.value = String(v);
+    if (out) out.textContent = v + unit;
+  }
+  const clearBtn = document.getElementById('custom-bg-clear');
+  if (clearBtn) clearBtn.hidden = !ap.hasCustomImage();
+  const custom = document.querySelector('#bg-swatches .bg-swatch[data-bg="custom"]');
+  const layer = document.getElementById('bg-custom');
+  if (custom) custom.style.backgroundImage = ap.hasCustomImage() && layer ? layer.style.backgroundImage : '';
+}
+async function setAppearance(patch) {
+  const ap = window.AriaAppearance;
+  if (!ap) return;
+  const st = ap.apply(patch);
+  paintAppearanceControls(st);
+  for (const k of Object.keys(patch)) {
+    try { await aria.config.set(APPEARANCE_KEYS[k], st[k]); } catch (e) { console.warn('[appearance] save failed', k, e); }
+  }
+}
+function setCustomBgStatus(text, isErr) {
+  const el = document.getElementById('custom-bg-status');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle('err', !!isErr);
+}
+async function useCustomBackground(file) {
+  const ap = window.AriaAppearance;
+  if (!ap || !file) return;
+  setCustomBgStatus('Loading image…');
+  try {
+    await ap.setCustomImage(file);
+    await setAppearance({ background: 'custom' });
+    setCustomBgStatus(`Using ${file.name || 'your image'}.`);
+  } catch (e) {
+    setCustomBgStatus((e && e.message) || 'Could not use that image.', true);
+  }
+}
+function setupAppearanceControls() {
+  const ap = window.AriaAppearance;
+  const host = document.getElementById('bg-swatches');
+  if (!ap || !host || host.childElementCount) return;
+  for (const b of ap.BACKGROUNDS) {
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'bg-swatch'; btn.dataset.bg = b.id;
+    btn.setAttribute('role', 'radio'); btn.setAttribute('aria-label', b.label);
+    const label = document.createElement('span'); label.textContent = b.label; btn.appendChild(label);
+    btn.addEventListener('click', () => {
+      if (b.id === 'custom' && !ap.hasCustomImage()) { document.getElementById('custom-bg-file').click(); return; }
+      setAppearance({ background: b.id });
+    });
+    host.appendChild(btn);
+  }
+  // Arrow keys move between swatches (radiogroup semantics).
+  host.addEventListener('keydown', (e) => {
+    const keys = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+    if (!(e.key in keys)) return;
+    e.preventDefault();
+    const items = [...host.querySelectorAll('.bg-swatch')];
+    const i = items.indexOf(document.activeElement);
+    const next = items[(i + keys[e.key] + items.length) % items.length];
+    next.focus(); next.click();
+  });
+  document.querySelectorAll('#glass-style button').forEach((b) => b.addEventListener('click', () => setAppearance({ glassStyle: b.dataset.style })));
+  const bind = (id, key) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', () => { const st = ap.apply({ [key]: Number(el.value) }); paintAppearanceControls(st); });
+    el.addEventListener('change', () => setAppearance({ [key]: Number(el.value) }));
+  };
+  bind('cfg-glass-blur', 'glassBlur'); bind('cfg-glass-opacity', 'glassOpacity'); bind('cfg-bg-dim', 'bgDim');
+  const file = document.getElementById('custom-bg-file');
+  document.getElementById('custom-bg-pick').addEventListener('click', () => file.click());
+  file.addEventListener('change', () => { useCustomBackground(file.files && file.files[0]); file.value = ''; });
+  document.getElementById('custom-bg-clear').addEventListener('click', async () => {
+    await ap.clearCustomImage();
+    if (ap.state.background === 'custom') await setAppearance({ background: ap.DEFAULTS.background });
+    else paintAppearanceControls();
+    setCustomBgStatus('Custom image removed.');
+  });
+  document.getElementById('glass-reset').addEventListener('click', () => {
+    const d = ap.DEFAULTS;
+    setAppearance({ glassStyle: d.glassStyle, glassBlur: d.glassBlur, glassOpacity: d.glassOpacity, bgDim: d.bgDim });
+  });
+  // Drag-and-drop an image onto the Appearance tab.
+  const zone = document.getElementById('settings-appearance');
+  if (zone) {
+    zone.addEventListener('dragover', (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); zone.classList.add('custom-bg-drop'); } });
+    zone.addEventListener('dragleave', () => zone.classList.remove('custom-bg-drop'));
+    zone.addEventListener('drop', (e) => {
+      e.preventDefault(); zone.classList.remove('custom-bg-drop');
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) useCustomBackground(f);
+    });
+  }
+  paintAppearanceControls();
+}
+
 // Apply the saved theme as early as possible to avoid a flash.
 (async () => {
   try { applyTheme((await aria.config.get('ui.theme')) || 'midnight'); } catch (e) {}
+  try {
+    if (window.AriaAppearance) { await window.AriaAppearance.init(await readAppearance()); setupAppearanceControls(); }
+  } catch (e) { console.warn('[appearance] init failed', e); }
   try { const v = await aria.config.get('audio.volume'); if (typeof v === 'number') setOutputVolume(v); } catch (e) {}
   updateChatSub();
 })();

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self'; media-src 'self' blob:; style-src 'self' 'unsafe-inline'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self'; media-src 'self' blob:; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline'">
   <title>ARIA</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -56,19 +56,59 @@
       --success: #16a34a; --warning: #d97706; --error: #dc2626; --glow: rgba(37,99,235,.10);
     }
 
-    /* Glass tokens — theme-agnostic white-alpha, matches the observatory concept. */
+    /* ── Glass material ──
+       One material, three tints (html[data-glass]), driven by appearance.js:
+         --glass-blur  backdrop blur radius      (Settings → Appearance → Blur)
+         --glass-tint  0..1 tint strength        (Settings → Appearance → Tint)
+         --bg-dim      0..1 darkening over the background scene
+       Layers, back to front: backdrop blur+saturation → tinted fill → soft
+       top-left sheen → fine grain (stops the blur looking plastic) → a 1px
+       gradient rim that catches light on the top edge and fades down the
+       sides, as on real bevelled glass. */
     :root {
       --mono: ui-monospace, 'IBM Plex Mono', 'SF Mono', 'Cascadia Code', Menlo, monospace;
-      --glass: linear-gradient(165deg, rgba(255,255,255,.09), rgba(255,255,255,.025) 42%, rgba(255,255,255,.012) 72%, rgba(255,255,255,.05));
-      --glass-strong: linear-gradient(165deg, rgba(255,255,255,.11), rgba(255,255,255,.03) 40%, rgba(255,255,255,.015) 72%, rgba(255,255,255,.06));
+      --glass-blur: 26px; --glass-tint: .30; --bg-dim: 0;
+      --glass-rgb: 16, 18, 24;          /* smoked: dark smoked glass */
+      --glass-k: 1;                     /* tint multiplier per style */
+      --glass-sat: 1.6; --glass-bright: 1;
+      --rim-hi: rgba(255,255,255,.42); --rim-lo: rgba(255,255,255,.05); --rim-base: rgba(255,255,255,.14);
+      --sheen: rgba(255,255,255,.07);
+      --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      --glass-fill: rgba(var(--glass-rgb), calc(var(--glass-tint) * var(--glass-k)));
+      --glass-fill-solid: rgba(var(--glass-rgb), min(calc(var(--glass-tint) * var(--glass-k) + .38), .9));
+      --glass-surface:
+        radial-gradient(120% 70% at 0% 0%, var(--sheen), transparent 60%),
+        linear-gradient(180deg, rgba(255,255,255,.035), transparent 30%),
+        var(--grain),
+        linear-gradient(var(--glass-fill), var(--glass-fill));
+      --glass-filter: blur(var(--glass-blur)) saturate(var(--glass-sat)) brightness(var(--glass-bright));
+      --glass-shadow: 0 30px 70px -18px rgba(0,0,0,.6), 0 8px 22px -8px rgba(0,0,0,.45),
+                      inset 0 1px 0 rgba(255,255,255,.10), inset 0 -1px 0 rgba(0,0,0,.25);
+      /* Small controls (pills, bubbles, buttons) share the same rim language. */
+      --chip-fill: rgba(255,255,255,.055);
+      --chip-fill-hover: rgba(255,255,255,.11);
+      --chip-rim: inset 0 1px 0 rgba(255,255,255,.20), inset 0 0 0 1px rgba(255,255,255,.09);
+      /* Back-compat names still used by overlays below. */
+      --glass: var(--glass-surface);
+      --glass-strong: var(--glass-surface);
       --glass-border: rgba(255,255,255,.14);
-      --glass-inset: inset 0 1px 0 rgba(255,255,255,.22), inset 0 -1px 0 rgba(0,0,0,.4), 0 24px 60px rgba(0,0,0,.5);
+      --glass-inset: var(--glass-shadow);
+    }
+    html[data-glass="frosted"] {
+      --glass-rgb: 205, 212, 226; --glass-k: .36; --glass-sat: 1.9; --glass-bright: 1.02;
+      --rim-hi: rgba(255,255,255,.62); --rim-lo: rgba(255,255,255,.10); --sheen: rgba(255,255,255,.12);
+    }
+    html[data-glass="clear"] {
+      --glass-rgb: 20, 22, 28; --glass-k: .35; --glass-sat: 1.35; --glass-bright: 1;
+      --rim-hi: rgba(255,255,255,.55); --rim-lo: rgba(255,255,255,.08); --sheen: rgba(255,255,255,.05);
     }
     html[data-theme="light"] {
-      --glass: linear-gradient(165deg, rgba(255,255,255,.9), rgba(255,255,255,.7));
-      --glass-strong: linear-gradient(165deg, rgba(255,255,255,.95), rgba(255,255,255,.78));
+      --glass-rgb: 255, 255, 255; --glass-k: 1.35; --glass-sat: 1.6; --glass-bright: 1.04;
+      --rim-hi: rgba(255,255,255,.95); --rim-lo: rgba(255,255,255,.35); --sheen: rgba(255,255,255,.35);
+      --glass-shadow: 0 24px 60px -20px rgba(20,30,60,.28), 0 6px 18px -8px rgba(20,30,60,.18), inset 0 1px 0 rgba(255,255,255,.8);
+      --chip-fill: rgba(255,255,255,.45); --chip-fill-hover: rgba(255,255,255,.7);
+      --chip-rim: inset 0 1px 0 rgba(255,255,255,.9), inset 0 0 0 1px rgba(10,20,40,.08);
       --glass-border: rgba(10,20,40,.10);
-      --glass-inset: 0 12px 40px rgba(20,30,60,.12);
     }
 
     body {
@@ -91,8 +131,60 @@
     button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent-active); outline-offset: 2px; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
-    /* ── Ambient background: glow blobs + grid ── */
-    .bg-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+    /* ── Background scenes (html[data-bg], set by appearance.js) ──
+       Static CSS paintings: no animation, so the backdrop blur above them is
+       never invalidated by the background itself. */
+    .bg-layer { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; background: var(--bg); }
+    .bg-scene, #bg-custom, .bg-dim { position: absolute; inset: 0; }
+    .bg-scene { display: none; }
+    #bg-custom { display: none; background-size: cover; background-position: center; }
+    .bg-dim { background: rgba(0,0,0,var(--bg-dim)); }
+    .bg-layer .blob, .bg-layer .bg-grid { display: none; }
+    html[data-bg="observatory"] .bg-layer .blob, html[data-bg="observatory"] .bg-layer .bg-grid { display: block; }
+    html[data-bg="custom"] #bg-custom { display: block; }
+    html:not([data-bg="observatory"]):not([data-bg="custom"]):not([data-bg="solid"]) .bg-scene { display: block; }
+    /* Obsidian: brushed-metal spheres on black (reference: glass mockup). */
+    html[data-bg="obsidian"] .bg-layer { background: #050506; }
+    html[data-bg="obsidian"] .bg-scene { background:
+      radial-gradient(circle at 34% 28%, #e8ddd2 0, #a39486 9%, #5a514b 26%, #221e1c 50%, #0c0b0b 66%, rgba(8,8,8,0) 71%) 12% 78% / 58vmin 58vmin no-repeat,
+      radial-gradient(circle at 34% 28%, #e2d8ce 0, #9a8c80 10%, #544b46 28%, #1f1c1a 52%, #0c0b0b 66%, rgba(8,8,8,0) 71%) 54% -6% / 34vmin 34vmin no-repeat,
+      radial-gradient(circle at 30% 30%, #ece2d8 0, #a89a8d 9%, #5e544e 27%, #231f1d 51%, #0c0b0b 66%, rgba(8,8,8,0) 71%) 92% 44% / 46vmin 46vmin no-repeat,
+      radial-gradient(circle at 36% 30%, #d8cec4 0, #8c7f75 11%, #4a423e 30%, #1b1917 54%, rgba(8,8,8,0) 71%) 46% 112% / 30vmin 30vmin no-repeat,
+      radial-gradient(90% 70% at 50% 40%, #1a1a1e, #060607 70%); }
+    /* Studio: grey room with window-light shadows falling across (reference: AI pills). */
+    html[data-bg="studio"] .bg-layer { background: #3a3b44; }
+    html[data-bg="studio"] .bg-scene { filter: blur(22px); inset: -60px; background:
+      linear-gradient(100deg, transparent 18%, rgba(18,18,24,.55) 21%, rgba(18,18,24,.55) 25%, transparent 28%, transparent 58%, rgba(18,18,24,.5) 61%, rgba(18,18,24,.5) 64%, transparent 67%),
+      linear-gradient(8deg, transparent 38%, rgba(18,18,24,.45) 41%, rgba(18,18,24,.45) 45%, transparent 48%),
+      radial-gradient(70% 60% at 78% 8%, rgba(200,200,214,.75), transparent 70%),
+      linear-gradient(180deg, #6b6c78 0%, #3c3d47 55%, #20212a 100%); }
+    /* Eclipse: black with a vast lit planet rim, teal and ember glints (reference: layouts). */
+    html[data-bg="eclipse"] .bg-layer { background: #020304; }
+    html[data-bg="eclipse"] .bg-scene { background:
+      radial-gradient(circle at 115% 58%, transparent 52%, rgba(160,190,196,.55) 53.2%, rgba(60,90,98,.25) 55.5%, transparent 60%),
+      radial-gradient(circle at 115% 58%, transparent 60%, rgba(120,150,160,.28) 61%, transparent 64.5%),
+      radial-gradient(circle at 115% 58%, transparent 38%, rgba(230,120,40,.35) 41%, transparent 45%),
+      radial-gradient(25% 18% at 40% 38%, rgba(255,140,50,.45), transparent 70%),
+      radial-gradient(22% 14% at 48% 68%, rgba(255,120,40,.35), transparent 70%),
+      radial-gradient(60% 60% at 10% 100%, rgba(120,20,10,.35), transparent 70%),
+      #020304; }
+    /* Aurora / Dusk / Ocean: vivid colour fields, the harshest test for glass. */
+    html[data-bg="aurora"] .bg-scene { filter: blur(40px); inset: -80px; background:
+      radial-gradient(40% 50% at 18% 22%, #19c9a4, transparent 70%),
+      radial-gradient(45% 55% at 82% 18%, #6b4dff, transparent 70%),
+      radial-gradient(50% 50% at 70% 88%, #ff3fa6, transparent 70%),
+      radial-gradient(40% 45% at 22% 82%, #2e7dff, transparent 70%), #0a0c1a; }
+    html[data-bg="dusk"] .bg-scene { filter: blur(36px); inset: -80px; background:
+      radial-gradient(55% 45% at 50% 105%, #ff8a3d, transparent 70%),
+      radial-gradient(45% 45% at 18% 70%, #e2466b, transparent 70%),
+      radial-gradient(60% 55% at 80% 30%, #5b2c8f, transparent 70%),
+      linear-gradient(180deg, #120a26, #2a1340 60%, #3d1a3a); }
+    html[data-bg="ocean"] .bg-scene { filter: blur(36px); inset: -80px; background:
+      radial-gradient(45% 50% at 25% 30%, #0fb5c9, transparent 70%),
+      radial-gradient(50% 50% at 78% 70%, #1446a8, transparent 70%),
+      radial-gradient(35% 35% at 70% 15%, #6ee7d8, transparent 70%),
+      linear-gradient(160deg, #02121c, #04243a); }
+    html[data-bg="solid"] .bg-layer { background: var(--bg); }
     .bg-grid {
       position: absolute; inset: 0;
       background-image: linear-gradient(rgba(255,255,255,.02) 1px, transparent 1px),
@@ -112,12 +204,18 @@
       padding: 14px; box-sizing: border-box;
     }
     .panel {
-      position: relative; border-radius: 20px;
-      background: var(--glass); border: 1px solid var(--glass-border);
-      backdrop-filter: blur(40px) saturate(1.5); -webkit-backdrop-filter: blur(40px) saturate(1.5);
-      box-shadow: var(--glass-inset); overflow: hidden;
+      position: relative; border-radius: 22px; border: 0;
+      background: var(--glass-surface);
+      backdrop-filter: var(--glass-filter); -webkit-backdrop-filter: var(--glass-filter);
+      box-shadow: var(--glass-shadow); overflow: hidden; isolation: isolate;
     }
-    .panel.strong { background: var(--glass-strong); border-color: rgba(255,255,255,.15); }
+    /* Gradient rim: bright along the top edge, fading down the sides. */
+    .panel::before, .glass-rim::before {
+      content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none; z-index: 5;
+      background: linear-gradient(172deg, var(--rim-hi), var(--rim-lo) 22%, var(--rim-lo) 70%, var(--rim-base));
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+      -webkit-mask-composite: xor; mask-composite: exclude;
+    }
 
     .mono { font-family: var(--mono); }
     .cap { font: 500 9.5px var(--mono); letter-spacing: .16em; color: color-mix(in srgb, var(--text) 45%, transparent); }
@@ -150,7 +248,7 @@
        .panel has overflow:hidden AND a backdrop-filter, so an in-item dropdown
        (absolute or fixed) is clipped by the panel — the "options are hidden away"
        report. left/top are set from the button's viewport rect. */
-    .session-menu { position: fixed; left: 0; top: 0; z-index: 90; min-width: 148px; padding: 5px; border-radius: 10px; border: 1px solid var(--glass-border); background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(18px) saturate(1.2); -webkit-backdrop-filter: blur(18px) saturate(1.2); box-shadow: 0 14px 40px rgba(0,0,0,.42); }
+    .session-menu { position: fixed; left: 0; top: 0; z-index: 90; min-width: 148px; padding: 5px; border-radius: 10px; border: 1px solid var(--glass-border); background: var(--grain), linear-gradient(var(--glass-fill-solid), var(--glass-fill-solid)); backdrop-filter: var(--glass-filter); -webkit-backdrop-filter: var(--glass-filter); box-shadow: var(--chip-rim), 0 14px 40px rgba(0,0,0,.42); }
     .session-menu[hidden] { display: none; }
     .session-menu button { width: 100%; text-align: left; padding: 7px 9px; border: 0; border-radius: 7px; background: transparent; color: var(--text); cursor: pointer; font: 500 11px var(--mono); }
     .session-menu button:hover { background: rgba(255,255,255,.08); }
@@ -269,13 +367,13 @@
     .message { animation: msg-in .3s cubic-bezier(.16,1,.3,1) both; }
     .message.user {
       align-self: flex-end; border-radius: 16px 16px 5px 16px;
-      background: linear-gradient(150deg, rgba(255,255,255,.16), rgba(255,255,255,.06));
-      border: 1px solid rgba(255,255,255,.2); box-shadow: inset 0 1px 0 rgba(255,255,255,.22), 0 8px 24px rgba(0,0,0,.28);
+      background: radial-gradient(130% 120% at 0% 0%, rgba(255,255,255,.14), transparent 60%), color-mix(in srgb, var(--accent-active) 14%, rgba(255,255,255,.07));
+      border: 0; box-shadow: var(--chip-rim), 0 10px 26px -10px rgba(0,0,0,.45);
     }
     .message.assistant {
       align-self: flex-start; border-radius: 5px 16px 16px 16px;
-      background: linear-gradient(150deg, rgba(255,255,255,.07), rgba(255,255,255,.02));
-      border: 1px solid rgba(255,255,255,.12); color: color-mix(in srgb, var(--text) 94%, transparent);
+      background: radial-gradient(130% 120% at 0% 0%, rgba(255,255,255,.08), transparent 60%), var(--chip-fill);
+      border: 0; box-shadow: var(--chip-rim); color: color-mix(in srgb, var(--text) 94%, transparent);
     }
     html[data-theme="light"] .message.user { background: color-mix(in srgb, var(--accent-active) 16%, var(--surface)); border-color: color-mix(in srgb, var(--accent-active) 25%, transparent); }
     html[data-theme="light"] .message.assistant { background: var(--surface); border-color: var(--border); }
@@ -302,12 +400,12 @@
 
     /* Input pill */
     .input-area {
-      display: flex; align-items: center; gap: 10px; margin: 12px 14px 14px; padding: 10px 12px;
-      border-radius: 16px; background: linear-gradient(160deg, rgba(255,255,255,.12), rgba(255,255,255,.04));
-      border: 1px solid rgba(255,255,255,.18); backdrop-filter: blur(30px);
-      box-shadow: inset 0 1px 0 rgba(255,255,255,.22), 0 12px 32px rgba(0,0,0,.35); position: relative;
+      display: flex; align-items: center; gap: 8px; margin: 12px 14px 14px; padding: 7px 7px 7px 8px;
+      border-radius: 999px; border: 0; position: relative;
+      background: radial-gradient(120% 120% at 0% 0%, rgba(255,255,255,.07), transparent 55%), var(--chip-fill);
+      box-shadow: var(--chip-rim), 0 14px 34px -12px rgba(0,0,0,.55);
     }
-    html[data-theme="light"] .input-area { background: var(--surface); border-color: var(--border); }
+    .input-area:focus-within { box-shadow: var(--chip-rim), 0 0 0 3px color-mix(in srgb, var(--accent-active) 18%, transparent), 0 14px 34px -12px rgba(0,0,0,.55); }
     .input-area::before { content: ''; position: absolute; top: 0; left: 12px; right: 12px; height: 2px; background: linear-gradient(90deg, transparent, var(--accent-active), transparent); background-size: 200% 100%; opacity: 0; transition: opacity .4s ease; pointer-events: none; }
     body[data-state="processing"] .input-area::before { opacity: 1; animation: shimmer 1.8s infinite linear; }
     @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
@@ -317,18 +415,18 @@
     }
     #text-input::placeholder { color: var(--text-muted); }
     #mic-btn, #screen-btn, #send-btn {
-      width: 34px; height: 34px; border-radius: 11px; flex: none; cursor: pointer;
+      width: 38px; height: 38px; border-radius: 50%; flex: none; cursor: pointer;
       display: flex; align-items: center; justify-content: center;
       transition: all .25s cubic-bezier(.4,0,.2,1);
     }
-    #screen-btn { background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.14); color: var(--text-muted); }
-    #screen-btn:hover { color: var(--text); background: rgba(255,255,255,.14); }
+    #screen-btn { background: var(--chip-fill); border: 0; box-shadow: var(--chip-rim); color: var(--text-muted); }
+    #screen-btn:hover { color: var(--text); background: var(--chip-fill-hover); }
     #screen-btn.active { background: color-mix(in srgb, var(--accent-active) 22%, transparent); color: var(--accent-active); border-color: var(--accent-active); animation: pulse 1.6s infinite; }
-    #send-btn { background: rgba(255,255,255,.10); border: 1px solid rgba(255,255,255,.16); color: var(--text); }
+    #send-btn { background: var(--chip-fill); border: 0; box-shadow: var(--chip-rim); color: var(--text); }
     #send-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent-active) 24%, transparent); border-color: var(--accent-active); color: var(--accent-active); }
     #send-btn:disabled { opacity: .38; cursor: default; }
-    #mic-btn { background: linear-gradient(135deg, var(--accent-active), #2f6bd6); border: none; color: #06131c;
-      box-shadow: 0 0 16px color-mix(in srgb, var(--accent-active) 40%, transparent), inset 0 1px 0 rgba(255,255,255,.4); }
+    #mic-btn { background: radial-gradient(120% 120% at 30% 15%, color-mix(in srgb, var(--accent-active) 55%, white), var(--accent-active) 55%, color-mix(in srgb, var(--accent-active) 70%, black)); border: none; color: #06131c;
+      box-shadow: 0 0 18px color-mix(in srgb, var(--accent-active) 40%, transparent), inset 0 1px 0 rgba(255,255,255,.55), inset 0 -2px 6px rgba(0,0,0,.25); }
     #mic-btn:hover { transform: scale(1.06); }
     #mic-btn.listening { animation: pulse 1s infinite; box-shadow: 0 0 22px color-mix(in srgb, var(--accent-active) 60%, transparent); }
     #mic-btn:active, #screen-btn:active, #send-btn:active { transform: scale(.9); }
@@ -336,14 +434,7 @@
     /* ── Ops column ── */
     /* Keep the in-panel particle video crisp; blur belongs to its surrounding
        glow, not the rail that contains it. */
-    .ops { padding: 20px 18px; display: flex; flex-direction: column; align-items: center; gap: 14px;
-      backdrop-filter: none; -webkit-backdrop-filter: none; }
-    html[data-theme="light"] .ops {
-      /* Translucent light glass preserves contrast for the inverted particle video. */
-      background: linear-gradient(165deg, rgba(255,255,255,.64), rgba(255,255,255,.42));
-      border-color: color-mix(in srgb, var(--accent-active) 18%, transparent);
-      box-shadow: 0 18px 44px rgba(20,30,60,.14);
-    }
+    .ops { padding: 20px 18px; display: flex; flex-direction: column; align-items: center; gap: 14px; }
     /* Procedural particle orb (orb.js). Dots are drawn on the canvas in the
        theme's --orb-dot colour, tinted per state; the soft glow behind them is
        plain CSS so no per-frame filter touches the canvas. */
@@ -430,10 +521,10 @@
     #update-action-btn { background: var(--success); color: #04210f; border: none; font-weight: 600; }
 
     /* ── Settings overlay: glass modal ── */
-    .settings-overlay { position: fixed; inset: 0; background: rgba(3,5,10,.55); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 100; visibility: hidden; opacity: 0; transition: opacity .25s ease, visibility .25s ease; }
+    .settings-overlay { position: fixed; inset: 0; background: rgba(3,5,10,.35); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); display: flex; align-items: center; justify-content: center; z-index: 100; visibility: hidden; opacity: 0; transition: opacity .25s ease, visibility .25s ease; }
     .settings-overlay.visible { visibility: visible; opacity: 1; }
     /* Tabbed glass modal: left nav rail + scrolling content pane (design 3b). */
-    .settings-panel { display: flex; width: 92%; max-width: 780px; height: 86vh; max-height: 660px; background: color-mix(in srgb, var(--surface) 82%, transparent); backdrop-filter: blur(30px) saturate(1.3); -webkit-backdrop-filter: blur(30px) saturate(1.3); border-radius: 20px; border: 1px solid var(--glass-border); overflow: hidden; box-shadow: 0 30px 90px rgba(0,0,0,.6); transform: scale(.96) translateY(10px); opacity: 0; transition: transform .3s cubic-bezier(.34,1.56,.64,1), opacity .25s ease; }
+    .settings-panel { position: relative; display: flex; width: 92%; max-width: 780px; height: 86vh; max-height: 660px; background: radial-gradient(120% 70% at 0% 0%, var(--sheen), transparent 60%), var(--grain), linear-gradient(var(--glass-fill-solid), var(--glass-fill-solid)); backdrop-filter: var(--glass-filter); -webkit-backdrop-filter: var(--glass-filter); border-radius: 22px; border: 1px solid var(--glass-border); overflow: hidden; box-shadow: 0 30px 90px rgba(0,0,0,.6); transform: scale(.96) translateY(10px); opacity: 0; transition: transform .3s cubic-bezier(.34,1.56,.64,1), opacity .25s ease; }
     .settings-overlay.visible .settings-panel { transform: scale(1) translateY(0); opacity: 1; }
     .settings-nav { flex: none; width: 188px; display: flex; flex-direction: column; gap: 3px; padding: 18px 12px; background: rgba(255,255,255,.03); border-right: 1px solid var(--border); }
     html[data-theme="light"] .settings-nav { background: color-mix(in srgb, var(--text) 3%, transparent); }
@@ -538,9 +629,9 @@
     .perf-hw .tier { color: var(--text); font-weight: 600; text-transform: capitalize; }
 
     /* ── Onboarding ── */
-    .onboard-overlay { position: fixed; inset: 0; background: var(--bg); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; z-index: 200; visibility: hidden; opacity: 0; transition: opacity .3s ease, visibility .3s ease; }
+    .onboard-overlay { position: fixed; inset: 0; background: rgba(3,5,10,.45); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); display: flex; align-items: center; justify-content: center; z-index: 200; visibility: hidden; opacity: 0; transition: opacity .3s ease, visibility .3s ease; }
     .onboard-overlay.visible { visibility: visible; opacity: 1; }
-    .onboard-panel { width: 90%; max-width: 460px; background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(24px) saturate(1.3); -webkit-backdrop-filter: blur(24px) saturate(1.3); border: 1px solid var(--glass-border); border-radius: 20px; padding: 36px; box-shadow: 0 24px 70px rgba(0,0,0,.7); transform: scale(.95) translateY(15px); opacity: 0; transition: transform .35s cubic-bezier(.34,1.56,.64,1), opacity .3s ease; }
+    .onboard-panel { width: 90%; max-width: 460px; background: var(--grain), linear-gradient(var(--glass-fill-solid), var(--glass-fill-solid)); backdrop-filter: blur(24px) saturate(1.3); -webkit-backdrop-filter: blur(24px) saturate(1.3); border: 1px solid var(--glass-border); border-radius: 20px; padding: 36px; box-shadow: 0 24px 70px rgba(0,0,0,.7); transform: scale(.95) translateY(15px); opacity: 0; transition: transform .35s cubic-bezier(.34,1.56,.64,1), opacity .3s ease; }
     .onboard-overlay.visible .onboard-panel { transform: scale(1) translateY(0); opacity: 1; }
     .onboard-steps { display: flex; gap: 8px; justify-content: center; margin-bottom: 28px; }
     .onboard-steps .dot { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,.12); transition: background .3s, width .3s; }
@@ -576,16 +667,69 @@
     .onboard-progress:empty { display: none; }
     .onboard-step { min-height: 0; }
     .onboard-footer { position: sticky; bottom: -36px; margin: 20px -36px -36px; padding: 14px 36px 24px; background: color-mix(in srgb, var(--surface) 96%, transparent); }
-    .setup-toast { position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 12px); z-index: 150; max-width: min(90vw, 520px); padding: 10px 16px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 94%, transparent); border: 1px solid var(--glass-border); color: var(--text); font-size: 13px; box-shadow: 0 10px 30px rgba(0,0,0,.5); opacity: 0; visibility: hidden; transition: opacity .3s ease, transform .3s ease, visibility .3s; }
+    .setup-toast { position: fixed; left: 50%; bottom: 28px; transform: translate(-50%, 12px); z-index: 150; max-width: min(90vw, 520px); padding: 10px 16px; border-radius: 12px; background: linear-gradient(var(--glass-fill-solid), var(--glass-fill-solid)); backdrop-filter: var(--glass-filter); -webkit-backdrop-filter: var(--glass-filter); border: 1px solid var(--glass-border); color: var(--text); font-size: 13px; box-shadow: var(--chip-rim), 0 10px 30px rgba(0,0,0,.5); opacity: 0; visibility: hidden; transition: opacity .3s ease, transform .3s ease, visibility .3s; }
     .setup-toast.visible { opacity: 1; visibility: visible; transform: translate(-50%, 0); }
     #onb-skip { margin-left: auto; }
+    /* ── Glass chips (sidebar rows, badges, strips) ── */
+    .endpoint.sel, .session.sel, .session-item.active, .snav-item.active, #settings-btn, .state-badge, .compact-action, #new-session-btn, .es-ways li, .activity {
+      background: var(--chip-fill); border-color: transparent; box-shadow: var(--chip-rim);
+    }
+    #settings-btn:hover, .compact-action:hover, #new-session-btn:hover { background: var(--chip-fill-hover); }
+    .state-badge { border: 0; }
+    .activity { border: 0; box-shadow: var(--chip-rim), inset 3px 0 0 -1px var(--activity-c, transparent); }
+    .settings-panel section { background: rgba(255,255,255,.035); border-color: rgba(255,255,255,.07); box-shadow: inset 0 1px 0 rgba(255,255,255,.06); }
+    .chat-head { background: linear-gradient(180deg, rgba(255,255,255,.04), transparent); border-bottom-color: rgba(255,255,255,.07); }
+    html[data-theme="light"] .chat-head { border-bottom-color: var(--border); }
+    /* Legibility on bright or busy backgrounds (custom images): a soft shadow
+       lifts text off the glass without an extra layer. Light theme opts out. */
+    html:not([data-theme="light"]) .panel, html:not([data-theme="light"]) .settings-panel { text-shadow: 0 1px 2px rgba(0,0,0,.45), 0 0 12px rgba(0,0,0,.18); }
+    html:not([data-theme="light"]) .panel { --text-muted: color-mix(in srgb, #fff 62%, var(--text-muted)); }
+    /* Blur 0 = no backdrop work at all (cheapest; also the escape hatch on weak GPUs). */
+    html[data-blur-off="true"] .panel, html[data-blur-off="true"] .settings-panel, html[data-blur-off="true"] .session-menu,
+    html[data-blur-off="true"] .setup-toast { backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+    /* ── Settings → Appearance: background swatches + glass controls ── */
+    .bg-swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; margin: 6px 0 14px; }
+    .bg-swatch { position: relative; height: 64px; border-radius: 12px; border: 0; cursor: pointer; overflow: hidden; padding: 0;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.12); background: #111; color: #fff; font: 600 10.5px inherit; }
+    .bg-swatch span { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px 8px 5px; text-align: left; font-family: inherit; font-size: 10.5px; font-weight: 600;
+      background: linear-gradient(transparent, rgba(0,0,0,.65)); text-shadow: 0 1px 2px rgba(0,0,0,.6); }
+    .bg-swatch[aria-checked="true"] { box-shadow: 0 0 0 2px var(--accent-active), inset 0 0 0 1px rgba(255,255,255,.25); }
+    .bg-swatch:focus-visible { outline: 2px solid var(--accent-active); outline-offset: 2px; }
+    .bg-swatch[data-bg="obsidian"] { background: radial-gradient(circle at 30% 60%, #6e6660 0, #26221f 18%, transparent 30%), radial-gradient(circle at 78% 30%, #7a716a 0, #2a2522 12%, transparent 22%), #060607; }
+    .bg-swatch[data-bg="studio"] { background: linear-gradient(100deg, transparent 30%, rgba(0,0,0,.35) 36%, transparent 44%), linear-gradient(180deg, #7a7b88, #2a2b33); }
+    .bg-swatch[data-bg="eclipse"] { background: radial-gradient(circle at 120% 60%, transparent 50%, #9fb8bd 53%, transparent 58%), radial-gradient(30% 20% at 40% 40%, #ff8a3d, transparent 70%), #020304; }
+    .bg-swatch[data-bg="aurora"] { background: radial-gradient(50% 60% at 20% 30%, #19c9a4, transparent 70%), radial-gradient(50% 60% at 80% 20%, #6b4dff, transparent 70%), radial-gradient(50% 60% at 70% 90%, #ff3fa6, transparent 70%), #0a0c1a; }
+    .bg-swatch[data-bg="dusk"] { background: radial-gradient(60% 50% at 50% 110%, #ff8a3d, transparent 70%), radial-gradient(60% 60% at 80% 20%, #5b2c8f, transparent 70%), #1c0f30; }
+    .bg-swatch[data-bg="ocean"] { background: radial-gradient(50% 60% at 25% 30%, #0fb5c9, transparent 70%), radial-gradient(60% 60% at 80% 75%, #1446a8, transparent 70%), #02121c; }
+    .bg-swatch[data-bg="observatory"] { background: radial-gradient(50% 60% at 80% 10%, color-mix(in srgb, var(--accent-active) 45%, transparent), transparent 70%), radial-gradient(50% 60% at 10% 60%, rgba(150,110,255,.35), transparent 70%), #04060b; }
+    .bg-swatch[data-bg="solid"] { background: var(--bg); }
+    .bg-swatch[data-bg="custom"] { background: repeating-linear-gradient(45deg, rgba(255,255,255,.06) 0 8px, transparent 8px 16px), #15171d; }
+    html[data-has-custom-bg="true"] .bg-swatch[data-bg="custom"] { background-size: cover; background-position: center; }
+    .glass-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; font-size: 13px; }
+    .glass-row > span:first-child { width: 96px; flex: none; }
+    .glass-row input[type="range"] { flex: 1; margin: 0 !important; accent-color: var(--accent-active); }
+    .glass-row output { width: 44px; text-align: right; font: 500 11px var(--mono); color: var(--text-muted); }
+    .seg { display: inline-flex; gap: 4px; padding: 3px; border-radius: 999px; background: rgba(255,255,255,.04); box-shadow: var(--chip-rim); }
+    .seg button { border: 0; background: transparent; color: var(--text-muted); padding: 6px 14px; border-radius: 999px; cursor: pointer; font: inherit; font-size: 12px; }
+    .seg button[aria-checked="true"] { background: var(--chip-fill-hover); color: var(--text); box-shadow: var(--chip-rim); }
+    .custom-bg-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: -4px 0 12px; }
+    #custom-bg-status { font-size: 12px; color: var(--text-muted); }
+    #custom-bg-status.err { color: var(--error); }
+    .custom-bg-drop { outline: 2px dashed var(--accent-active); outline-offset: 4px; }
+    @media (prefers-reduced-transparency: reduce) {
+      .panel, .settings-panel { --glass-tint: .85; }
+    }
   </style>
 </head>
 <body data-state="idle">
   <div id="aria-status" class="sr-only" role="status" aria-live="polite" aria-atomic="true">ARIA is idle.</div>
-  <div class="bg-layer">
+  <div class="bg-layer" aria-hidden="true">
+    <div class="bg-scene"></div>
+    <div id="bg-custom"></div>
     <div class="blob a"></div><div class="blob b"></div><div class="blob c"></div>
     <div class="bg-grid"></div>
+    <div class="bg-dim"></div>
   </div>
 
   <div class="shell" id="app-shell">
@@ -1006,6 +1150,33 @@
           </select>
         </label>
       </section>
+
+      <section id="appearance-background">
+        <h3>Background <span class="hint">changes apply instantly</span></h3>
+        <div class="bg-swatches" id="bg-swatches" role="radiogroup" aria-label="Background"></div>
+        <div class="custom-bg-row">
+          <button type="button" class="ghost-btn" id="custom-bg-pick">Choose image…</button>
+          <button type="button" class="ghost-btn" id="custom-bg-clear" hidden>Remove image</button>
+          <span id="custom-bg-status" role="status" aria-live="polite">Or drop an image anywhere on this panel.</span>
+          <input type="file" id="custom-bg-file" accept="image/png,image/jpeg,image/webp,image/avif,image/gif,image/bmp" hidden>
+        </div>
+      </section>
+
+      <section id="appearance-glass">
+        <h3>Glass</h3>
+        <div class="glass-row"><span>Material</span>
+          <div class="seg" id="glass-style" role="radiogroup" aria-label="Glass material">
+            <button type="button" role="radio" data-style="smoked" aria-checked="true">Smoked</button>
+            <button type="button" role="radio" data-style="frosted" aria-checked="false">Frosted</button>
+            <button type="button" role="radio" data-style="clear" aria-checked="false">Clear</button>
+          </div>
+        </div>
+        <label class="glass-row"><span>Blur</span><input type="range" id="cfg-glass-blur" min="0" max="60" step="1"><output id="cfg-glass-blur-val"></output></label>
+        <label class="glass-row"><span>Tint</span><input type="range" id="cfg-glass-opacity" min="0" max="100" step="1"><output id="cfg-glass-opacity-val"></output></label>
+        <label class="glass-row"><span>Dim background</span><input type="range" id="cfg-bg-dim" min="0" max="80" step="1"><output id="cfg-bg-dim-val"></output></label>
+        <div class="custom-bg-row"><button type="button" class="ghost-btn" id="glass-reset">Reset glass</button>
+          <span class="hint" style="margin:0">Blur 0 turns the effect off entirely (lightest on the GPU).</span></div>
+      </section>
       </div><!-- /appearance -->
 
       <div class="tab-panel" id="settings-performance" data-panel="performance" role="tabpanel" aria-labelledby="settings-tab-performance">
@@ -1130,6 +1301,7 @@
   <script src="mic-lifecycle.js"></script>
   <script src="harnesses.js"></script>
   <script src="orb.js"></script>
+  <script src="appearance.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

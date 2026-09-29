@@ -110,6 +110,14 @@ interface AppConfig {
     perfPreset: 'auto' | 'power-saver' | 'balanced' | 'max-performance' | 'custom';
     // Renderer-owned flag: onboarding finished without a working connection.
     'setup-needed': boolean;
+    // Glass appearance (renderer-only, see src/renderer/appearance.js). The
+    // custom background image itself lives in the renderer's IndexedDB, never
+    // in this JSON file; 'custom' only records that it is selected.
+    background: 'observatory' | 'obsidian' | 'studio' | 'eclipse' | 'aurora' | 'dusk' | 'ocean' | 'solid' | 'custom';
+    glassStyle: 'smoked' | 'frosted' | 'clear';
+    glassBlur: number;    // backdrop blur radius in px, 0..60
+    glassOpacity: number; // glass tint strength in percent, 0..100
+    bgDim: number;        // darkening over the background in percent, 0..80
   };
   debug: {
     // When true, emit [ARIA_PERF] latency stage marks (see perf.ts). Off by
@@ -187,6 +195,11 @@ const defaults: AppConfig = {
     gpuCap: 30,
     perfPreset: 'power-saver',
     'setup-needed': false,
+    background: 'obsidian',
+    glassStyle: 'smoked',
+    glassBlur: 26,
+    glassOpacity: 30,
+    bgDim: 0,
   },
   debug: {
     perf: false,
@@ -210,6 +223,8 @@ const ENUMS: Record<string, readonly string[]> = {
   'remote.target': ['harness', 'llm', 'custom'],
   'ui.theme': ['midnight', 'nord', 'solarized', 'synthwave', 'forest', 'light'],
   'ui.perfPreset': ['auto', 'power-saver', 'balanced', 'max-performance', 'custom'],
+  'ui.background': ['observatory', 'obsidian', 'studio', 'eclipse', 'aurora', 'dusk', 'ocean', 'solid', 'custom'],
+  'ui.glassStyle': ['smoked', 'frosted', 'clear'],
 };
 
 // Inclusive numeric bounds (and integer-ness) for leaves where an out-of-range
@@ -222,6 +237,9 @@ const RANGES: Record<string, { min: number; max: number; int?: boolean }> = {
   'remote.localPort': { min: 0, max: 65535, int: true },
   'audio.volume': { min: 0, max: 1 },
   'ui.gpuCap': { min: 1, max: 100 },
+  'ui.glassBlur': { min: 0, max: 60 },
+  'ui.glassOpacity': { min: 0, max: 100 },
+  'ui.bgDim': { min: 0, max: 80 },
 };
 
 type LeafKind = 'string' | 'number' | 'boolean' | 'nullable-string' | 'array' | 'object';
