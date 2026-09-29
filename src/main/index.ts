@@ -15,6 +15,8 @@ import { runLatencyTest } from './latency-test';
 import { performance } from 'perf_hooks';
 import { initTimers } from './timers';
 import * as sessions from './sessions';
+import { MAX_MEMORY_CHARS, MEMORY_KINDS, MemoryItem, MemoryKind } from './user-memory';
+import { memoryStore } from './user-memory-app';
 import * as sessionImport from './session-import';
 import { buildManifest, missingOrInvalidModels, downloadModel } from './model-manager';
 import { perfEnabled, setPerfEnabled, perfMark, perfMarkExternal } from './perf';
@@ -355,6 +357,32 @@ function registerInWindowShortcut(): void {
 }
 
 function setupIpcHandlers(): void {
+  // Memory panel. Every write is validated in MemoryStore (length, kind enum,
+  // provenance); a locked/corrupt store surfaces as `error`, never overwritten.
+  handle(IPC.MEMORY_LIST, () => {
+    const store = memoryStore();
+    let items: MemoryItem[] = [];
+    try { items = store.list(); } catch { /* reported via error */ }
+    return { items, encrypted: store.encrypted, error: store.error };
+  });
+  handle(IPC.MEMORY_ADD, (_e, text: unknown, kind: unknown) => {
+    if (!isNonEmptyString(text, MAX_MEMORY_CHARS)) throw new Error('Invalid memory text');
+    const k = typeof kind === 'string' && (MEMORY_KINDS as readonly string[]).includes(kind) ? kind as MemoryKind : undefined;
+    return memoryStore().add(text, { source: 'edited', sourceText: 'Added in the Memory panel', kind: k });
+  });
+  handle(IPC.MEMORY_UPDATE, (_e, id: unknown, patch: unknown) => {
+    if (!isNonEmptyString(id, 64) || !patch || typeof patch !== 'object') throw new Error('Invalid memory update');
+    const p = patch as { text?: unknown; kind?: unknown };
+    const updated = memoryStore().update(id, { text: p.text, kind: p.kind });
+    if (!updated) throw new Error('Memory not found or invalid edit');
+    return updated;
+  });
+  handle(IPC.MEMORY_DELETE, (_e, id: unknown) => {
+    if (!isNonEmptyString(id, 64)) throw new Error('Invalid memory id');
+    return memoryStore().remove(id);
+  });
+  handle(IPC.MEMORY_CLEAR, () => memoryStore().clear());
+
   handle(IPC.SESSIONS_LIST, () => sessions.listSessions());
   handle(IPC.SESSIONS_GET, (_e, id: unknown) => (isNonEmptyString(id) ? sessions.getSession(id) : null));
   handle(IPC.SESSIONS_DELETE, (_e, id: unknown) => {

@@ -7,6 +7,14 @@ const api = {
     set: (key: string, value: unknown) => ipcRenderer.invoke(IPC.CONFIG_SET, key, value),
   },
 
+  memory: {
+    list: () => ipcRenderer.invoke(IPC.MEMORY_LIST),
+    add: (text: string, kind?: string) => ipcRenderer.invoke(IPC.MEMORY_ADD, text, kind),
+    update: (id: string, patch: { text?: string; kind?: string }) => ipcRenderer.invoke(IPC.MEMORY_UPDATE, id, patch),
+    delete: (id: string) => ipcRenderer.invoke(IPC.MEMORY_DELETE, id),
+    clear: () => ipcRenderer.invoke(IPC.MEMORY_CLEAR),
+  },
+
   sessions: {
     list: () => ipcRenderer.invoke(IPC.SESSIONS_LIST),
     get: (id: string) => ipcRenderer.invoke(IPC.SESSIONS_GET, id),

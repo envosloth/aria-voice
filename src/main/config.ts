@@ -48,6 +48,11 @@ interface AppConfig {
     jevEndpoint: string;
     jevModel: string;
   };
+  memory: {
+    // Include relevant remembered facts in each turn's prompt. Voice commands
+    // ("remember that…", "forget…") and the Memory panel work either way.
+    enabled: boolean;
+  };
   conversation: {
     // After a spoken reply to a voice turn, re-open the mic for a few seconds so
     // the user can keep talking without re-saying the wake word. Off by default.
@@ -178,6 +183,9 @@ const defaults: AppConfig = {
     coordinator: 'builtin',
     jevEndpoint: 'https://api.typesafe.ai/v1/systemone',
     jevModel: 'jev-latest',
+  },
+  memory: {
+    enabled: true,
   },
   conversation: {
     enabled: false,

@@ -16,7 +16,11 @@ export type LocalIntent =
   | { kind: 'alarm_set'; hour: number; minute: number; explicitMeridiem: boolean }
   | { kind: 'reminder_set'; text: string; ms?: number; hour?: number; minute?: number; explicitMeridiem?: boolean }
   | { kind: 'timer_list' }
-  | { kind: 'timer_cancel'; what: 'timer' | 'alarm' | 'reminder' | 'all' };
+  | { kind: 'timer_cancel'; what: 'timer' | 'alarm' | 'reminder' | 'all' }
+  | { kind: 'memory_add'; text: string }
+  | { kind: 'memory_forget'; query: string }
+  | { kind: 'memory_forget_all' }
+  | { kind: 'memory_list' };
 
 // STT text arrives with sentence punctuation and filler; normalize to a bare
 // lowercase utterance so the full-string-anchored patterns below can match.
@@ -154,6 +158,13 @@ export function matchLocalIntent(message: string): LocalIntent | null {
     return null;
   }
 
+  // Memory (roadmap P0.2). Matched on the normalized form; the stored text is
+  // sliced from the original so names keep their capitalization. Questions
+  // ("do you remember…", "remember when…") and a bare "remember this" fall
+  // through to the model.
+  const memory = matchMemoryIntent(raw, t);
+  if (memory) return memory;
+
   // Cancel / list
   m = t.match(/^(?:cancel|stop|clear|delete) (?:the |my |all )?(timer|alarm|reminder)s?$/);
   if (m) return { kind: 'timer_cancel', what: m[1] as 'timer' | 'alarm' | 'reminder' };
@@ -165,6 +176,40 @@ export function matchLocalIntent(message: string): LocalIntent | null {
   ) return { kind: 'timer_list' };
 
   return null;
+}
+
+function matchMemoryIntent(raw: string, t: string): LocalIntent | null {
+  if (/^(?:what do you (?:remember|know) about me|what have you remembered|list (?:my |your )?memories|what are my memories)$/.test(t)) {
+    return { kind: 'memory_list' };
+  }
+  if (/^forget (?:everything|all)(?: you (?:know|remember))?(?: about me)?$|^(?:clear|delete|erase|wipe) (?:all )?(?:my |your )?memor(?:y|ies)$/.test(t)) {
+    return { kind: 'memory_forget_all' };
+  }
+  // Recover the original-case tail after the command words.
+  const tail = (re: RegExp): string | null => {
+    const lead = normalizeLead(raw);
+    const m = lead.match(re);
+    return m ? m[1].replace(/[.!?]+$/, '').replace(/[,\s]+please$/i, '').trim() : null;
+  };
+  if (/^(?:please )?remember (?:that )?(.+)$/.test(t)) {
+    if (/^remember (?:this|that|it|me|when|what|how|where|who|why|if|the time)\b/.test(t) && !/^remember that .+ .+/.test(t)) return null;
+    const text = tail(/^(?:please\s+)?remember\s+(?:that\s+)?(.+)$/i);
+    if (text && text.split(/\s+/).length >= 2) return { kind: 'memory_add', text };
+    return null;
+  }
+  if (/^forget (?:that |about )?(.+)$/.test(t) && !/^forget it$/.test(t)) {
+    const query = tail(/^forget\s+(?:that\s+|about\s+)?(.+)$/i);
+    if (query) return { kind: 'memory_forget', query };
+  }
+  return null;
+}
+
+// normalize() lowercases; this strips the same leading filler while keeping case.
+function normalizeLead(message: string): string {
+  let t = (message || '').trim().replace(/[.!?]+$/, '').trim();
+  const FILLER = /^(?:hey|ok|okay|please|aria|jarvis)[,\s]+/i;
+  while (FILLER.test(t)) t = t.replace(FILLER, '');
+  return t.replace(/\s+/g, ' ');
 }
 
 // ---- spoken-answer rendering --------------------------------------------

@@ -572,6 +572,16 @@
     .settings-panel input:focus, .settings-panel select:focus { border-color: color-mix(in srgb, var(--accent-active) 50%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-active) 12%, transparent); }
     .settings-panel input[type="range"] { width: 100%; margin-top: 6px; accent-color: var(--accent-active); }
     .checkbox-label { display: flex !important; align-items: center; gap: 8px; }
+    .memory-add { display: flex; gap: 8px; margin: 8px 0; }
+    .memory-add input { flex: 1; }
+    .memory-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 320px; overflow: auto; }
+    .memory-item { display: grid; grid-template-columns: auto 1fr auto auto; gap: 8px; align-items: center; padding: 6px 8px; border: 1px solid var(--border, rgba(255,255,255,0.1)); border-radius: 8px; }
+    .memory-item .memory-kind { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+    .memory-item .memory-text { overflow-wrap: anywhere; }
+    .memory-item input.memory-edit { width: 100%; }
+    .memory-item .memory-src { grid-column: 2 / -1; font-size: 11px; color: var(--text-muted); }
+    .memory-actions { display: flex; gap: 8px; margin-top: 10px; justify-content: flex-end; }
+    .ghost-btn.danger { color: var(--error); }
     .settings-panel .hint { color: var(--text-muted); font-size: 12px; line-height: 1.5; margin: 2px 0 12px; display: block; }
     .settings-panel h3 .hint { display: inline; margin: 0 0 0 6px; text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 12px; }
     .settings-panel label .hint { display: inline; margin: 0 0 0 4px; }
@@ -898,6 +908,7 @@
         <div class="settings-title" id="settings-dialog-title">Settings</div>
         <button class="snav-item active" id="settings-tab-connections" data-tab="connections" role="tab" aria-controls="settings-connections" aria-selected="true">Connections</button>
         <button class="snav-item" id="settings-tab-voice" data-tab="voice" role="tab" aria-controls="settings-voice" aria-selected="false" tabindex="-1">Voice</button>
+        <button class="snav-item" id="settings-tab-memory" data-tab="memory" role="tab" aria-controls="settings-memory" aria-selected="false" tabindex="-1">Memory</button>
         <button class="snav-item" id="settings-tab-appearance" data-tab="appearance" role="tab" aria-controls="settings-appearance" aria-selected="false" tabindex="-1">Appearance</button>
         <button class="snav-item" id="settings-tab-performance" data-tab="performance" role="tab" aria-controls="settings-performance" aria-selected="false" tabindex="-1">Performance</button>
         <button class="snav-item" id="settings-tab-remote" data-tab="remote" role="tab" aria-controls="settings-remote" aria-selected="false" tabindex="-1">Remote</button>
@@ -1158,6 +1169,28 @@
         interrupts itself, lower the volume or use a headset.</p>
       </section>
       </div><!-- /voice -->
+
+      <div class="tab-panel" id="settings-memory" data-panel="memory" role="tabpanel" aria-labelledby="settings-tab-memory">
+      <section>
+        <h3>Memory</h3>
+        <p class="hint">What ARIA remembers about you. Say “remember that…” or “forget…”, or edit
+        here. Changes save immediately. Relevant memories are added to each request so replies fit you.</p>
+        <label class="checkbox-label">
+          <input type="checkbox" id="cfg-memory-enabled"> Use memories in replies
+        </label>
+        <div id="memory-status" class="hint" role="status" aria-live="polite"></div>
+        <form id="memory-add-form" class="memory-add">
+          <label for="memory-add-text" class="sr-only">New memory</label>
+          <input id="memory-add-text" type="text" maxlength="500" placeholder="e.g. I prefer metric units" autocomplete="off">
+          <button type="submit" class="ghost-btn">Add</button>
+        </form>
+        <ul id="memory-list" class="memory-list" aria-label="Remembered items"></ul>
+        <div class="memory-actions">
+          <button id="memory-export-btn" class="ghost-btn" type="button">Export…</button>
+          <button id="memory-clear-btn" class="ghost-btn danger" type="button">Forget everything</button>
+        </div>
+      </section>
+      </div><!-- /memory -->
 
       <div class="tab-panel" id="settings-appearance" data-panel="appearance" role="tabpanel" aria-labelledby="settings-tab-appearance">
       <section>

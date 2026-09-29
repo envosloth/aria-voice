@@ -56,6 +56,18 @@ question carries no history, no tools, and nothing the user did not just say.
    stdout (`TTS_STATE`), bytes arrive as `TTS_AUDIO`, and Web Audio schedules them
    gaplessly while the **orb** reacts to the RMS envelope.
 
+**User memory** (`user-memory.ts`, pure; `user-memory-app.ts`, Electron
+binding): durable facts in `userData/aria-memory.json`, encrypted with
+`safeStorage` when the keyring backend is safe (else owner-only plaintext, shown
+in the panel). Every item has kind, timestamps, source and the source utterance.
+"Remember that…", "forget…", "forget everything", "what do you remember about
+me" are local intents in `local-intents.ts` — answered in the coordinator, never
+sent to a model. For model turns, `selectMemories()` picks relevant items
+(lexical overlap, then recency) within 1200 chars and `renderMemoryBlock()`
+appends them to the system prompt as user data, not instructions
+(`memory.enabled` off removes it). Settings → Memory lists, edits, deletes,
+adds, exports and clears via the `MEMORY_*` IPC channels.
+
 **Voice barge-in** (`conversation.voiceBargeIn`, default off): while TTS is
 playing, each mic frame's RMS and the TTS analyser RMS × volume feed
 `AriaAudio.EchoAwareBargeDetector` (peak-held reference, learned speaker→mic

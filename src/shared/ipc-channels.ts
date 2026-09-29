@@ -48,6 +48,11 @@ export const IPC = {
   CONFIG_GET: 'config:get',
   CONFIG_SET: 'config:set',
 
+  MEMORY_LIST: 'memory:list',     // renderer -> main: { items, encrypted, error } for the Memory panel
+  MEMORY_ADD: 'memory:add',       // renderer -> main: add a memory typed in the panel
+  MEMORY_UPDATE: 'memory:update', // renderer -> main: edit text/kind of one memory
+  MEMORY_DELETE: 'memory:delete', // renderer -> main: delete one memory
+  MEMORY_CLEAR: 'memory:clear',   // renderer -> main: delete every memory
   SESSIONS_LIST: 'sessions:list',     // renderer -> main: summaries of past conversations
   SESSIONS_GET: 'sessions:get',       // renderer -> main: full transcript of one session
   SESSIONS_DELETE: 'sessions:delete', // renderer -> main: remove a saved session

@@ -12,6 +12,8 @@ import { matchLocalIntent, answerFor, nextOccurrence, humanizeMs, formatClock, L
 import * as timers from './timers';
 import { perfMark } from './perf';
 import * as sessions from './sessions';
+import { findForgetTarget, renderMemoryBlock, selectMemories, MemoryItem } from './user-memory';
+import { memoryStore } from './user-memory-app';
 
 export interface CoordinatorCallbacks extends LlmCallbacks {
   onRoute?: (info: { target: Target; name: string }) => void;
@@ -312,9 +314,63 @@ export async function deletePersistedSession(id: string): Promise<DeleteSessionR
   return result;
 }
 
+// Memory commands run locally: the text never leaves the machine to be stored.
+// Store failures (locked/corrupt store) are spoken plainly, never swallowed.
+function runMemoryIntent(intent: LocalIntent, userMessage: string): string | null {
+  try {
+    const store = memoryStore();
+    switch (intent.kind) {
+      case 'memory_add': {
+        const item = store.add(intent.text, { source: 'explicit', sourceText: userMessage });
+        return `Got it. I'll remember that ${spokenMemory(item)}.`;
+      }
+      case 'memory_forget': {
+        const target = findForgetTarget(store.list(), intent.query);
+        if (!target) return "I couldn't tell which memory you mean. You can see and delete them all in the Memory panel.";
+        store.remove(target.id);
+        return `Okay, I've forgotten that ${spokenMemory(target)}.`;
+      }
+      case 'memory_forget_all': {
+        const n = store.clear();
+        return n ? `Done. I've forgotten all ${n} thing${n === 1 ? '' : 's'} I remembered about you.` : "I wasn't remembering anything about you.";
+      }
+      case 'memory_list': {
+        const items = store.list();
+        if (!items.length) return "I'm not remembering anything about you yet. Say \"remember that…\" to teach me.";
+        const shown = items.slice(0, 5).map(spokenMemory);
+        const more = items.length > 5 ? ` And ${items.length - 5} more in the Memory panel.` : '';
+        return `I remember that ${shown.join('; that ')}.${more}`;
+      }
+      default:
+        return null;
+    }
+  } catch (error) {
+    return `I couldn't update my memory: ${(error as Error).message}.`;
+  }
+}
+
+// "I prefer metric" -> "you prefer metric", for spoken confirmation only.
+function spokenMemory(item: MemoryItem): string {
+  return item.text
+    .replace(/\bI am\b/g, 'you are').replace(/\bI'm\b/g, "you're").replace(/\bI've\b/g, "you've")
+    .replace(/\bI\b/g, 'you').replace(/\bmy\b/gi, 'your').replace(/\bme\b/g, 'you').replace(/\bmine\b/g, 'yours');
+}
+
+// Relevant memories for this turn, rendered for the system prompt. Best-effort:
+// an unreadable store must not block a reply (the panel surfaces the error).
+function memoryContext(userMessage: string): string {
+  try {
+    if (config.get('memory.enabled') === false) return '';
+    return renderMemoryBlock(selectMemories(memoryStore().list(), userMessage, 1200));
+  } catch {
+    return '';
+  }
+}
+
 // Execute a matched local intent and render the spoken confirmation/answer.
 // Returns null only for a kind it can't handle (shouldn't happen).
-function runLocalIntent(intent: LocalIntent): string | null {
+function runLocalIntent(intent: LocalIntent, userMessage = ''): string | null {
+  if (intent.kind.startsWith('memory_')) return runMemoryIntent(intent, userMessage);
   const now = new Date();
   switch (intent.kind) {
     case 'time':
@@ -498,7 +554,7 @@ export async function coordinate(
   // with no provider configured at all.
   if (mode !== 'harness') {
     const intent = matchLocalIntent(userMessage);
-    const reply = intent ? runLocalIntent(intent) : null;
+    const reply = intent ? runLocalIntent(intent, userMessage) : null;
     if (reply) {
       history.push({ role: 'user', content: userMessage });
       persistSafely('record user turn', () => sessions.recordTurn('user', userMessage));
@@ -624,7 +680,7 @@ export async function coordinate(
     // Routing contract: router.ts chooses the harness before an agentic turn is
     // sent. The conversational model receives no delegation tool or sentinel.
     // History records a compact note for tools the harness itself ran.
-    const systemContent = target === 'harness' ? HARNESS_SYSTEM_PROMPT : LLM_SYSTEM_PROMPT;
+    const systemContent = (target === 'harness' ? HARNESS_SYSTEM_PROMPT : LLM_SYSTEM_PROMPT) + memoryContext(userMessage);
     // The "voice output" hint is appended to the LAST user message because
     // LLMs reliably follow user-message instructions but inconsistently
     // follow system-prompt rules. This is a small per-turn nudge that

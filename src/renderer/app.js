@@ -2052,6 +2052,7 @@ const cfg = {
   wwPhrase: document.getElementById('cfg-ww-phrase'),
   conversationEnabled: document.getElementById('cfg-conversation-enabled'),
   voiceBargeIn: document.getElementById('cfg-voice-barge-in'),
+  memoryEnabled: document.getElementById('cfg-memory-enabled'),
   theme: document.getElementById('cfg-theme'),
   perfPreset: document.getElementById('cfg-perf-preset'),
   // Remote access (SSH tunnel) — see src/main/tunnel-supervisor.ts.
@@ -2760,6 +2761,7 @@ async function loadSettings() {
   cfg.wwPhrase.value = (await aria.config.get('wakeword.phrase')) || 'hey_jarvis';
   if (cfg.conversationEnabled) cfg.conversationEnabled.checked = !!(await aria.config.get('conversation.enabled'));
   if (cfg.voiceBargeIn) cfg.voiceBargeIn.checked = !!(await aria.config.get('conversation.voiceBargeIn'));
+  if (cfg.memoryEnabled) cfg.memoryEnabled.checked = (await aria.config.get('memory.enabled')) !== false;
   // Legacy/free-text values (e.g. "hey jarvis" with a space, or an unsupported
   // "aria") won't match a dropdown option -> fall back to the reliable default so
   // the control never shows blank and always reflects a model that actually loads.
@@ -3372,6 +3374,119 @@ if (settingsNav) {
   if (initiallyActive) showTab(initiallyActive.dataset.tab);
 }
 
+// --- Memory panel (Settings → Memory) -------------------------------------
+// Lists what ARIA remembers, with where each item came from; inline edit,
+// delete, add, export, and forget-everything. Every change goes straight to the
+// main-process store (no Save needed) and the list re-renders from its answer.
+const memoryListEl = document.getElementById('memory-list');
+const memoryStatusEl = document.getElementById('memory-status');
+const MEMORY_KIND_LABEL = { preference: 'Preference', project: 'Project', routine: 'Routine', person: 'Person', fact: 'Fact' };
+
+function memoryStatus(text, isError) {
+  if (!memoryStatusEl) return;
+  memoryStatusEl.textContent = text || '';
+  memoryStatusEl.style.color = isError ? 'var(--error)' : '';
+}
+
+async function refreshMemoryPanel() {
+  if (!memoryListEl || !aria.memory) return;
+  let res;
+  try { res = await aria.memory.list(); } catch (e) { memoryStatus(`Couldn't load memories: ${e.message}`, true); return; }
+  memoryListEl.replaceChildren();
+  if (res.error) memoryStatus(res.error, true);
+  else memoryStatus(`${res.items.length} item${res.items.length === 1 ? '' : 's'} · ${res.encrypted
+    ? 'encrypted with your system keyring' : 'stored unencrypted (no system keyring available)'}`, false);
+  for (const item of res.items) memoryListEl.appendChild(renderMemoryItem(item));
+}
+
+function renderMemoryItem(item) {
+  const li = document.createElement('li');
+  li.className = 'memory-item';
+  li.dataset.id = item.id;
+  const kind = document.createElement('select');
+  kind.className = 'memory-kind';
+  kind.setAttribute('aria-label', 'Kind');
+  for (const [v, label] of Object.entries(MEMORY_KIND_LABEL)) {
+    const o = document.createElement('option'); o.value = v; o.textContent = label; kind.appendChild(o);
+  }
+  kind.value = item.kind;
+  kind.addEventListener('change', () => editMemory(item.id, { kind: kind.value }));
+  const text = document.createElement('span');
+  text.className = 'memory-text';
+  text.textContent = item.text;
+  const edit = document.createElement('button');
+  edit.type = 'button'; edit.className = 'ghost-btn memory-edit-btn'; edit.textContent = 'Edit';
+  edit.setAttribute('aria-label', `Edit memory: ${item.text}`);
+  edit.addEventListener('click', () => beginMemoryEdit(li, item));
+  const del = document.createElement('button');
+  del.type = 'button'; del.className = 'ghost-btn danger memory-delete-btn'; del.textContent = 'Delete';
+  del.setAttribute('aria-label', `Delete memory: ${item.text}`);
+  del.addEventListener('click', async () => {
+    try { await aria.memory.delete(item.id); } catch (e) { memoryStatus(`Couldn't delete: ${e.message}`, true); }
+    refreshMemoryPanel();
+  });
+  const src = document.createElement('span');
+  src.className = 'memory-src';
+  const when = new Date(item.createdAt).toLocaleString();
+  src.textContent = item.source === 'explicit'
+    ? `From you, ${when}: “${item.sourceText}”`
+    : `${item.source === 'edited' ? 'Edited' : 'Imported'} · added ${when}`;
+  li.append(kind, text, edit, del, src);
+  return li;
+}
+
+function beginMemoryEdit(li, item) {
+  const text = li.querySelector('.memory-text');
+  const input = document.createElement('input');
+  input.type = 'text'; input.className = 'memory-edit'; input.maxLength = 500; input.value = item.text;
+  input.setAttribute('aria-label', 'Edit memory text');
+  text.replaceWith(input);
+  input.focus(); input.select();
+  let settled = false;
+  const finish = async (save) => {
+    if (settled) return; settled = true;
+    if (save && input.value.trim() && input.value.trim() !== item.text) await editMemory(item.id, { text: input.value });
+    else refreshMemoryPanel();
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+  });
+  input.addEventListener('blur', () => finish(true));
+}
+
+async function editMemory(id, patch) {
+  try { await aria.memory.update(id, patch); } catch (e) { memoryStatus(`Couldn't save the edit: ${e.message}`, true); }
+  refreshMemoryPanel();
+}
+
+const memoryAddForm = document.getElementById('memory-add-form');
+if (memoryAddForm) memoryAddForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const input = document.getElementById('memory-add-text');
+  const text = input.value.trim();
+  if (!text) return;
+  try { await aria.memory.add(text); input.value = ''; } catch (err) { memoryStatus(`Couldn't add: ${err.message}`, true); }
+  refreshMemoryPanel();
+});
+const memoryClearBtn = document.getElementById('memory-clear-btn');
+if (memoryClearBtn) memoryClearBtn.addEventListener('click', async () => {
+  if (!window.confirm('Forget everything ARIA remembers about you? This cannot be undone.')) return;
+  try { await aria.memory.clear(); } catch (e) { memoryStatus(`Couldn't clear: ${e.message}`, true); }
+  refreshMemoryPanel();
+});
+const memoryExportBtn = document.getElementById('memory-export-btn');
+if (memoryExportBtn) memoryExportBtn.addEventListener('click', async () => {
+  const res = await aria.memory.list();
+  const blob = new Blob([JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), items: res.items }, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'aria-memory.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+});
+const memoryTab = document.getElementById('settings-tab-memory');
+if (memoryTab) memoryTab.addEventListener('click', refreshMemoryPanel);
+
 // "Discover model" buttons — probe the configured endpoint for its served
 // model list via IPC and pre-fill the model field with the recommended id. The
 // endpoint URL + key are pulled from the form (NOT from persisted config) so a
@@ -3464,6 +3579,7 @@ settingsSave.addEventListener('click', async () => {
       conversationMode = cfg.conversationEnabled.checked;
       await aria.config.set('conversation.enabled', conversationMode);
     }
+    if (cfg.memoryEnabled) await aria.config.set('memory.enabled', cfg.memoryEnabled.checked);
     if (cfg.voiceBargeIn) {
       voiceBargeIn = cfg.voiceBargeIn.checked;
       await aria.config.set('conversation.voiceBargeIn', voiceBargeIn);
