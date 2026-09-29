@@ -340,6 +340,11 @@ class SttSidecar(BaseSidecar):
             # phantom phrase in the first place. Empty result beats a fake one.
             cmd += ["--temperature", "0.0", "--no-fallback", "--suppress-nst"]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, env=self._env())
+            if result.returncode:
+                # A missing DLL or unsupported CPU instruction is a failed turn,
+                # not empty speech. Never expose stderr/audio/model paths here.
+                code = f"0x{result.returncode & 0xffffffff:08X}" if sys.platform == "win32" else str(result.returncode)
+                raise RuntimeError(f"whisper-cli exited with code {code}")
             return result.stdout.strip()
         finally:
             os.unlink(tmp_path)

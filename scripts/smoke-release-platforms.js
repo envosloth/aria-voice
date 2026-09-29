@@ -8,6 +8,14 @@ const root = path.join(__dirname, '..');
 const workflow = fs.readFileSync(path.join(root, '.github/workflows/release.yml'), 'utf8');
 let failures = 0;
 function check(name, fn) { try { fn(); console.log(`PASS ${name}`); } catch (e) { failures++; console.error(`FAIL ${name}: ${e.message.slice(0, 180)}`); } }
+check('Windows package must transcribe real speech before upload', () => {
+  const pack = workflow.indexOf('- name: Package installers');
+  const speech = workflow.indexOf('- name: Smoke packaged Windows STT');
+  const upload = workflow.indexOf('- name: Upload artifacts');
+  assert.ok(pack >= 0 && speech > pack && upload > speech);
+  assert.ok(workflow.includes('dist-installers/win-unpacked/resources'));
+  assert.ok(workflow.includes('node scripts/smoke-release-stt.js'));
+});
 check('Linux uses Python with available tflite-runtime wheels', () => {
   assert.match(workflow, /platform: linux[\s\S]*?python: '3\.11'/);
   assert.ok(workflow.includes("matrix.python || '3.12'"));

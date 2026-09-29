@@ -50,9 +50,13 @@ case "$OS" in
     CMAKE_BACKEND=(-DGGML_METAL=1 -DGGML_NATIVE=OFF -DGGML_CPU_ARM_ARCH=armv8.5-a)
     ;;
   MINGW*|MSYS*|CYGWIN*|Windows_NT)
+    # Release runners can expose AVX-512; their native CPU is NOT the user's
+    # CPU. Ship a baseline plus runtime-selected CPU plugins (including AVX2)
+    # rather than one DLL compiled for whichever CI machine happened to build.
+    CMAKE_BACKEND=(-DGGML_NATIVE=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON)
     if command -v vulkaninfo >/dev/null 2>&1 && vulkaninfo --summary >/dev/null 2>&1; then
       echo "=== Building whisper.cpp ${WHISPER_VERSION} (Vulkan backend) ==="
-      CMAKE_BACKEND=(-DGGML_VULKAN=1)
+      CMAKE_BACKEND+=(-DGGML_VULKAN=1)
     else
       echo "=== Building whisper.cpp ${WHISPER_VERSION} (CPU backend; no Vulkan SDK) ==="
     fi

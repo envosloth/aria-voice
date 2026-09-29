@@ -97,7 +97,11 @@ jobs:
           npm run typecheck
 
       - name: Release packaging guard
-        run: npm run smoke:release-packaging && node scripts/smoke-release-platforms.js
+        run: |
+          npm run smoke:release-packaging
+          node scripts/smoke-release-platforms.js
+          python scripts/smoke-windows-stt.py
+          python scripts/smoke-windows-build.py
 
       # Each sidecar is frozen from its OWN venv (scripts/package-sidecar.sh),
       # which a fresh runner doesn't have — this was the long-standing release
@@ -135,6 +139,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder ${{ matrix.target }} --config electron-builder.yml --publish never
+
+      - name: Smoke packaged Windows STT
+        if: matrix.platform == 'win'
+        run: |
+          ARIA_NATIVE_RESOURCES="$GITHUB_WORKSPACE/dist-installers/win-unpacked/resources" \
+          ARIA_MODELS_DIR="$RUNNER_TEMP/aria-release-stt-models" \
+          node scripts/smoke-release-stt.js
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

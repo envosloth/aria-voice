@@ -34,13 +34,17 @@ done
 
 # Copy libs, preserving symlinks where present (Linux sonames like
 # libwhisper.so.1 -> libwhisper.so.1.7.6; the glob also copies the real file).
+# Windows DLLs must stay beside the executables: GGML's runtime CPU dispatcher
+# scans the executable directory/current directory, NOT the DLL-search PATH.
+LIB_OUT="$OUT/lib"
+[ "$EXE" != ".exe" ] || LIB_OUT="$OUT/bin"
 copied_lib=0
 for dir in "$SRC_LIB" "$SRC_BIN"; do
   [ -d "$dir" ] || continue
   for glob in "${LIB_GLOBS[@]}"; do
     for f in "$dir"/$glob; do
       [ -e "$f" ] || continue
-      cp -P "$f" "$OUT/lib/" 2>/dev/null || cp "$f" "$OUT/lib/"
+      cp -P "$f" "$LIB_OUT/" 2>/dev/null || cp "$f" "$LIB_OUT/"
       copied_lib=1
     done
   done

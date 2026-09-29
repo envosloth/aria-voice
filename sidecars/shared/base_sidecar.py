@@ -140,18 +140,30 @@ class BaseSidecar(ABC):
         alive via the Win32 API and exit once it isn't."""
         try:
             import ctypes
+            from ctypes import wintypes
             PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
             STILL_ACTIVE = 259
             kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            # ctypes otherwise assumes a 32-bit int return/arguments, truncating
+            # HANDLEs on Win64 and making a live parent appear dead.
+            kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel32.OpenProcess.restype = wintypes.HANDLE
+            kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+            kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+            kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+            kernel32.CloseHandle.restype = wintypes.BOOL
             handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, initial_ppid)
             if not handle:
                 return  # can't observe the parent; rely on supervisor taskkill /T
-            while self._running:
-                code = ctypes.c_ulong()
-                ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
-                if not ok or code.value != STILL_ACTIVE:
-                    os._exit(0)  # parent gone -> don't orphan
-                time.sleep(2.0)
+            try:
+                while self._running:
+                    code = wintypes.DWORD()
+                    ok = kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+                    if not ok or code.value != STILL_ACTIVE:
+                        os._exit(0)  # parent gone -> don't orphan
+                    time.sleep(2.0)
+            finally:
+                kernel32.CloseHandle(handle)
         except Exception:
             pass  # best-effort; tree-kill remains the primary mechanism
 
