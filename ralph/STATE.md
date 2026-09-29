@@ -33,6 +33,9 @@ Harness commands: `npm run perf:baseline`, `npm run perf:live [ttftMs]`, `npm ru
 ## Backlog
 → ./ralph/BACKLOG.md
 
+## Feature roadmap (priority set 2026-09-29)
+→ ./ralph/ROADMAP.md — P0 order: voice latency → memory → context/screen → computer control + preview/undo → JEV tiered routing.
+
 ## History (append-only, newest first)
 
 ### Application-Open Voice Runtime — 2026-07-18
