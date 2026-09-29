@@ -3,6 +3,7 @@ import path from 'path';
 import net from 'net';
 import fs from 'fs';
 import os from 'os';
+import { readProcessMemory, processTreeRss } from './process-memory';
 import {
   SidecarName,
   HEARTBEAT_INTERVAL_MS,
@@ -57,6 +58,8 @@ export class Supervisor {
   private shuttingDown = false;
   private rssLimitsMb: Record<string, number>;
   private memoryCheckMs: number;
+  private memoryCheckRunning = false;
+  private memoryCheckFailed = false;
   private socketDir: string | null = null;
 
   constructor(
@@ -305,7 +308,7 @@ export class Supervisor {
 
   startMonitoring(): void {
     this.heartbeatTimer = setInterval(() => this.checkHeartbeats(), HEARTBEAT_INTERVAL_MS);
-    this.memoryTimer = setInterval(() => this.checkMemory(), this.memoryCheckMs);
+    this.memoryTimer = setInterval(() => { void this.checkMemory(); }, this.memoryCheckMs);
   }
 
   /** Send a JSON control message to a sidecar over its stdin (line-framed). */
@@ -465,18 +468,34 @@ export class Supervisor {
     }
   }
 
-  private checkMemory(): void {
-    for (const [name, state] of this.sidecars) {
-      if (!state.process?.pid || state.circuitOpen || state.recovering) continue;
-      const rssKb = this.getProcessRss(state.process.pid);
-      if (rssKb === null) continue;
-
-      const rssMb = rssKb / 1024;
-      const limit = this.rssLimitsMb[name];
-      if (rssMb > limit) {
-        this.onStatus(name, 'memory-exceeded', `RSS ${Math.round(rssMb)}MB > limit ${limit}MB`);
-        this.killThenRecover(name, state);
+  private async checkMemory(): Promise<void> {
+    if (this.memoryCheckRunning || this.shuttingDown) return;
+    const targets = [...this.sidecars].filter(([, s]) => s.process?.pid && !s.circuitOpen && !s.recovering)
+      .map(([name, state]) => ({ name, state, child: state.process!, generation: state.restartGeneration }));
+    if (!targets.length) return;
+    this.memoryCheckRunning = true;
+    try {
+      const rows = await readProcessMemory();
+      this.memoryCheckFailed = false;
+      for (const { name, state, child, generation } of targets) {
+        // A stop/restart during the async query owns the new incarnation.
+        if (this.shuttingDown || state.process !== child || state.restartGeneration !== generation || state.recovering) continue;
+        const rssKb = processTreeRss(rows, child.pid!);
+        if (rssKb === null) continue;
+        const rssMb = rssKb / 1024;
+        const limit = this.rssLimitsMb[name];
+        if (rssMb > limit) {
+          this.onStatus(name, 'memory-exceeded', `Process-tree RSS ${Math.round(rssMb)}MB > limit ${limit}MB`);
+          this.killThenRecover(name, state);
+        }
       }
+    } catch (error) {
+      if (!this.memoryCheckFailed) {
+        this.memoryCheckFailed = true;
+        for (const { name } of targets) this.onStatus(name, 'warning', `Memory watchdog unavailable: ${(error as Error).message}`);
+      }
+    } finally {
+      this.memoryCheckRunning = false;
     }
   }
 
@@ -494,16 +513,6 @@ export class Supervisor {
         return this.handleCrash(name, generation);
       })
       .catch((e) => this.onStatus(name, 'error', `recovery failed: ${(e as Error).message}`));
-  }
-
-  private getProcessRss(pid: number): number | null {
-    try {
-      const status = fs.readFileSync(`/proc/${pid}/status`, 'utf8');
-      const match = status.match(/VmRSS:\s+(\d+)\s+kB/);
-      return match ? parseInt(match[1], 10) : null;
-    } catch {
-      return null;
-    }
   }
 
   private closeTransport(state: SidecarState): void {
