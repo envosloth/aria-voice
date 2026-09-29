@@ -33,6 +33,7 @@ function resetTurnMarkers() {
 function applyTheme(id) {
   document.documentElement.dataset.theme = id || 'midnight';
   if (window.AriaOrb && window.AriaOrb.refreshAccent) window.AriaOrb.refreshAccent();
+  if (window.AriaAppearance) window.AriaAppearance.scheduleInk();
 }
 // Chat header subtitle: show what actually answers (harness id / model),
 // like the design's "vector-cli / sonnet-5". Falls back to the LLM model.
@@ -279,8 +280,8 @@ function addMessage(role, text) {
   // so it's not part of textContent and doesn't disturb the streaming/onDone
   // text checks). HH:MM in the user's locale.
   div.dataset.time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  conversationEl.appendChild(div);
   attachMessageActions(div, role);
+  conversationEl.appendChild(div);
   while (conversationEl.childElementCount > MAX_MESSAGES) conversationEl.removeChild(conversationEl.firstChild);
   scrollIfPinned(pinned);
   return div;
@@ -293,8 +294,8 @@ function setUiStatus(text) {
 function clearError() {
   errorBanner.classList.remove('visible', 'warn');
   if (errorText) errorText.textContent = '';
-}
   if (typeof setErrorAction === 'function') setErrorAction(null);
+}
 
 function showError(msg, level, action) {
   const friendly = action === undefined ? friendlyError(msg) : { text: msg, action };
@@ -309,7 +310,6 @@ function showError(msg, level, action) {
 }
 if (errorDismiss) errorDismiss.addEventListener('click', clearError);
 
-function setAppShellInert(inert) {
 // ---- UX layer: plain-English errors, one fix button, message actions -------
 (function loadUxStyles() {
   if (document.querySelector('link[data-ux]')) return;
@@ -440,6 +440,7 @@ function attachMessageActions(div, role) {
   div.appendChild(bar);
 }
 
+function setAppShellInert(inert) {
   if (appShell) appShell.inert = inert;
 }
 
@@ -521,8 +522,8 @@ async function submitUserMessage(rawText, existingTurnId) {
   currentReplyId = `${turnId}:${generationId}`;
   resetTurnMarkers();
   perf.mark(turnId, 'user_input', { chars: text.length });
-  addMessage('user', text);
   lastUserText = text;
+  addMessage('user', text);
   if (await handleScreenCommand(text)) return;
   if (turnId !== currentTurnId || generationId !== currentGenerationId) return;
   orbState('processing');
@@ -2659,6 +2660,7 @@ function openSettings(invoker) {
   settingsReturnFocus = focusTarget(invoker) || focusTarget(document.activeElement);
   savedMsg.textContent = '';
   loadSettings();
+  paintAppearanceControls();
   refreshConnectionSummary();
   // The hardware readout was only rendered on preset *change*, so the panel
   // sat on "Detecting hardware…" forever — render it on every open.
