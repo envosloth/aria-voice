@@ -196,7 +196,7 @@
       // Speech rings radiate from the centre of the visible face.
       if (speech > 0.001) {
         const ring = Math.sin(11 * (1 - z2) - 7.5 * time);
-        r += speech * (0.05 + 0.09 * e) * ring * (0.6 + 0.4 * n);
+        r += speech * (0.07 + 0.11 * e) * ring * (0.6 + 0.4 * n);
       }
 
       // Loose dots drift tangentially so the shell never looks frozen.

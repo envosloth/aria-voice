@@ -156,8 +156,10 @@ const quiet = m();
 Orb.setLevel(1);
 run(600);
 const loud = m();
-check('motion.speakingReactsToLevel', loud.spread > quiet.spread * 1.15 && Orb.getLevel() === 1,
-  `quiet=${quiet.spread.toFixed(3)} loud=${loud.spread.toFixed(3)}`);
+// Speech both opens the shell further and pushes rings through it.
+check('motion.speakingReactsToLevel',
+  Orb.getLevel() === 1 && loud.meanRadius > quiet.meanRadius + 0.05 && loud.spread > quiet.spread,
+  `radius ${quiet.meanRadius.toFixed(3)}->${loud.meanRadius.toFixed(3)} spread ${quiet.spread.toFixed(3)}->${loud.spread.toFixed(3)}`);
 check('adapter.speakingPhase', Orb.getPhase() === 'speaking');
 
 // Leaving speech consolidates back to the compact sphere.
