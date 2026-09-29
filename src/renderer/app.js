@@ -1517,6 +1517,14 @@ aria.llm.onContext((info) => {
   }
 });
 
+function updateSttProviderRows() {
+  const cloud = cfg.sttProvider.value === 'groq';
+  document.getElementById('stt-cloud-key-row').hidden = !cloud;
+  document.getElementById('stt-provider-hint').textContent = cloud
+    ? 'Cloud is opt-in; audio is uploaded only when an utterance ends.'
+    : 'Local speech recognition; audio stays here.';
+}
+
 // --- Context sources: settings, platform support, header indicator --------
 const CONTEXT_SOURCES = [
   { key: 'selection', cfg: 'context.selection', input: 'cfg-context-selection', support: 'ctx-support-selection', label: 'selection' },
@@ -2152,6 +2160,11 @@ const cfg = {
   detectHarnessStatus: document.getElementById('detect-harness-status'),
   sttModel: document.getElementById('cfg-stt-model'),
   sttBackend: document.getElementById('cfg-stt-backend'),
+  sttProvider: document.getElementById('cfg-stt-provider'),
+  sttKey: document.getElementById('cfg-stt-key'),
+  sttGroqModel: document.getElementById('cfg-stt-groq-model'),
+  sttFullContext: document.getElementById('cfg-stt-full-context'),
+  sttPrompt: document.getElementById('cfg-stt-prompt'),
   ttsVoice: document.getElementById('cfg-tts-voice'),
   ttsEngine: document.getElementById('cfg-tts-engine'),
   ttsEngineHint: document.getElementById('cfg-tts-engine-hint'),
@@ -2853,6 +2866,13 @@ async function loadSettings() {
   applyHarnessSelection(inferred, { prefill: false });
   cfg.sttModel.value = (await aria.config.get('stt.model')) || 'small';
   cfg.sttBackend.value = (await aria.config.get('stt.backend')) || 'vulkan';
+  cfg.sttProvider.value = (await aria.config.get('stt.provider')) === 'groq' ? 'groq' : 'local';
+  cfg.sttGroqModel.value = (await aria.config.get('stt.groqModel')) || 'whisper-large-v3-turbo';
+  cfg.sttFullContext.checked = !!(await aria.config.get('stt.fullContext'));
+  cfg.sttPrompt.value = (await aria.config.get('stt.prompt')) || '';
+  cfg.sttKey.value = '';
+  cfg.sttKey.placeholder = (await aria.secure.get('stt-api-key').catch(() => null)) ? 'Key saved — leave blank to keep' : 'Enter a key to enable Groq';
+  updateSttProviderRows();
   applyOrbSttBackend(cfg.sttBackend.value);
   {
     const savedVoice = (await aria.config.get('tts.voice')) || TTS_DEFAULT_VOICE.kokoro;
@@ -3650,9 +3670,20 @@ async function discoverModel(kind) {
 if (cfg.discoverLlm)     cfg.discoverLlm.addEventListener('click',     () => discoverModel('llm'));
 if (cfg.discoverHarness) cfg.discoverHarness.addEventListener('click', () => discoverModel('harness'));
 
+cfg.sttProvider.addEventListener('change', updateSttProviderRows);
+
 settingsSave.addEventListener('click', async () => {
   settingsSave.disabled = true;
   try {
+    const sttKey = cfg.sttKey.value.trim();
+    if (cfg.sttProvider.value === 'groq' && !sttKey && !(await aria.secure.get('stt-api-key'))) {
+      throw new Error('Enter a Groq API key before enabling cloud transcription.');
+    }
+    if (sttKey) {
+      await aria.secure.set('stt-api-key', sttKey);
+      cfg.sttKey.value = '';
+      cfg.sttKey.placeholder = 'Key saved — leave blank to keep';
+    }
     // Secrets go first: an unavailable/insecure keyring must not leave provider
     // configuration half-saved while the credentials were rejected.
     const lk = cfg.llmKey.value.trim();
@@ -3678,6 +3709,10 @@ settingsSave.addEventListener('click', async () => {
     refreshConnectionSummary();
     await aria.config.set('stt.model', cfg.sttModel.value);
     await aria.config.set('stt.backend', cfg.sttBackend.value);
+    await aria.config.set('stt.groqModel', cfg.sttGroqModel.value);
+    await aria.config.set('stt.fullContext', cfg.sttFullContext.checked);
+    await aria.config.set('stt.prompt', cfg.sttPrompt.value.trim());
+    await aria.config.set('stt.provider', cfg.sttProvider.value);
     applyOrbSttBackend(cfg.sttBackend.value);
     const ttsEngine = cfg.ttsEngine.value;
     const ttsVoice = cfg.ttsVoice.value.trim();

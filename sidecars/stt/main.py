@@ -52,6 +52,19 @@ class SttSidecar(BaseSidecar):
         self._server_proc: subprocess.Popen | None = None
         self._server_port = 0
         self._cli_bin = ""  # fallback
+        self._cloud = self._cloud_config()
+
+    @staticmethod
+    def _cloud_config():
+        if os.environ.get("ARIA_STT_PROVIDER", "local") != "groq":
+            return None
+        key = os.environ.get("ARIA_STT_GROQ_KEY", "").strip()
+        if not key:
+            return None
+        model = os.environ.get("ARIA_STT_GROQ_MODEL", "whisper-large-v3-turbo")
+        if model not in ("whisper-large-v3-turbo", "whisper-large-v3"):
+            raise ValueError("Unsupported Groq transcription model")
+        return {"endpoint": "https://api.groq.com/openai/v1/audio/transcriptions", "model": model, "key": key}
 
     def initialize(self) -> None:
         self.model_path = self._find_model()
@@ -71,7 +84,10 @@ class SttSidecar(BaseSidecar):
 
         backend = "vulkan" if self.using_vulkan else "cpu"
         mode = "server(warm)" if self._server_proc else "cli(cold)"
-        self._emit_status("initialized", f"backend={backend} mode={mode} model={os.path.basename(self.model_path)}")
+        provider = "groq" if self._cloud else "local"
+        if os.environ.get("ARIA_STT_PROVIDER") == "groq" and not self._cloud:
+            self._emit_status("warning", "Groq key unavailable; transcription stays local")
+        self._emit_status("initialized", f"provider={provider} backend={backend} mode={mode} model={os.path.basename(self.model_path)}")
 
     # ---- audio handling ----
 
@@ -153,6 +169,9 @@ class SttSidecar(BaseSidecar):
     _SILENT_TAIL_RMS = 330
 
     def _speculate(self, msg: dict) -> None:
+        # Cloud uploads happen once, at finalisation, not at every speech pause.
+        if self._cloud:
+            return
         utterance_id = str(msg.get("utterance_id", ""))
         try:
             want = max(0, int(msg.get("audio_bytes", 0)))
@@ -201,12 +220,46 @@ class SttSidecar(BaseSidecar):
         return text if energy ** 0.5 < self._SILENT_TAIL_RMS else None
 
     def _transcribe(self, pcm_data: bytes) -> str:
+        if self._cloud:
+            try:
+                return self._transcribe_cloud(pcm_data)
+            except Exception as exc:
+                # Never log exception text from a credentialed endpoint.
+                reason = f"HTTP {exc.code}" if isinstance(exc, urllib.error.HTTPError) else type(exc).__name__
+                if isinstance(exc, urllib.error.HTTPError):
+                    exc.close()
+                self._emit_status("warning", f"Groq unavailable ({reason}); transcribing locally")
         if self._server_proc and self._server_proc.poll() is None:
             try:
                 return self._transcribe_server(pcm_data)
             except Exception as e:
                 self._emit_status("warning", f"server inference failed ({e}); using CLI fallback")
         return self._transcribe_cli(self._pcm_to_wav(pcm_data))
+
+    _CLOUD_TIMEOUT_S = 5
+
+    def _transcribe_cloud(self, pcm_data: bytes) -> str:
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
+        boundary = "----ariaCloud" + str(time.time_ns())
+        extra = {"model": self._cloud["model"], "language": "en", "response_format": "json", "temperature": "0"}
+        prompt = os.environ.get("ARIA_STT_PROMPT", "").strip()[:500]
+        if prompt:
+            extra["prompt"] = prompt
+        req = urllib.request.Request(self._cloud["endpoint"],
+            data=self._multipart(boundary, self._pcm_to_wav(pcm_data), extra=extra),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}",
+                     "Authorization": "Bearer " + self._cloud["key"], "Accept": "application/json"}, method="POST")
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+        with opener.open(req, timeout=self._CLOUD_TIMEOUT_S) as resp:
+            raw = resp.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            raise ValueError("Transcription response too large")
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict) or not isinstance(parsed.get("text"), str):
+            raise ValueError("Invalid transcription response")
+        return parsed["text"].strip()
 
     # audio_ctx fast path: whisper's encoder always processes a full 30s window
     # (ctx 1500) no matter how short the utterance, so a 2s voice command wastes
@@ -229,6 +282,9 @@ class SttSidecar(BaseSidecar):
         # ("what's the weather what's the weather…"); an empty result beats a
         # fake one.
         extra = {"temperature": "0", "temperature_inc": "0", "response_format": "json"}
+        prompt = os.environ.get("ARIA_STT_PROMPT", "").strip()[:500]
+        if prompt:
+            extra["prompt"] = prompt
         if os.environ.get("ARIA_STT_AUDIO_CTX", "").strip().lower() not in ("0", "off"):
             pcm_data = pcm_data + b"\x00" * (16000 * 2 * self._CTX_PAD_MS // 1000)
             secs = len(pcm_data) / 32000.0
@@ -258,6 +314,9 @@ class SttSidecar(BaseSidecar):
         try:
             cmd = [self._cli_bin, "-m", self.model_path, "-f", tmp_path, "--no-timestamps", "-l", "en"]
             cmd += self._thread_args()
+            prompt = os.environ.get("ARIA_STT_PROMPT", "").strip()[:500]
+            if prompt:
+                cmd += ["--prompt", prompt]
             if self._force_cpu or not self.using_vulkan:
                 cmd.append("--no-gpu")
             # Same determinism knob as the server: --no-fallback (disable the

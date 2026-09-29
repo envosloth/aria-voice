@@ -1,0 +1,341 @@
+{
+  "note": "One pass per setting, 8 clean synthetic utterances, not a general accuracy claim; measured STT only, not end-to-end. CPU, 2 threads. Full-context run overlapped a short isolated UI smoke, so its timings are contextual, not a controlled comparative speed result.",
+  "runs": [
+    {
+      "model": "small",
+      "audio_ctx": "1",
+      "threads": 2,
+      "fixture": "Piper en_GB-alan-medium, clean synthetic speech, 8 utterances",
+      "initialization_ms": 805,
+      "median_stt_ms": 3503.0,
+      "wer": 0.03278688524590164,
+      "rows": [
+        {
+          "expected": "What is the weather in Longmont, Colorado?",
+          "actual": "What is the weather in Longmont, Colorado?",
+          "ms": 2617,
+          "word_errors": 0,
+          "words": 7
+        },
+        {
+          "expected": "Open Blender and start a new animation project.",
+          "actual": "Open Blender and start a new animation project.",
+          "ms": 3369,
+          "word_errors": 0,
+          "words": 8
+        },
+        {
+          "expected": "Remember that I prefer short answers.",
+          "actual": "Remember that I prefer short answers.",
+          "ms": 2734,
+          "word_errors": 0,
+          "words": 6
+        },
+        {
+          "expected": "Set a timer for five minutes.",
+          "actual": "Set a timer for 5 minutes.",
+          "ms": 3241,
+          "word_errors": 1,
+          "words": 6
+        },
+        {
+          "expected": "Please explain the selected text in simple English.",
+          "actual": "Please explain the selected text in simple English.",
+          "ms": 3795,
+          "word_errors": 0,
+          "words": 8
+        },
+        {
+          "expected": "Can you tell me whether that approach will work?",
+          "actual": "Can you tell me whether that approach will work?",
+          "ms": 3637,
+          "word_errors": 0,
+          "words": 9
+        },
+        {
+          "expected": "Aria, cancel that and listen to me.",
+          "actual": "Area Cancel that and listen to me.",
+          "ms": 3906,
+          "word_errors": 1,
+          "words": 7
+        },
+        {
+          "expected": "My next video is about a robot learning to cook.",
+          "actual": "My next video is about a robot learning to cook.",
+          "ms": 4438,
+          "word_errors": 0,
+          "words": 10
+        }
+      ]
+    },
+    {
+      "model": "small.en-q5_1",
+      "audio_ctx": "1",
+      "threads": 2,
+      "fixture": "Piper en_GB-alan-medium, clean synthetic speech, 8 utterances",
+      "initialization_ms": 650,
+      "median_stt_ms": 4415.0,
+      "wer": 0.03278688524590164,
+      "rows": [
+        {
+          "expected": "What is the weather in Longmont, Colorado?",
+          "actual": "What is the weather in Longmont Colorado?",
+          "ms": 3326,
+          "word_errors": 0,
+          "words": 7
+        },
+        {
+          "expected": "Open Blender and start a new animation project.",
+          "actual": "Open Blender and start a new animation project.",
+          "ms": 4490,
+          "word_errors": 0,
+          "words": 8
+        },
+        {
+          "expected": "Remember that I prefer short answers.",
+          "actual": "Remember that I prefer short answers.",
+          "ms": 3727,
+          "word_errors": 0,
+          "words": 6
+        },
+        {
+          "expected": "Set a timer for five minutes.",
+          "actual": "Set a timer for 5 minutes.",
+          "ms": 3725,
+          "word_errors": 1,
+          "words": 6
+        },
+        {
+          "expected": "Please explain the selected text in simple English.",
+          "actual": "Please explain the selected text in simple English.",
+          "ms": 5143,
+          "word_errors": 0,
+          "words": 8
+        },
+        {
+          "expected": "Can you tell me whether that approach will work?",
+          "actual": "Can you tell me whether that approach will work?",
+          "ms": 4576,
+          "word_errors": 0,
+          "words": 9
+        },
+        {
+          "expected": "Aria, cancel that and listen to me.",
+          "actual": "Area, cancel that and listen to me.",
+          "ms": 4340,
+          "word_errors": 1,
+          "words": 7
+        },
+        {
+          "expected": "My next video is about a robot learning to cook.",
+          "actual": "My next video is about a robot learning to cook.",
+          "ms": 5794,
+          "word_errors": 0,
+          "words": 10
+        }
+      ]
+    },
+    {
+      "model": "small",
+      "audio_ctx": "0",
+      "threads": 2,
+      "fixture": "Piper en_GB-alan-medium, clean synthetic speech, 8 utterances",
+      "initialization_ms": 1032,
+      "median_stt_ms": 18756.5,
+      "wer": 0.03278688524590164,
+      "rows": [
+        {
+          "expected": "What is the weather in Longmont, Colorado?",
+          "actual": "What is the weather in Longmont, Colorado?",
+          "ms": 17873,
+          "word_errors": 0,
+          "words": 7
+        },
+        {
+          "expected": "Open Blender and start a new animation project.",
+          "actual": "open Blender and start a new animation project.",
+          "ms": 18094,
+          "word_errors": 0,
+          "words": 8
+        },
+        {
+          "expected": "Remember that I prefer short answers.",
+          "actual": "remember that I prefer short answers.",
+          "ms": 18064,
+          "word_errors": 0,
+          "words": 6
+        },
+        {
+          "expected": "Set a timer for five minutes.",
+          "actual": "set a timer for 5 minutes.",
+          "ms": 18729,
+          "word_errors": 1,
+          "words": 6
+        },
+        {
+          "expected": "Please explain the selected text in simple English.",
+          "actual": "please explain the selected text in simple English.",
+          "ms": 18784,
+          "word_errors": 0,
+          "words": 8
+        },
+        {
+          "expected": "Can you tell me whether that approach will work?",
+          "actual": "Can you tell me whether that approach will work?",
+          "ms": 19075,
+          "word_errors": 0,
+          "words": 9
+        },
+        {
+          "expected": "Aria, cancel that and listen to me.",
+          "actual": "area cancel that and listen to me.",
+          "ms": 19104,
+          "word_errors": 1,
+          "words": 7
+        },
+        {
+          "expected": "My next video is about a robot learning to cook.",
+          "actual": "My next video is about a robot learning to cook.",
+          "ms": 19110,
+          "word_errors": 0,
+          "words": 10
+        }
+      ]
+    },
+    {
+      "model": "base.en",
+      "audio_ctx": "1",
+      "threads": 2,
+      "fixture": "Piper en_GB-alan-medium, clean synthetic speech, 8 utterances",
+      "initialization_ms": 860,
+      "median_stt_ms": 965.0,
+      "wer": 0.03278688524590164,
+      "rows": [
+        {
+          "expected": "What is the weather in Longmont, Colorado?",
+          "actual": "What is the weather in Longmont, Colorado?",
+          "ms": 753,
+          "word_errors": 0,
+          "words": 7
+        },
+        {
+          "expected": "Open Blender and start a new animation project.",
+          "actual": "Open Blender and start a new animation project.",
+          "ms": 952,
+          "word_errors": 0,
+          "words": 8
+        },
+        {
+          "expected": "Remember that I prefer short answers.",
+          "actual": "Remember that I prefer short answers.",
+          "ms": 801,
+          "word_errors": 0,
+          "words": 6
+        },
+        {
+          "expected": "Set a timer for five minutes.",
+          "actual": "Set a timer for 5 minutes.",
+          "ms": 845,
+          "word_errors": 1,
+          "words": 6
+        },
+        {
+          "expected": "Please explain the selected text in simple English.",
+          "actual": "Please explain the selected text in simple English.",
+          "ms": 1001,
+          "word_errors": 0,
+          "words": 8
+        },
+        {
+          "expected": "Can you tell me whether that approach will work?",
+          "actual": "Can you tell me whether that approach will work?",
+          "ms": 978,
+          "word_errors": 0,
+          "words": 9
+        },
+        {
+          "expected": "Aria, cancel that and listen to me.",
+          "actual": "Area cancel that and listen to me.",
+          "ms": 1066,
+          "word_errors": 1,
+          "words": 7
+        },
+        {
+          "expected": "My next video is about a robot learning to cook.",
+          "actual": "My next video is about a robot learning to cook.",
+          "ms": 1563,
+          "word_errors": 0,
+          "words": 10
+        }
+      ]
+    },
+    {
+      "model": "base.en",
+      "audio_ctx": "1",
+      "prompt": "Aria, Longmont, Blender.",
+      "threads": 2,
+      "fixture": "Piper en_GB-alan-medium, clean synthetic speech, 8 utterances",
+      "initialization_ms": 790,
+      "median_stt_ms": 1203.0,
+      "wer": 0.0,
+      "rows": [
+        {
+          "expected": "What is the weather in Longmont, Colorado?",
+          "actual": "What is the weather in Longmont, Colorado?",
+          "ms": 1012,
+          "word_errors": 0,
+          "words": 7
+        },
+        {
+          "expected": "Open Blender and start a new animation project.",
+          "actual": "Open Blender and start a new animation project.",
+          "ms": 893,
+          "word_errors": 0,
+          "words": 8
+        },
+        {
+          "expected": "Remember that I prefer short answers.",
+          "actual": "Remember that I prefer short answers.",
+          "ms": 953,
+          "word_errors": 0,
+          "words": 6
+        },
+        {
+          "expected": "Set a timer for five minutes.",
+          "actual": "Set a timer for five minutes.",
+          "ms": 985,
+          "word_errors": 0,
+          "words": 6
+        },
+        {
+          "expected": "Please explain the selected text in simple English.",
+          "actual": "Please explain the selected text in simple English.",
+          "ms": 1456,
+          "word_errors": 0,
+          "words": 8
+        },
+        {
+          "expected": "Can you tell me whether that approach will work?",
+          "actual": "Can you tell me whether that approach will work?",
+          "ms": 1713,
+          "word_errors": 0,
+          "words": 9
+        },
+        {
+          "expected": "Aria, cancel that and listen to me.",
+          "actual": "Aria, cancel that and listen to me.",
+          "ms": 1394,
+          "word_errors": 0,
+          "words": 7
+        },
+        {
+          "expected": "My next video is about a robot learning to cook.",
+          "actual": "My next video is about a robot learning to cook.",
+          "ms": 1472,
+          "word_errors": 0,
+          "words": 10
+        }
+      ]
+    }
+  ]
+}

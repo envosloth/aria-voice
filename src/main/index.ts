@@ -175,7 +175,7 @@ function createWindow(): BrowserWindow {
     height: 800,
     minWidth: 760,
     minHeight: 540,
-    show: !SMOKE, // headless boot test: don't pop a window on the user's desktop
+    show: !SMOKE || process.env.ARIA_SMOKE_SHOW === '1', // headless boot test: don't pop a window on the user's desktop
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
       contextIsolation: true,
@@ -466,7 +466,7 @@ function setupIpcHandlers(): void {
       // spawn.
       supervisor.sendToSidecar('tts', { type: 'set_speed', speed: Number(value) });
       process.env.ARIA_TTS_SPEED = String(Number(value));
-    } else if (key === 'stt.model' || key === 'stt.backend') {
+    } else if (key === 'stt.model' || key === 'stt.backend' || key === 'stt.provider' || key === 'stt.groqModel' || key === 'stt.fullContext' || key === 'stt.prompt') {
       markCustomIfManaged(); scheduleSidecarReload('stt');
     } else if (key === 'ui.gpuCap') {
       // The GPU cap changes STT's thread budget (and possibly its backend), which
@@ -509,11 +509,13 @@ function setupIpcHandlers(): void {
   handle(IPC.SECURE_STORE_SET, (_e, key: unknown, value: unknown) => {
     if (!isRendererSecretKey(key)) throw new Error('Secure-store key not allowed');
     if (typeof value !== 'string' || value.length > 8192) throw new Error('Invalid secret value');
-    return setSecret(key, value);
+    setSecret(key, value);
+    if (key === 'stt-api-key') scheduleSidecarReload('stt');
   });
   handle(IPC.SECURE_STORE_DELETE, (_e, key: unknown) => {
     if (!isRendererSecretKey(key)) throw new Error('Secure-store key not allowed');
-    return deleteSecret(key);
+    deleteSecret(key);
+    if (key === 'stt-api-key') scheduleSidecarReload('stt');
   });
 
   on(IPC.LLM_SEND, (_e, payload: unknown) => {
@@ -919,6 +921,16 @@ app.whenReady().then(async () => {
     (name: SidecarName, msg: Record<string, unknown>) => {
       routeSidecarMessage(name, msg);
     },
+    { sttEnv: () => {
+      const env: NodeJS.ProcessEnv = {
+        ARIA_STT_PROVIDER: config.get('stt.provider') === 'groq' ? 'groq' : 'local',
+        ARIA_STT_GROQ_MODEL: String(config.get('stt.groqModel') || 'whisper-large-v3-turbo'),
+      };
+      if (env.ARIA_STT_PROVIDER === 'groq') {
+        try { env.ARIA_STT_GROQ_KEY = getSecret('stt-api-key') || ''; } catch { env.ARIA_STT_GROQ_KEY = ''; }
+      }
+      return env;
+    } },
   );
 
   supervisor.onBinaryData((name: SidecarName, data: Buffer) => {
@@ -1615,6 +1627,8 @@ function applyConfigToEnv(): void {
   const hw = detectHardware();
   const profile = perfProfile(hw, clampCap(config.get('ui.gpuCap')));
   process.env.ARIA_STT_THREADS = String(profile.sttThreads);
+  process.env.ARIA_STT_AUDIO_CTX = config.get('stt.fullContext') ? '0' : '1';
+  process.env.ARIA_STT_PROMPT = String(config.get('stt.prompt') || '').slice(0, 500);
 
   process.env.ARIA_STT_MODEL = (config.get('stt.model') as string) || 'small';
   process.env.ARIA_STT_BACKEND = (config.get('stt.backend') as string) || profile.sttBackend;

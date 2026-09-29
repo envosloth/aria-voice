@@ -1112,11 +1112,32 @@
       <div class="tab-panel" id="settings-voice" data-panel="voice" role="tabpanel" aria-labelledby="settings-tab-voice">
       <section>
         <h3>Speech-to-Text</h3>
-        <label>Model
+        <label>Transcribe speech
+          <select id="cfg-stt-provider">
+            <option value="local">On this computer — private, offline</option>
+            <option value="groq">Groq — cloud, free tier available</option>
+          </select>
+          <span class="hint" id="stt-provider-hint">Local speech recognition; audio stays here.</span>
+        </label>
+        <div id="stt-cloud-key-row" hidden>
+          <label>Groq API key
+            <input type="password" id="cfg-stt-key" autocomplete="off" spellcheck="false" placeholder="Enter a key to enable Groq">
+          </label>
+          <label>Cloud model
+            <select id="cfg-stt-groq-model">
+              <option value="whisper-large-v3-turbo">Whisper large v3 turbo — faster</option>
+              <option value="whisper-large-v3">Whisper large v3 — accuracy-focused</option>
+            </select>
+          </label>
+          <p class="hint">Audio and the vocabulary below are sent to api.groq.com. Requires your own key; account quotas apply. Failures fall back locally. Groq offers zero-data-retention in its Data Controls.</p>
+        </div>
+        <label>Local model (also used for cloud fallback)
           <select id="cfg-stt-model">
             <option value="tiny.en">tiny.en — fastest (39M)</option>
             <option value="base.en">base.en — fast (74M)</option>
-            <option value="small">small — balanced (244M)</option>
+            <option value="small.en-q5_1">small.en Q5 — English, lower memory (190 MB)</option>
+            <option value="small.en">small.en — English, full precision (488 MB)</option>
+            <option value="small">small — multilingual (488 MB)</option>
             <option value="medium">medium — accurate (769M)</option>
           </select>
         </label>
@@ -1125,6 +1146,10 @@
             <option value="vulkan">Vulkan (GPU)</option>
             <option value="cpu">CPU</option>
           </select>
+        </label>
+        <label class="checkbox-label"><input type="checkbox" id="cfg-stt-full-context"> Use full audio context — slower, avoids short-window optimisation</label>
+        <label>Speech vocabulary <span class="hint">(optional names and spellings)</span>
+          <input type="text" id="cfg-stt-prompt" maxlength="500" placeholder="Aria, Longmont, Blender" autocomplete="off">
         </label>
       </section>
 

@@ -43,6 +43,8 @@ const KOKORO_BASE = 'https://github.com/thewh1teagle/kokoro-onnx/releases/downlo
 const WHISPER_MODELS: Record<string, { sizeBytes: number; sha256: string }> = {
   'tiny.en': { sizeBytes: 77_704_715, sha256: '921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f' },
   'base.en': { sizeBytes: 147_964_211, sha256: 'a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002' },
+  'small.en-q5_1': { sizeBytes: 190_098_681, sha256: 'bfdff4894dcb76bbf647d56263ea2a96645423f1669176f4844a1bf8e478ad30' },
+  'small.en': { sizeBytes: 487_614_201, sha256: 'c6138d6d58ecc8322097e0f987c32f1be8bb0a18532a3f88f734d1bbf9c41e5d' },
   small: { sizeBytes: 487_601_967, sha256: '1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b' },
   medium: { sizeBytes: 1_533_763_059, sha256: '6c14d5adee5f86394037b4e4e8b59f1673b6cee10e3cf0b11bbdbee79c156208' },
 };

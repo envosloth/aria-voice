@@ -29,6 +29,8 @@ export const MEMORY_CHECK_INTERVAL_MS = 30000;
 export const STT_MODELS = {
   'tiny.en': { size: '39M', description: 'Fastest, English-only (low-end / max responsiveness)' },
   'base.en': { size: '74M', description: 'Fast, English-only (recommended)' },
+  'small.en-q5_1': { size: '244M, quantized', description: 'English-only, lower memory (190 MB)' },
+  'small.en': { size: '244M', description: 'English-only, full precision (488 MB)' },
   'small': { size: '244M', description: 'Balanced accuracy/speed' },
   'medium': { size: '769M', description: 'Higher accuracy, slower' },
 } as const;
@@ -51,7 +53,7 @@ export const VAD_FRAME_MS = 80;
 // crossing ipcMain is shape-checked and bounded before it reaches privileged code.
 
 /** Secure-store keys the renderer may read/write/delete (see app.js settings + onboarding). */
-export const RENDERER_SECRET_KEYS: readonly string[] = ['llm-api-key', 'harness-api-key', 'jev-api-key'];
+export const RENDERER_SECRET_KEYS: readonly string[] = ['llm-api-key', 'harness-api-key', 'jev-api-key', 'stt-api-key'];
 export function isRendererSecretKey(key: unknown): key is string {
   return typeof key === 'string' && RENDERER_SECRET_KEYS.includes(key);
 }

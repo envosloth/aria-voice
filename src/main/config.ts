@@ -4,6 +4,10 @@ import { DEFAULT_STT_MODEL } from '../shared/constants';
 interface AppConfig {
   stt: {
     model: string;
+    provider: 'local' | 'groq';
+    groqModel: 'whisper-large-v3-turbo' | 'whisper-large-v3';
+    fullContext: boolean; // disable short-window optimisation for accuracy
+    prompt: string;      // explicit vocabulary only, never auto-extracted memory
     backend: 'vulkan' | 'cpu';
     prewarm: boolean;
     // Speculative early endpointing: transcribe during a pause and end a
@@ -159,6 +163,10 @@ interface AppConfig {
 const defaults: AppConfig = {
   stt: {
     model: DEFAULT_STT_MODEL,
+    provider: 'local',
+    groqModel: 'whisper-large-v3-turbo',
+    fullContext: false,
+    prompt: '',
     backend: 'vulkan',
     prewarm: true,
     speculative: true,
@@ -262,6 +270,8 @@ export const config = new JsonStore<AppConfig>('aria-config', defaults);
 // Closed string unions: reject values outside the set the code understands.
 const ENUMS: Record<string, readonly string[]> = {
   'stt.backend': ['vulkan', 'cpu'],
+  'stt.provider': ['local', 'groq'],
+  'stt.groqModel': ['whisper-large-v3-turbo', 'whisper-large-v3'],
   'tts.engine': ['piper', 'kokoro'],
   'routing.mode': ['auto', 'llm', 'harness'],
   'routing.classifier': ['auto', 'off'],
@@ -347,6 +357,9 @@ export function validateConfigSet(
       break;
     default:
       return { ok: false, error: `${key} is not writable` };
+  }
+  if (key === 'stt.prompt' && typeof value === 'string' && (value.length > 500 || /[\r\n\x00]/.test(value))) {
+    return { ok: false, error: 'Speech vocabulary must be one line, at most 500 characters' };
   }
   const allowed = ENUMS[key];
   if (allowed && !allowed.includes(value as string)) {
