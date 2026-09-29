@@ -1297,7 +1297,13 @@ app.whenReady().then(async () => {
               AriaOrb.settle();
               return true;
             })()`);
-            await new Promise((r) => setTimeout(r, 150));
+            // A hidden window can hand back its last composited frame; force a
+            // repaint and wait for two frames so the PNG shows the cleared DOM.
+            mainWindow.webContents.invalidate();
+            await mainWindow.webContents.executeJavaScript(
+              'new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))',
+            );
+            await new Promise((r) => setTimeout(r, 250));
             console.log(`[ARIA_SMOKE] orb state verified: ${s} phase=${rendered.phase} frames=${rendered.frames}`);
           }
           if (process.env.ARIA_CHAT_DEMO) {
