@@ -169,7 +169,10 @@ if (holdoutFiles.size) {
   );
 }
 if (holdoutFiles.size) {
-  console.log(`\nHOLDOUT (never used for tuning) — ${holdoutGraded.length} utterances`);
+  console.log(`\nHOLDOUT-GRADED sets (not part of the fitted corpus) — ${holdoutGraded.length} utterances`);
+  console.log('  NOTE: a set is only truly UNSEEN if it was generated after the last router');
+  console.log('  change. Sets used while tuning are still graded here, so read the per-file');
+  console.log('  numbers above and the reported tuning history, not this pooled figure alone.');
   console.log(`  accuracy            ${holdoutAcc.toFixed(1)}%  (bar >= ${HOLDOUT_BAR.overall}%)`);
   console.log(`  chat -> agent       ${holdoutOver.toFixed(1)}%  (bar <= ${HOLDOUT_BAR.over}%)`);
   console.log(`  agent -> chat       ${holdoutUnder.toFixed(1)}%  (bar <= ${HOLDOUT_BAR.under}%)`);

@@ -1,0 +1,404 @@
+{
+  "cases": [
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What's the weather like in Denver right now?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What's Denver's climate like year round?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Remind me to call Mom at six."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How do reminder apps keep track of time?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Turn the living room lights off."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Do smart lights use power when they're idle?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "My phone keeps saying the storage is full."
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Add milk to the shopping list."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What should a basic pantry always have?"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "Search for plumbers near me with good reviews."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "What makes an online review worth trusting?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Set a timer for ten minutes."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How long should pasta boil?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What's on my calendar tomorrow?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "How do most people plan their week?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Text Alex that I'm running late."
+    },
+    {
+      "cat": "chat-language",
+      "expect": "llm",
+      "text": "What's a polite way to say I'm running late?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Play some jazz."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Who were the big names in jazz?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "How much is in my checking account?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "How should I budget for groceries each month?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Delete the file called oldnotes."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "What's a good way to organize old notes?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Book a table for four on Friday."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "How many people is too many for a dinner party?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Check whether the front door is locked."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How do smart locks behave when the battery dies?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "How many steps did I walk today?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How many steps a day should a person walk?"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "Read me today's news headlines."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "Why do headlines get so many clicks?"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "Add a note that the car needs a service."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How often should a car be serviced?"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "Turn the volume down a bit."
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "Why does loud music damage hearing over time?"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "The kitchen light is still on."
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "I wonder what time the store closes."
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "What did eggs cost last month?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Did I already take my pills today?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "When did I last water the plants?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Do I have anything on Thursday?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Is my package arriving today?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "How many days until my trip?"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Check whether I paid the electric bill."
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Is that still on for tomorrow?"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "llm",
+      "text": "My alarm didn't go off this morning."
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Don't put it on the calendar, just say if it clashes."
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "It'd be nice to know tomorrow's forecast."
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Find a recipe using what's in my fridge."
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Nobody took the trash out, can you deal with it?"
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "Get me ready for the trip, I keep forgetting things."
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "Last year, how much did we pay for insurance?"
+    },
+    {
+      "cat": "explicit-harness",
+      "expect": "harness",
+      "text": "Use your tools and look up the game score."
+    },
+    {
+      "cat": "explicit-harness",
+      "expect": "harness",
+      "text": "Ask the agent to sort out my inbox."
+    },
+    {
+      "cat": "explicit-llm",
+      "expect": "llm",
+      "text": "Don't run anything, just tell me your thoughts."
+    },
+    {
+      "cat": "explicit-llm",
+      "expect": "llm",
+      "text": "No need to search anything, just your opinion."
+    },
+    {
+      "cat": "explicit-llm",
+      "expect": "llm",
+      "text": "Answer from memory only, no lookups."
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Do you have access to my email?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "What can you actually do with my calendar?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "How do you decide when to use a tool?"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "Are you able to send texts for me?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "If I moved to Portland, how would winters compare?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "If you were me, would you take the job?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "Should I get a second credit card?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "My kid won't eat vegetables, any ideas?"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "The sink is dripping again."
+    },
+    {
+      "cat": "chat-smalltalk",
+      "expect": "llm",
+      "text": "Every morning I check the traffic before leaving."
+    },
+    {
+      "cat": "chat-smalltalk",
+      "expect": "llm",
+      "text": "No need to remind me, I already know."
+    },
+    {
+      "cat": "chat-smalltalk",
+      "expect": "llm",
+      "text": "Can you not set a timer, I'll watch the clock."
+    },
+    {
+      "cat": "chat-smalltalk",
+      "expect": "llm",
+      "text": "That one's my favorite so far."
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "llm",
+      "text": "My printer has been jammed all morning."
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "llm",
+      "text": "Rewrite this to sound friendlier."
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "llm",
+      "text": "Is this the right dose for a kid?"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "llm",
+      "text": "That looks wrong to me."
+    },
+    {
+      "cat": "chat-language",
+      "expect": "llm",
+      "text": "How do you spell necessary?"
+    },
+    {
+      "cat": "chat-language",
+      "expect": "llm",
+      "text": "Translate where is the train station into Spanish."
+    },
+    {
+      "cat": "chat-language",
+      "expect": "llm",
+      "text": "What's another word for stubborn?"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "What's fifteen percent of two hundred forty?"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "If I double the recipe, how much is three quarter cups?"
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "Write a silly poem about my cat."
+    }
+  ]
+}
