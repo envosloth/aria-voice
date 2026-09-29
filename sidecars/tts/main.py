@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TTS sidecar: Piper (power-saver default) or Kokoro-82M for local text-to-speech.
+"""TTS sidecar: local Piper/Kokoro or explicitly selected cloud raw-PCM TTS.
 
 Both run on CPU via ONNX. Receives text over UDS, streams PCM audio back.
 Sentence-chunked: starts playback after the first sentence is synthesized.
@@ -13,14 +13,17 @@ dominant cost; synthesis is several times realtime once warm.
 """
 
 import json
+import math
 import os
 import queue
 import re
 import sys
 import threading
 
+sys.path.insert(0, os.path.dirname(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "shared"))
 from base_sidecar import BaseSidecar
+from cloud_tts import CloudTts, CloudTtsError, CloudTtsCancelled, DEFAULTS, MAX_TEXT, SAMPLE_RATE
 
 SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
@@ -47,7 +50,14 @@ class TtsSidecar(BaseSidecar):
         super().__init__("tts")
         self.engine = os.environ.get("ARIA_TTS_ENGINE", "piper")
         self.voice_name = os.environ.get("ARIA_TTS_VOICE", "en_GB-alan-medium")
-        self.speed = float(os.environ.get("ARIA_TTS_SPEED", "1.0"))
+        try:
+            self.speed = float(os.environ.get("ARIA_TTS_SPEED", "1.0"))
+        except ValueError:
+            self.speed = 1.0
+        if not math.isfinite(self.speed):
+            self.speed = 1.0
+        self.speed = max(0.5, min(2.0, self.speed))
+        self._cloud = None
         self.voice_model_path: str = ""
         self._voice = None       # persistent PiperVoice (piper engine)
         self._kokoro = None      # persistent Kokoro (kokoro engine)
@@ -58,10 +68,14 @@ class TtsSidecar(BaseSidecar):
         # in-progress synthesis whose epoch is stale is discarded.
         self._synth_queue: "queue.Queue[tuple[str, int, str, str, int, str]]" = queue.Queue()
         self._epoch = 0
-        self._epoch_lock = threading.Lock()
+        self._epoch_lock = threading.RLock()
 
     def initialize(self) -> None:
         detail = self._ensure_loaded()
+        if self.engine in DEFAULTS and self._socket:
+            # Bound sendall while the emission gate holds the epoch lock. A
+            # dead PCM consumer must not indefinitely block a stop control.
+            self._socket.settimeout(1.0)
         threading.Thread(target=self._synth_worker, daemon=True).start()
         self._emit_status("initialized", detail)
 
@@ -79,7 +93,16 @@ class TtsSidecar(BaseSidecar):
         'create'") and produce no audio on the very first utterance.
         """
         with self._load_lock:
-            if self.engine == "kokoro":
+            if self.engine in DEFAULTS:
+                if self._cloud is None:
+                    self._cloud = CloudTts(
+                        self.engine, os.environ.get("ARIA_TTS_CLOUD_KEY", ""),
+                        model=os.environ.get("ARIA_TTS_CLOUD_MODEL", ""),
+                        voice=os.environ.get("ARIA_TTS_CLOUD_VOICE", ""),
+                    )
+                # Do not load/warm local models or perform a billable request.
+                return f"engine={self.engine} cloud PCM 24000Hz"
+            elif self.engine == "kokoro":
                 if self._kokoro is None:
                     self._load_kokoro()
                 return f"engine=kokoro voice={self.voice_name}"
@@ -93,7 +116,7 @@ class TtsSidecar(BaseSidecar):
                     self._load_piper()
                 return f"engine=piper voice={os.path.basename(self.voice_model_path)}"
             else:
-                raise RuntimeError(f"Unsupported TTS engine: {self.engine}")
+                raise RuntimeError("Unsupported TTS engine")
 
     # --- Kokoro ---------------------------------------------------------------
     def _load_kokoro(self) -> None:
@@ -203,7 +226,9 @@ class TtsSidecar(BaseSidecar):
             # synthesized utterance, no model reload. Float assignment is atomic
             # under the GIL, so the synth worker just reads the new value.
             try:
-                self.speed = max(0.5, min(2.0, float(msg.get("speed", 1.0))))
+                speed = float(msg.get("speed", 1.0))
+                if math.isfinite(speed):
+                    self.speed = max(0.5, min(2.0, speed))
             except (TypeError, ValueError):
                 pass
         elif mtype == "stop":
@@ -211,13 +236,14 @@ class TtsSidecar(BaseSidecar):
             # drop anything already queued so the next turn starts clean.
             with self._epoch_lock:
                 self._epoch += 1
-            while True:
-                try:
-                    self._synth_queue.get_nowait()
-                    self._synth_queue.task_done()
-                except queue.Empty:
-                    break
-            self.emit({"type": "tts_stopped", "epoch": msg.get("epoch")})
+                while True:
+                    try:
+                        self._synth_queue.get_nowait()
+                        self._synth_queue.task_done()
+                    except queue.Empty:
+                        break
+                # No stale packet may be announced/written after this ack.
+                self.emit({"type": "tts_stopped", "epoch": msg.get("epoch")})
 
     def _synth_worker(self) -> None:
         """Consume the synthesis queue off the stdin thread. Each item carries
@@ -234,9 +260,16 @@ class TtsSidecar(BaseSidecar):
                     if item_type == "synthesize":
                         self._synthesize(text, item_epoch, reply_id, request_id, epoch)
                     elif item_type == "reply_done":
-                        self.emit({"type": "tts_reply_done", "reply_id": reply_id, "epoch": epoch})
+                        with self._epoch_lock:
+                            if item_epoch == self._epoch:
+                                self.emit({"type": "tts_reply_done", "reply_id": reply_id, "epoch": epoch})
+            except CloudTtsCancelled:
+                pass  # stop is not an error, and must not produce tts_done
             except Exception as e:  # one bad utterance must not kill the worker
-                self._emit_status("error", f"synthesize: {e}")
+                with self._epoch_lock:
+                    if item_epoch == self._epoch:
+                        detail = str(e) if isinstance(e, CloudTtsError) else "Cloud TTS synthesis failed"
+                        self._emit_status("error", detail if self.engine in DEFAULTS else f"synthesize: {e}")
             finally:
                 self._synth_queue.task_done()
 
@@ -252,19 +285,52 @@ class TtsSidecar(BaseSidecar):
         # loading when this synthesize arrived. _ensure_loaded() is idempotent.
         self._ensure_loaded()
 
+        if self.engine in DEFAULTS and (not isinstance(text, str) or len(text) > MAX_TEXT):
+            raise CloudTtsError("Cloud TTS text must contain at most 5000 characters")
+
         chunks = self._chunks_for(text)
         total = len(chunks)
 
         for i, chunk in enumerate(chunks):
             if item_epoch != self._current_epoch():
                 return  # superseded by a stop — drop the rest, no tts_done
-            if self.engine == "kokoro":
+            if self.engine in DEFAULTS:
+                self._emit_cloud(chunk, i, total, item_epoch, reply_id, request_id, epoch)
+            elif self.engine == "kokoro":
                 self._emit_kokoro(chunk, i, total, item_epoch, reply_id, request_id, epoch)
             else:
                 self._emit_piper(chunk, i, total, item_epoch, reply_id, request_id, epoch)
 
-        if item_epoch == self._current_epoch():
-            self.emit({"type": "tts_done", "reply_id": reply_id, "request_id": request_id, "epoch": epoch})
+        with self._epoch_lock:
+            if item_epoch == self._epoch and (self.engine not in DEFAULTS or self._running):
+                self.emit({"type": "tts_done", "reply_id": reply_id, "request_id": request_id, "epoch": epoch})
+
+    def _emit_cloud(self, sentence: str, index: int, total: int, item_epoch: int, reply_id: str, request_id: str, epoch: int) -> None:
+        canceled = lambda: not self._running or item_epoch != self._current_epoch()
+        cloud = self._cloud
+        if cloud is None:
+            raise CloudTtsCancelled("Cloud TTS canceled")
+        stream = cloud.stream(sentence, self.speed, canceled)
+        try:
+            for pcm in stream:
+                if not self._emit_audio(pcm, SAMPLE_RATE, index, total, item_epoch, reply_id, request_id, epoch):
+                    return
+        finally:
+            # Close immediately even when the consumer breaks on a stale epoch.
+            stream.close()
+
+    def _emit_audio(self, pcm: bytes, sample_rate: int, index: int, total: int, item_epoch: int, reply_id: str, request_id: str, epoch: int) -> bool:
+        # Announcement and bytes form one atomic emission relative to stop.
+        with self._epoch_lock:
+            if not self._running or item_epoch != self._epoch:
+                return False
+            self.emit({
+                "type": "tts_chunk", "index": index, "total": total,
+                "size": len(pcm), "sample_rate": int(sample_rate),
+                "reply_id": reply_id, "request_id": request_id, "epoch": epoch,
+            })
+            self.send_pcm(pcm)
+            return self._running
 
     def _chunks_for(self, text: str) -> list:
         """Split text into speakable chunks. Sentences are the base unit; the
@@ -317,6 +383,10 @@ class TtsSidecar(BaseSidecar):
             self.send_pcm(pcm)
 
     def cleanup(self) -> None:
+        self._running = False
+        with self._epoch_lock:
+            self._epoch += 1
+        self._cloud = None
         self._voice = None
         self._kokoro = None
         super().cleanup()
