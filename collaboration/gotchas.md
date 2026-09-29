@@ -17,29 +17,24 @@ code and fix this file.
 
 ## The GPU-contention crash (orb + Vulkan STT)
 
-The single nastiest historical crash class. The former canvas orb rendered at native
+The single nastiest historical crash class. The first canvas orb rendered at native
 refresh while Vulkan transcription ran, saturated the GPU, and could take the renderer
-down on `balanced`+ profiles. The canvas path has been removed, but the safeguards in
-`orb.js` remain load-bearing:
+down on `balanced`+ profiles. The current procedural orb (`orb.js`) is a canvas again,
+so these safeguards are load-bearing:
 
-- The supplied GIF is retained as a source reference; runtime uses a transparent,
-  seekable WebM so idle/listening remain paused and compact after any required return,
-  rather than decoding an uncontrolled loop. A direct speaking/processing→listening
-  transition may briefly finish consolidation; repeated listening updates must not
-  cancel that tail, and its `ended` path must pause at frame zero. Only processing
-  plays the expansion/ripple segment. Speaking pauses on the reached shape and uses
-  the bounded TTS RMS poll for live CSS feedback. Keep packet keyframes at the
-  controlled boundaries (0, 2.75, and 6.0 seconds) so repeated loop/return seeks do
-  not decode from the start of a distant GOP.
-- `beginSttCompute()` pauses video decode **and** hides the element during Vulkan
-  compute; `endSttCompute()` restores the phase, with a 6 s failsafe and next-listen
-  recovery. Hiding alone is insufficient because a hidden playing video may decode.
-- Chromium rejects a pending `video.play()` promise when an intentional pause wins the
-  race. Playback requests are generation-tagged so that expected rejection cannot
-  collapse the orb or prevent post-compute recovery.
-- Do not add `autoplay`/`loop`, reintroduce an always-on canvas/rAF loop, or remove the
-  compute pause/hide path without target-hardware stress testing. The build packages
-  only the runtime WebM and compact poster; the larger source GIF stays out of installers.
+- The rAF loop is FPS-capped per quality tier (low 24 / medium 30 / high 60 active;
+  12 / 20 / 30 once settled at idle/listening) and particle count and backing-store
+  DPR scale with the tier. Dots are batched into six alpha-bucket paths per frame,
+  measured at ~1.3–2 ms/frame at 2000 dots.
+- `beginSttCompute()` cancels the loop **and** hides the canvas during Vulkan
+  compute; `endSttCompute()` resumes, with a 6 s failsafe and next-listen recovery.
+- The loop stops entirely while `document.hidden` (closed to tray) and, under
+  `prefers-reduced-motion`, once settled at idle (rotation is also dropped).
+- Never put a CSS `filter`/`drop-shadow` on `#orb-canvas`: it re-rasterises on the
+  GPU every frame. The glow is a static radial gradient on `.orb-slot::before`.
+- `smoke:orb` drives the real adapter with a fake canvas/rAF/clock and asserts the
+  caps, hidden stop, compute freeze/failsafe, and state motion as behavior. Don't
+  add `setInterval` or an uncapped loop.
 
 ## Audio pipeline
 

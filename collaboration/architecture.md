@@ -52,7 +52,7 @@ The orb's state machine (`idle → listening → processing → speaking`) is dr
 | File | Owns |
 |------|------|
 | `app.js` | The orchestrator (~2.3k lines): mic capture, VAD, utterance lifecycle, barge-in, TTS streaming/playback, orb state, sessions sidebar + overflow menu, settings, onboarding, screen share, token meter. |
-| `orb.js` | State adapter for the user-supplied particle animation: a seekable transparent video plays expansion/ripples only while processing, holds an RMS-reactive frame while speaking, consolidates afterward, and pauses/hides during Vulkan STT without a custom graphics loop. |
+| `orb.js` | Procedural particle orb: a Fibonacci-sphere of dots on a 2D canvas. Idle/listening stay compact; processing bursts into a rippling shell; speaking opens the shell and the TTS RMS level pushes rings through it; leaving either consolidates back. The rAF loop is FPS-capped per quality tier, stops while hidden, and stops/hides during Vulkan STT. `npm run preview:orb` renders a state timeline in headless Chromium. |
 | `audio-utils.js` | Pure helpers: 16 kHz downsample, float→int16, RMS, `VadEndpointer`, `sanitizeForSpeech`. Loadable in Node → unit-tested. |
 | `mic-worklet.js` | The AudioWorklet that emits mic frames. |
 | `perf.js` | Renderer-side latency marks mirrored to main. |
