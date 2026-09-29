@@ -37,23 +37,15 @@ export interface LatencyTestResult {
   firstAudioMs?: number; // end of speech -> first audio chunk (what you feel)
 }
 
-// Mirrors the renderer's first-chunk rule (app.js nextTtsCut, isFirst): speak at
-// the first clause/sentence boundary once there are >= 18 chars, else wait for
-// up to 90 chars and cut at a word boundary.
-const FIRST_MIN = 18;
-const FIRST_MAX = 90;
-export function firstSpeakable(buf: string): string | null {
-  const re = /[,;:—–]\s|[.!?](\s|$)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(buf)) !== null) {
-    const idx = re.lastIndex;
-    if (idx >= FIRST_MIN) return buf.slice(0, idx).trim();
-  }
-  if (buf.length >= FIRST_MAX) {
-    const sp = buf.lastIndexOf(' ', FIRST_MAX);
-    if (sp >= FIRST_MIN) return buf.slice(0, sp).trim();
-  }
-  return null;
+// The renderer helper is also a CommonJS module, copied into dist/renderer.
+// Use the actual playback rule rather than a diagnostic approximation.
+const speechChunks = require('../renderer/audio-utils.js') as {
+  nextTtsCut(buf: string, isFirst: boolean, elapsedMs?: number): number;
+  TTS_FIRST_WAIT_MS: number;
+};
+export function firstSpeakable(buf: string, elapsedMs = 0): string | null {
+  const cut = speechChunks.nextTtsCut(buf, true, elapsedMs);
+  return cut > 0 ? buf.slice(0, cut).trim() : null;
 }
 
 /** Linear-resample s16le mono PCM to 16 kHz. */
@@ -85,6 +77,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
 
 export async function runLatencyTest(deps: LatencyTestDeps, id: string): Promise<LatencyTestResult> {
   const controller = new AbortController();
+  let phraseTimer: NodeJS.Timeout | undefined;
   try {
     // 1. Make the test "speech" with the voice itself.
     const speech = await withTimeout(deps.synthesize(TEST_PHRASE, `${id}:speech`), 30_000, 'Preparing the test audio');
@@ -105,11 +98,24 @@ export async function runLatencyTest(deps: LatencyTestDeps, id: string): Promise
     const signal = controller.signal;
     let resolvePhrase: () => void = () => {};
     const phraseReady = new Promise<void>((r) => { resolvePhrase = r; });
+    let firstTokenAt: number | undefined;
+    const selectPhrase = (elapsedFloor = 0) => {
+      if (phrase || signal.aborted) return;
+      const elapsed = firstTokenAt === undefined ? 0 : deps.now() - firstTokenAt;
+      const p = firstSpeakable(buf, Math.max(elapsed, elapsedFloor));
+      if (p) {
+        phrase = p; tPhrase = deps.now();
+        clearTimeout(phraseTimer); resolvePhrase();
+      }
+    };
     const chatP = deps.chat(transcript, (tok) => {
       if (phrase) return;
       buf += tok;
-      const p = firstSpeakable(buf);
-      if (p) { phrase = p; tPhrase = deps.now(); resolvePhrase(); }
+      if (firstTokenAt === undefined && tok) {
+        firstTokenAt = deps.now();
+        phraseTimer = setTimeout(() => selectPhrase(speechChunks.TTS_FIRST_WAIT_MS), speechChunks.TTS_FIRST_WAIT_MS);
+      }
+      selectPhrase();
     }, signal);
     chatP.catch(() => {}); // observed below; avoid an unhandled rejection meanwhile
     // Like the real app, start speaking as soon as the first phrase is ready —
@@ -138,6 +144,7 @@ export async function runLatencyTest(deps: LatencyTestDeps, id: string): Promise
   } catch (e) {
     return { ok: false, error: (e as Error).message || String(e) };
   } finally {
+    clearTimeout(phraseTimer);
     controller.abort();
   }
 }

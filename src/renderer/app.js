@@ -1645,6 +1645,8 @@ function flushStream() {
 // as long as stopPlayback() isn't called between them).
 let ttsStreamBuf = '';       // text accumulated from tokens, not yet spoken
 let ttsTurnSpeaking = false;  // have we begun speaking the current response?
+let ttsFirstTokenAt = null;
+let ttsDeadlineTimer = null;
 // Chunking rules (sentence / clause / phrase boundaries, first-chunk eagerness,
 // caps) live in audio-utils.js as AriaAudio.nextTtsCut so smoke-audio tests the
 // shipped tuning. Chunk #1 is eager because time-to-first-audio is the biggest
@@ -1654,6 +1656,7 @@ const nextTtsCut = window.AriaAudio.nextTtsCut;
 function speakChunk(text) {
   if (!text) return;
   if (!ttsTurnSpeaking) {
+    clearTimeout(ttsDeadlineTimer); ttsDeadlineTimer = null;
     if (fillerSpeaking) {
       // A "hold on" filler is mid-flight — let the reply queue serially behind it
       // (gapless, via the sidecar synth queue) instead of cutting it off mid-word.
@@ -1675,10 +1678,20 @@ function speakChunk(text) {
 // Pull every ready chunk out of the buffer and speak it; keep the trailing
 // partial until more tokens (or onDone) complete it. Only the very first chunk
 // of a turn is eager (isFirst flips false once speakChunk sets ttsTurnSpeaking).
-function feedTtsStream(token) {
+function feedTtsStream(token, elapsedFloor) {
   ttsStreamBuf += token;
+  if (ttsFirstTokenAt === null && token) {
+    ttsFirstTokenAt = performance.now();
+    // One timer per reply, not per token. resetTtsStream cancels it on barge-in
+    // and errors; done cancels it before flushing the final partial.
+    ttsDeadlineTimer = setTimeout(() => {
+      ttsDeadlineTimer = null;
+      feedTtsStream('', window.AriaAudio.TTS_FIRST_WAIT_MS);
+    }, window.AriaAudio.TTS_FIRST_WAIT_MS);
+  }
   for (;;) {
-    const cut = nextTtsCut(ttsStreamBuf, !ttsTurnSpeaking);
+    const elapsed = ttsFirstTokenAt === null ? 0 : performance.now() - ttsFirstTokenAt;
+    const cut = nextTtsCut(ttsStreamBuf, !ttsTurnSpeaking, Math.max(elapsed, elapsedFloor || 0));
     if (cut <= 0) break;
     const ready = ttsStreamBuf.slice(0, cut).trim();
     ttsStreamBuf = ttsStreamBuf.slice(cut);
@@ -1686,7 +1699,11 @@ function feedTtsStream(token) {
   }
 }
 
-function resetTtsStream() { ttsStreamBuf = ''; ttsTurnSpeaking = false; }
+function resetTtsStream() {
+  clearTimeout(ttsDeadlineTimer); ttsDeadlineTimer = null;
+  ttsFirstTokenAt = null;
+  ttsStreamBuf = ''; ttsTurnSpeaking = false;
+}
 
 // A tool the harness invoked — show it above the reply as it happens.
 aria.llm.onTool((info) => {
@@ -1728,6 +1745,7 @@ aria.llm.onDone((info) => {
   pendingRoute = null;
   // Speak the final partial sentence. If nothing was streamed (non-streaming
   // reply), speak the whole text — orbState('speaking') is set inside speakChunk.
+  clearTimeout(ttsDeadlineTimer); ttsDeadlineTimer = null;
   const rest = ttsStreamBuf.trim();
   ttsStreamBuf = '';
   if (rest) speakChunk(rest);

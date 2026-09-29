@@ -1,0 +1,541 @@
+{
+  "method": {
+    "host": "Intel i5-7260U, 2 cores / 4 threads, Linux CPU",
+    "engine": "Piper en_GB-alan-medium",
+    "stt": "local whisper.cpp base.en, CPU",
+    "sse": "local deterministic fixture, one word every 70 ms",
+    "order": [
+      "baseline",
+      "optimized",
+      "optimized",
+      "baseline"
+    ],
+    "metric": "first PCM, not physical speaker onset",
+    "voiceClock": "STT transcribe request -> first reply PCM; excludes microphone/VAD silence and external-provider latency",
+    "baseline": "HEAD renderer/chunker policy, current shared diagnostic instrumentation",
+    "limits": [
+      "Narrow synthetic English speech and long punctuation-free opening; not general human/noise accuracy or live cloud latency.",
+      "STT and synthesis timings vary with host load; whole-pipeline delta is not entirely attributable to the chunker."
+    ]
+  },
+  "measurements": {
+    "baseline": {
+      "textSamples": [
+        {
+          "tokenMs": 139.5,
+          "replyId": "text-munarege-1:2",
+          "audioMs": 2607.2999999970198,
+          "doneMs": 2633.6000000089407,
+          "replyDoneMs": 4629.4000000059605
+        },
+        {
+          "tokenMs": 84.3999999910593,
+          "replyId": "text-munarif1-2:4",
+          "audioMs": 1687.0999999940395,
+          "doneMs": 2548.0999999940395,
+          "replyDoneMs": 5512.29999999702
+        },
+        {
+          "tokenMs": 128,
+          "replyId": "text-munarn41-3:6",
+          "audioMs": 1839.7999999970198,
+          "doneMs": 2563.2999999970198,
+          "replyDoneMs": 5393.399999991059
+        },
+        {
+          "tokenMs": 112.3999999910593,
+          "replyId": "text-munarro7-4:8",
+          "audioMs": 1969,
+          "doneMs": 2621.0999999940395,
+          "replyDoneMs": 5225.29999999702
+        },
+        {
+          "tokenMs": 81,
+          "replyId": "text-munarw3h-5:10",
+          "audioMs": 1756.7999999970198,
+          "doneMs": 2556.7999999970198,
+          "replyDoneMs": 4853.399999991059
+        },
+        {
+          "tokenMs": 310.5,
+          "replyId": "text-munawhjz-1:2",
+          "doneMs": 2766.2999999970198,
+          "audioMs": 3085.2000000029802,
+          "replyDoneMs": 7161.5999999940395
+        },
+        {
+          "tokenMs": 96.30000001192093,
+          "replyId": "text-munawnh8-2:4",
+          "audioMs": 2524.7000000029802,
+          "doneMs": 2568.7000000029802,
+          "replyDoneMs": 6145
+        },
+        {
+          "tokenMs": 100.29999999701977,
+          "replyId": "text-munawsmq-3:6",
+          "audioMs": 2369.3999999910593,
+          "doneMs": 2582.3999999910593,
+          "replyDoneMs": 6646.29999999702
+        },
+        {
+          "tokenMs": 117.20000000298023,
+          "replyId": "text-munawy6t-4:8",
+          "audioMs": 1933.2000000029802,
+          "doneMs": 2574.2000000029802,
+          "replyDoneMs": 5497.79999999702
+        },
+        {
+          "tokenMs": 91,
+          "replyId": "text-munax2tr-5:10",
+          "audioMs": 2328.7999999970198,
+          "doneMs": 2566.8999999910593,
+          "replyDoneMs": 8545.29999999702
+        }
+      ],
+      "voiceSamples": [
+        {
+          "voiceTrial": 1,
+          "ok": true,
+          "transcript": "Hello area, please greet me in one short sentence.",
+          "reply": "A healthy daily routine provides lasting benefits such as better sleep improved concentration greater energy stronger relationships increased confidence reduced stress balanced nutrition regular exercise restful evenings consistent progress renewed motivation and sustainable personal growth.",
+          "target": "LLM",
+          "sttMs": 1491,
+          "llmMs": 924,
+          "ttsMs": 1181,
+          "firstAudioMs": 3596
+        },
+        {
+          "voiceTrial": 2,
+          "ok": true,
+          "transcript": "Hello area, please greet me in one short sentence.",
+          "reply": "A healthy daily routine provides lasting benefits such as better sleep improved concentration greater energy stronger relationships increased confidence reduced stress balanced nutrition regular exercise restful evenings consistent progress renewed motivation and sustainable personal growth.",
+          "target": "LLM",
+          "sttMs": 1546,
+          "llmMs": 914,
+          "ttsMs": 1276,
+          "firstAudioMs": 3736
+        },
+        {
+          "voiceTrial": 3,
+          "ok": true,
+          "transcript": "Hello area, please greet me in one short sentence.",
+          "reply": "A healthy daily routine provides lasting benefits such as better sleep improved concentration greater energy stronger relationships increased confidence reduced stress balanced nutrition regular exercise restful evenings consistent progress renewed motivation and sustainable personal growth.",
+          "target": "LLM",
+          "sttMs": 1535,
+          "llmMs": 915,
+          "ttsMs": 540,
+          "firstAudioMs": 2991
+        },
+        {
+          "voiceTrial": 1,
+          "ok": true,
+          "transcript": "Hello area, please greet me in one short sentence.",
+          "reply": "A healthy daily routine provides lasting benefits such as better sleep improved concentration greater energy stronger relationships increased confidence reduced stress balanced nutrition regular exercise restful evenings consistent progress renewed motivation and sustainable personal growth.",
+          "target": "LLM",
+          "sttMs": 3188,
+          "llmMs": 916,
+          "ttsMs": 866,
+          "firstAudioMs": 4970
+        },
+        {
+          "voiceTrial": 2,
+          "ok": true,
+          "transcript": "Hello area, please greet me in one short sentence.",
+          "reply": "A healthy daily routine provides lasting benefits such as better sleep improved concentration greater energy stronger relationships increased confidence reduced stress balanced nutrition regular exercise restful evenings consistent progress renewed motivation and sustainable personal growth.",
+          "target": "LLM",
+          "sttMs": 2072,
+          "llmMs": 924,
+          "ttsMs": 1525,
+          "firstAudioMs": 4520
+        },
+        {
+          "voiceTrial": 3,
+          "ok": true,
+          "transcript": "Hello area, please greet me in one short sentence.",
+          "reply": "A healthy daily routine provides lasting benefits such as better sleep improved concentration greater energy stronger relationships increased confidence reduced stress balanced nutrition regular exercise restful evenings consistent progress renewed motivation and sustainable personal growth.",
+          "target": "LLM",
+          "sttMs": 2093,
+          "llmMs": 920,
+          "ttsMs": 1661,
+          "firstAudioMs": 4674
+        }
+      ],
+      "medianTextFirstPcmMs": 2148.89999999851,
+      "medianVoiceFirstPcmMs": 4128.0
+    },
+    "optimized": {
+      "textSamples": [
+        {
+          "tokenMs": 153.29999999701977,
+          "replyId": "text-munasoy9-1:2",
+          "audioMs": 824.3999999910593,
+          "doneMs": 2604.0999999940395,
+          "replyDoneMs": 5449.0999999940395
+        },
+        {
+          "tokenMs": 97.80000001192093,
+          "replyId": "text-munastjt-2:4",
+          "audioMs": 859.2000000029802,
+          "doneMs": 2557.9000000059605,
+          "replyDoneMs": 4944.20000000298
+        },
+        {
+          "tokenMs": 113.29999999701977,
+          "replyId": "text-munasxrq-3:6",
+          "audioMs": 758.1999999880791,
+          "doneMs": 2571.199999988079,
+          "replyDoneMs": 4848.899999991059
+        },
+        {
+          "tokenMs": 105.40000000596046,
+          "replyId": "text-munat1wq-4:8",
+          "audioMs": 1013.7999999970198,
+          "doneMs": 2562.2000000029802,
+          "replyDoneMs": 5655.79999999702
+        },
+        {
+          "tokenMs": 117.70000000298023,
+          "replyId": "text-munat6of-5:10",
+          "audioMs": 991.2000000029802,
+          "doneMs": 2566.5,
+          "replyDoneMs": 6219.5
+        },
+        {
+          "tokenMs": 231.69999998807907,
+          "replyId": "text-munav0yv-1:2",
+          "audioMs": 918.8999999910593,
+          "doneMs": 2668.199999988079,
+          "replyDoneMs": 4968.899999991059
+        },
+        {
+          "tokenMs": 108.70000000298023,
+          "replyId": "text-munav575-2:4",
+          "audioMs": 1045.7999999970198,
+          "doneMs": 2570.2000000029802,
+          "replyDoneMs": 4565.100000008941
+        },
+        {
+          "tokenMs": 83.20000000298023,
+          "replyId": "text-munav944-3:6",
+          "audioMs": 758.3000000119209,
+          "doneMs": 2561.6000000089407,
+          "replyDoneMs": 4663.600000008941
+        },
+        {
+          "tokenMs": 83.09999999403954,
+          "replyId": "text-munavd41-4:8",
+          "audioMs": 809.5,
+          "doneMs": 2548.7999999970198,
+          "replyDoneMs": 7207.20000000298
+        },
+        {
+          "tokenMs": 78.8999999910593,
+          "replyId": "text-munavj2h-5:10",
+          "audioMs": 1491.8999999910593,
+          "doneMs": 2576.2000000029802,
+          "replyDoneMs": 7285.70000000298
+        }
+      ],
+      "voiceSamples": [
+        {
+          "voiceTrial": 1,
+          "ok": true,
+          "transcript": "Hello area, please greet me in one short sentence.",
+          "reply": "A healthy daily routine provides lasting benefits such as better sleep improved concentration greater energy stronger relationships increased confidence reduced stress balanced nutrition regular exercise restful evenings consistent progress renewed motivation and sustainable personal growth.",
+          "target": "LLM",
+          "sttMs": 1259,
+          "llmMs": 423,
+          "ttsMs": 465,
+          "firstAudioMs": 2147
+        },
+        {
+          "voiceTrial": 2,
+          "ok": true,
+          "transcript": "Hello area, please greet me in one short sentence.",
+          "reply": "A healthy daily routine provides lasting benefits such as better sleep improved concentration greater energy stronger relationships increased confidence reduced stress balanced nutrition regular exercise restful evenings consistent progress renewed motivation and sustainable personal growth.",
+          "target": "LLM",
+          "sttMs": 1229,
+          "llmMs": 422,
+          "ttsMs": 255,
+          "firstAudioMs": 1907
+        },
+        {
+          "voiceTrial": 3,
+          "ok": true,
+          "transcript": "Hello area, please greet me in one short sentence.",
+          "reply": "A healthy daily routine provides lasting benefits such as better sleep improved concentration greater energy stronger relationships increased confidence reduced stress balanced nutrition regular exercise restful evenings consistent progress renewed motivation and sustainable personal growth.",
+          "target": "LLM",
+          "sttMs": 1288,
+          "llmMs": 421,
+          "ttsMs": 234,
+          "firstAudioMs": 1943
+        },
+        {
+          "voiceTrial": 1,
+          "ok": true,
+          "transcript": "Hello area, please greet me in one short sentence.",
+          "reply": "A healthy daily routine provides lasting benefits such as better sleep improved concentration greater energy stronger relationships increased confidence reduced stress balanced nutrition regular exercise restful evenings consistent progress renewed motivation and sustainable personal growth.",
+          "target": "LLM",
+          "sttMs": 1758,
+          "llmMs": 428,
+          "ttsMs": 520,
+          "firstAudioMs": 2706
+        },
+        {
+          "voiceTrial": 2,
+          "ok": true,
+          "transcript": "Hello area, please greet me in one short sentence.",
+          "reply": "A healthy daily routine provides lasting benefits such as better sleep improved concentration greater energy stronger relationships increased confidence reduced stress balanced nutrition regular exercise restful evenings consistent progress renewed motivation and sustainable personal growth.",
+          "target": "LLM",
+          "sttMs": 1878,
+          "llmMs": 442,
+          "ttsMs": 705,
+          "firstAudioMs": 3025
+        },
+        {
+          "voiceTrial": 3,
+          "ok": true,
+          "transcript": "Hello area, please greet me in one short sentence.",
+          "reply": "A healthy daily routine provides lasting benefits such as better sleep improved concentration greater energy stronger relationships increased confidence reduced stress balanced nutrition regular exercise restful evenings consistent progress renewed motivation and sustainable personal growth.",
+          "target": "LLM",
+          "sttMs": 2264,
+          "llmMs": 434,
+          "ttsMs": 1153,
+          "firstAudioMs": 3851
+        }
+      ],
+      "medianTextFirstPcmMs": 889.0499999970198,
+      "medianVoiceFirstPcmMs": 2426.5
+    }
+  },
+  "verification": {
+    "smokeGroups": 62,
+    "passed": 61,
+    "failed": {
+      "smoke:e2e": "existing CPU local STT+TTS budget: median 1263 ms vs unchanged 900 ms"
+    },
+    "boot": "passed"
+  },
+  "exploratory": {
+    "threads": [
+      {
+        "stage": "tts",
+        "engine": "piper",
+        "threads": 0,
+        "ms": [
+          299.2,
+          526.9,
+          583.4,
+          270.2,
+          281.0,
+          576.6,
+          289.5
+        ],
+        "median": 299.2
+      },
+      {
+        "stage": "tts",
+        "engine": "piper",
+        "threads": 1,
+        "ms": [
+          295.4,
+          302.1,
+          330.4,
+          348.5,
+          347.8,
+          340.0,
+          360.7
+        ],
+        "median": 340.0
+      },
+      {
+        "stage": "tts",
+        "engine": "piper",
+        "threads": 2,
+        "ms": [
+          252.4,
+          238.7,
+          242.0,
+          244.6,
+          240.6,
+          273.4,
+          234.9
+        ],
+        "median": 242.0
+      },
+      {
+        "stage": "tts",
+        "engine": "piper",
+        "threads": 4,
+        "ms": [
+          237.8,
+          229.6,
+          241.7,
+          247.8,
+          226.1,
+          237.3,
+          250.4
+        ],
+        "median": 237.8
+      },
+      {
+        "stage": "tts",
+        "engine": "kokoro",
+        "threads": 0,
+        "ms": [
+          2545.9,
+          2876.9,
+          2365.1,
+          2938.5,
+          2662.5,
+          3513.7,
+          2490.8
+        ],
+        "median": 2662.5
+      },
+      {
+        "stage": "tts",
+        "engine": "kokoro",
+        "threads": 1,
+        "ms": [
+          3341.4,
+          3534.7,
+          3208.6,
+          3737.5,
+          3612.9,
+          3134.8,
+          3520.1
+        ],
+        "median": 3520.1
+      },
+      {
+        "stage": "tts",
+        "engine": "kokoro",
+        "threads": 2,
+        "ms": [
+          3083.2,
+          3159.7,
+          4620.1,
+          2604.8,
+          2939.2,
+          2529.1,
+          3226.8
+        ],
+        "median": 3083.2
+      },
+      {
+        "stage": "tts",
+        "engine": "kokoro",
+        "threads": 4,
+        "ms": [
+          2548.4,
+          2649.0,
+          2955.3,
+          2842.1,
+          2966.4,
+          2341.1,
+          3127.1
+        ],
+        "median": 2842.1
+      },
+      {
+        "stage": "stt",
+        "threads": 0,
+        "ms": [
+          602.9,
+          608.0,
+          631.5,
+          683.8,
+          971.4,
+          1227.4,
+          813.2
+        ],
+        "median": 683.8,
+        "texts": [
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5"
+        ]
+      },
+      {
+        "stage": "stt",
+        "threads": 1,
+        "ms": [
+          873.2,
+          936.7,
+          1033.1,
+          1267.3,
+          1003.1,
+          1094.2,
+          1110.2
+        ],
+        "median": 1033.1,
+        "texts": [
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5"
+        ]
+      },
+      {
+        "stage": "stt",
+        "threads": 2,
+        "ms": [
+          673.4,
+          849.1,
+          758.3,
+          865.1,
+          1160.9,
+          792.2,
+          787.0
+        ],
+        "median": 792.2,
+        "texts": [
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5"
+        ]
+      },
+      {
+        "stage": "stt",
+        "threads": 4,
+        "ms": [
+          705.7,
+          598.6,
+          634.5,
+          664.5,
+          686.6,
+          708.1,
+          918.9
+        ],
+        "median": 686.6,
+        "texts": [
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5",
+          "testing 1 2 3 4 5"
+        ]
+      }
+    ],
+    "flashAttention": {
+      "baselineMedianMs": 806.5,
+      "enabledMedianMs": 1056.55,
+      "verdict": "not adopted: slower CPU transcription"
+    },
+    "threadVerdict": "not adopted: no consistent cross-engine gain; retain runtime defaults and quality choices"
+  }
+}

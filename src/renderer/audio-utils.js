@@ -403,6 +403,7 @@
   // "The weather in Longmont today is mostly sunny" while "with a high of…"
   // is still streaming removes the whole-sentence synth wait (BACKLOG P-TTFA).
   const TTS_PHRASE_BREAK = /\s(?=(?:with|and|but|which|because|while|so|including|although|though|for|from|until|unless|whereas)\s)/gi;
+  const TTS_FIRST_WAIT_MS = 250;    // budget after the first streamed token
   const TTS_FIRST_MIN = 18;          // don't speak a fragment shorter than this
   const TTS_FIRST_MAX = 90;          // ...but don't wait past this for chunk #1
   const TTS_LATER_MAX = 220;         // hard cap for subsequent chunks
@@ -410,7 +411,7 @@
 
   // Where to cut the next speakable chunk out of `buf`, or -1 to keep buffering.
   // `isFirst` makes chunk #1 eager so audio starts within a beat.
-  function nextTtsCut(buf, isFirst) {
+  function nextTtsCut(buf, isFirst, elapsedMs) {
     TTS_SENTENCE_END.lastIndex = 0;
     const sm = TTS_SENTENCE_END.exec(buf);
     const sentenceEnd = sm ? TTS_SENTENCE_END.lastIndex : -1;
@@ -428,6 +429,18 @@
         const idx = m.index;
         if (idx < TTS_FIRST_MIN) continue;
         if (buf.slice(0, idx).trim().split(/\s+/).length >= TTS_PHRASE_MIN_WORDS) return idx + 1;
+      }
+      // A slow/stalled stream need not reach 90 characters before speech starts.
+      // Only the first chunk uses this deadline; keep >=6 complete words and
+      // leave open endings ("and", "the", etc.) attached to the next chunk.
+      if (elapsedMs >= TTS_FIRST_WAIT_MS) {
+        const words = [...buf.matchAll(/\S+\s+/g)];
+        for (let i = words.length - 1; i >= TTS_PHRASE_MIN_WORDS - 1; i--) {
+          const word = words[i][0].trim().toLowerCase().replace(/[^a-z0-9']/g, '');
+          if (!word || OPEN_ENDINGS.has(word)) continue;
+          const end = words[i].index + words[i][0].length;
+          if (end >= TTS_FIRST_MIN) return end;
+        }
       }
       if (buf.length >= TTS_FIRST_MAX) {
         const sp = buf.lastIndexOf(' ', TTS_FIRST_MAX);
@@ -507,7 +520,7 @@
   }
 
   const api = {
-    nextTtsCut, EchoAwareBargeDetector,
+    nextTtsCut, TTS_FIRST_WAIT_MS, EchoAwareBargeDetector,
     SPECULATIVE_ENDPOINT_OPTS, looksComplete,
     TARGET_RATE, HANDSFREE_ENDPOINT_OPTS, downsampleTo16k, floatToInt16, micFrameToPcm16k, rms, VadEndpointer,
     SttDiscardGate, sanitizeForSpeech, collapseRepeats,
