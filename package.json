@@ -78,7 +78,8 @@
     "smoke:turn-classifier": "npm run build && node scripts/smoke-turn-classifier.js",
     "routing:classifier-check": "npm run build && ARIA_VERIFY_CLASSIFIER=1 electron --no-sandbox --ozone-platform-hint=auto dist/main/index.js",
     "smoke:classifier-check": "npm run build && node scripts/smoke-classifier-check.js",
-    "smoke:orb-truth": "node scripts/smoke-orb-truth.js"
+    "smoke:orb-truth": "node scripts/smoke-orb-truth.js",
+    "smoke:ux-live": "npm run build && node scripts/smoke-ux-live.js"
   },
   "author": "ARIA Project <aria@localhost>",
   "license": "MIT",

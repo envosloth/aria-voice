@@ -192,7 +192,7 @@ check('sidebar.statusWords',
   /statusText\.textContent/.test(app),
   'sidecar status text must be updated');
 check('banner.warnLevel',
-  /function showError\(msg, level\)/.test(app) && /error-banner\.warn|\.error-banner\.warn/.test(html) && !/Security warning: secret storage/.test(app),
+  /function showError\(msg, level(, action)?\)/.test(app) && /error-banner\.warn|\.error-banner\.warn/.test(html) && !/Security warning: secret storage/.test(app),
   'non-fatal notices must not look like failures and must use plain wording');
 check('composer.placeholder',
   /placeholder="Type a message, or hold the mic to talk"/.test(html),
@@ -201,6 +201,18 @@ check('header.singleBadge',
   /\.chat-head \.state-badge \{ display: none/.test(html),
   'the state must not be shown twice on wide layouts');
 
+check('errors.plainEnglishWithFix',
+  /function friendlyError\(raw\)/.test(app) && /function setErrorAction\(action\)/.test(app) &&
+  /errorText\.title = /.test(app),
+  'failures must read as one plain sentence with at most one fix button, raw text kept as a tooltip');
+check('messages.actions',
+  /function attachMessageActions\(div, role\)/.test(app) && /attachMessageActions\(div, role\);/.test(app) &&
+  /'Copy message'/.test(app) && /'Edit and resend'/.test(app) && /'Regenerate answer'/.test(app),
+  'each message needs copy, edit (user) and retry/regenerate actions');
+check('motion.reducedMotionGlobal',
+  /prefers-reduced-motion: reduce/.test(fs.readFileSync(path.join(root, 'src', 'renderer', 'ux.css'), 'utf8')) &&
+  /'ux\.css'/.test(fs.readFileSync(path.join(root, 'scripts', 'copy-renderer.js'), 'utf8')),
+  'CSS animations must honour the OS reduced-motion setting and the stylesheet must ship');
 check('sidecar.snapshotReplay',
   /SIDECAR_SNAPSHOT/.test(fs.readFileSync(path.join(root, 'src', 'main', 'index.ts'), 'utf8')) &&
   /aria\.sidecar\.snapshot\(\)/.test(app) && /snapshot: \(\)/.test(fs.readFileSync(path.join(root, 'src', 'preload', 'index.ts'), 'utf8')),

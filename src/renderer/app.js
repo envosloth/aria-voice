@@ -280,6 +280,7 @@ function addMessage(role, text) {
   // text checks). HH:MM in the user's locale.
   div.dataset.time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   conversationEl.appendChild(div);
+  attachMessageActions(div, role);
   while (conversationEl.childElementCount > MAX_MESSAGES) conversationEl.removeChild(conversationEl.firstChild);
   scrollIfPinned(pinned);
   return div;
@@ -293,9 +294,15 @@ function clearError() {
   errorBanner.classList.remove('visible', 'warn');
   if (errorText) errorText.textContent = '';
 }
+  if (typeof setErrorAction === 'function') setErrorAction(null);
 
-function showError(msg, level) {
-  if (errorText) errorText.textContent = msg;
+function showError(msg, level, action) {
+  const friendly = action === undefined ? friendlyError(msg) : { text: msg, action };
+  if (errorText) {
+    errorText.textContent = friendly.text;
+    errorText.title = friendly.text === msg ? '' : 'Details: ' + msg; // raw text stays reachable
+  }
+  setErrorAction(friendly.action);
   errorBanner.classList.toggle('warn', level === 'warn');
   errorBanner.setAttribute('role', level === 'warn' ? 'status' : 'alert');
   errorBanner.classList.add('visible');
@@ -303,6 +310,136 @@ function showError(msg, level) {
 if (errorDismiss) errorDismiss.addEventListener('click', clearError);
 
 function setAppShellInert(inert) {
+// ---- UX layer: plain-English errors, one fix button, message actions -------
+(function loadUxStyles() {
+  if (document.querySelector('link[data-ux]')) return;
+  const link = document.createElement('link');
+  link.rel = 'stylesheet'; link.href = 'ux.css'; link.dataset.ux = '1';
+  document.head.appendChild(link);
+})();
+
+let lastUserText = '';
+let errorActionBtn = null;
+function setErrorAction(action) {
+  if (!errorActionBtn && errorBanner) {
+    errorActionBtn = document.createElement('button');
+    errorActionBtn.type = 'button';
+    errorActionBtn.className = 'error-action';
+    errorBanner.insertBefore(errorActionBtn, errorDismiss || null);
+  }
+  if (!errorActionBtn) return;
+  errorActionBtn.hidden = !action;
+  errorActionBtn.onclick = null;
+  if (!action) return;
+  errorActionBtn.textContent = action.label;
+  errorActionBtn.onclick = () => { clearError(); try { action.run(); } catch (e) {} };
+}
+
+function openSettingsTab(tab) {
+  try { openSettings(null); } catch (e) { return; }
+  const item = document.querySelector(`#settings-nav .snav-item[data-tab="${tab}"]`);
+  if (item) item.click();
+}
+function retryLastMessage() { if (lastUserText) submitUserMessage(lastUserText); }
+
+const SIDECAR_NAMES = { stt: 'Speech recognition', tts: 'The voice', wakeword: 'The wake word' };
+// Map a raw failure to one plain sentence plus (at most) one fix. Unknown text
+// passes through unchanged; the raw message is always kept as the tooltip.
+function friendlyError(raw) {
+  const msg = String(raw || '');
+  const settings = { label: 'Open settings', run: () => openSettingsTab('connections') };
+  const retry = { label: 'Try again', run: retryLastMessage };
+  let m;
+  if (/No LLM or agent harness configured/i.test(msg)) {
+    return { text: 'ARIA is not connected to an AI yet.', action: { label: 'Connect', run: () => openSettingsTab('connections') } };
+  }
+  if ((m = msg.match(/Can't reach your (agent harness|LLM) at (\S+)/i))) {
+    const who = /harness/i.test(m[1]) ? 'your agent' : 'your AI service';
+    return { text: `Can't reach ${who} at ${m[2]}. Is it running?`, action: lastUserText ? retry : settings };
+  }
+  if (/rejected the API key|\b40[13]\b/.test(msg)) {
+    return { text: 'Your AI service rejected the API key.', action: { label: 'Fix key', run: () => openSettingsTab('connections') } };
+  }
+  if (/Can't decrypt/i.test(msg)) {
+    return { text: 'ARIA could not unlock your saved API key. Unlock your keyring, or re-enter the key.', action: settings };
+  }
+  if (/\b(429|rate.?limit)/i.test(msg)) {
+    return { text: 'Your AI service is rate-limiting requests. Wait a moment, then try again.', action: lastUserText ? retry : null };
+  }
+  if (/timed out|timeout/i.test(msg) && /LLM|harness|agent/i.test(msg)) {
+    return { text: 'Your AI took too long to answer.', action: lastUserText ? retry : null };
+  }
+  if (/\b5\d\d\b/.test(msg) && /LLM|harness|agent/i.test(msg)) {
+    return { text: 'Your AI service had a server error.', action: lastUserText ? retry : null };
+  }
+  if (/^LLM error:/i.test(msg)) {
+    return { text: 'Something went wrong getting an answer. Typing and voice still work.', action: lastUserText ? retry : null };
+  }
+  if ((m = msg.match(/^(stt|tts|wakeword): ?(.*)$/i))) {
+    const who = SIDECAR_NAMES[m[1].toLowerCase()];
+    if (/circuit/i.test(m[2])) return { text: `${who} kept crashing, so ARIA paused it. Restart ARIA to try again.`, action: null };
+    return { text: `${who} stopped unexpectedly. ARIA is restarting it; typing still works.`, action: null };
+  }
+  if (/^Microphone unavailable/i.test(msg)) {
+    return { text: "ARIA can't use your microphone. Check it's connected and allowed, then try again. Typing still works.",
+      action: { label: 'Voice settings', run: () => openSettingsTab('voice') } };
+  }
+  if (/^Speech recognition unavailable/i.test(msg)) {
+    return { text: "Speech recognition didn't start. Typing still works.", action: { label: 'Voice settings', run: () => openSettingsTab('voice') } };
+  }
+  if (/^Internal error/i.test(msg)) return { text: 'Something went wrong inside ARIA. It is still running.', action: null };
+  return { text: msg, action: null };
+}
+
+// Visible text of a message, excluding the route badge, tool chips and actions.
+function messageText(el) {
+  let out = '';
+  for (const n of el.childNodes) if (n.nodeType === 3) out += n.nodeValue;
+  return out.trim();
+}
+function previousUserText(el) {
+  for (let n = el.previousElementSibling; n; n = n.previousElementSibling) {
+    if (n.classList && n.classList.contains('user')) return messageText(n);
+  }
+  return '';
+}
+// Buttons carry no text content (icons are CSS), so streaming/onDone checks on
+// message.textContent are unaffected.
+function attachMessageActions(div, role) {
+  if (role !== 'user' && role !== 'assistant') return;
+  const bar = document.createElement('div');
+  bar.className = 'msg-actions';
+  const mk = (act, label, fn) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'msg-action'; b.dataset.act = act;
+    b.setAttribute('aria-label', label); b.title = label;
+    b.addEventListener('click', (e) => { e.stopPropagation(); fn(b); });
+    bar.appendChild(b);
+  };
+  mk('copy', 'Copy message', async (b) => {
+    const text = messageText(div);
+    try { await navigator.clipboard.writeText(text); }
+    catch (e) {
+      const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta);
+      ta.select(); try { document.execCommand('copy'); } catch (e2) {} ta.remove();
+    }
+    b.classList.add('done'); setTimeout(() => b.classList.remove('done'), 1200);
+  });
+  if (role === 'user') {
+    mk('edit', 'Edit and resend', () => {
+      textInput.value = messageText(div);
+      updateSendButton();
+      textInput.focus();
+      try { textInput.setSelectionRange(textInput.value.length, textInput.value.length); } catch (e) {}
+    });
+  }
+  mk('retry', role === 'user' ? 'Send again' : 'Regenerate answer', () => {
+    const text = role === 'user' ? messageText(div) : previousUserText(div);
+    if (text) submitUserMessage(text);
+  });
+  div.appendChild(bar);
+}
+
   if (appShell) appShell.inert = inert;
 }
 
@@ -385,6 +522,7 @@ async function submitUserMessage(rawText, existingTurnId) {
   resetTurnMarkers();
   perf.mark(turnId, 'user_input', { chars: text.length });
   addMessage('user', text);
+  lastUserText = text;
   if (await handleScreenCommand(text)) return;
   if (turnId !== currentTurnId || generationId !== currentGenerationId) return;
   orbState('processing');
@@ -1606,7 +1744,7 @@ aria.llm.onError((info) => {
   currentToolsEl = null;
   toolChips = null;
   resetTtsStream(); // drop any half-buffered sentence; turn is over
-  showError(`LLM error: ${error}. Text input remains available.`);
+  showError(/^(Can't|No LLM|Your )/.test(error) ? error : `LLM error: ${error}`);
   // Speak a short apology (the banner keeps the actionable detail) so a voice
   // turn that failed — most often the agent running past its time budget — isn't
   // just dead air. speakOnly() stops any in-flight filler and flips the orb to
