@@ -76,6 +76,13 @@ check('glass.controlsBound',
   /bind\('cfg-glass-blur', 'glassBlur'\)/.test(app) && /host\.addEventListener\('keydown'/.test(app) &&
   /addEventListener\('drop'/.test(app),
   'blur/tint/dim sliders, keyboard swatch navigation, and drag-and-drop must be wired');
+check('glass.bubbles',
+  /\.message \{ backdrop-filter: blur\(/.test(html) && /\.message::before/.test(html) && /\.panel::after \{[\s\S]{0,400}backdrop-filter/.test(html),
+  'chat bubbles must be real glass, which needs the panel blur moved off the panel element');
+check('glass.adaptiveInk',
+  /function refreshInk\(/.test(appearance) && /const TARGET = 4\.5/.test(appearance) && /SCENE_GRIDS/.test(appearance) &&
+  /scheduleInk\(\);\n    return \{ \.\.\.current \}/.test(appearance) && /--ink-scrim/.test(html),
+  'text colour must be chosen per panel from the real background, with a scrim fallback');
 check('onboarding.keyNotStoredByTest',
   !/onb\.llmTest\.addEventListener[\s\S]{0,400}aria\.secure\.set/.test(app),
   'testing a connection must not persist the key before the user presses Start');
@@ -194,13 +201,6 @@ check('sidebar.statusWords',
 check('banner.warnLevel',
   /function showError\(msg, level(, action)?\)/.test(app) && /error-banner\.warn|\.error-banner\.warn/.test(html) && !/Security warning: secret storage/.test(app),
   'non-fatal notices must not look like failures and must use plain wording');
-check('composer.placeholder',
-  /placeholder="Type a message, or hold the mic to talk"/.test(html),
-  'composer must advertise both input methods');
-check('header.singleBadge',
-  /\.chat-head \.state-badge \{ display: none/.test(html),
-  'the state must not be shown twice on wide layouts');
-
 check('errors.plainEnglishWithFix',
   /function friendlyError\(raw\)/.test(app) && /function setErrorAction\(action\)/.test(app) &&
   /errorText\.title = /.test(app),
@@ -213,6 +213,13 @@ check('motion.reducedMotionGlobal',
   /prefers-reduced-motion: reduce/.test(fs.readFileSync(path.join(root, 'src', 'renderer', 'ux.css'), 'utf8')) &&
   /'ux\.css'/.test(fs.readFileSync(path.join(root, 'scripts', 'copy-renderer.js'), 'utf8')),
   'CSS animations must honour the OS reduced-motion setting and the stylesheet must ship');
+check('composer.placeholder',
+  /placeholder="Type a message, or hold the mic to talk"/.test(html),
+  'composer must advertise both input methods');
+check('header.singleBadge',
+  /\.chat-head \.state-badge \{ display: none/.test(html),
+  'the state must not be shown twice on wide layouts');
+
 check('sidecar.snapshotReplay',
   /SIDECAR_SNAPSHOT/.test(fs.readFileSync(path.join(root, 'src', 'main', 'index.ts'), 'utf8')) &&
   /aria\.sidecar\.snapshot\(\)/.test(app) && /snapshot: \(\)/.test(fs.readFileSync(path.join(root, 'src', 'preload', 'index.ts'), 'utf8')),
