@@ -1,0 +1,17 @@
+{
+  "_why": [
+    "Cases where this project's policy and an independent labeler reasonably disagree.",
+    "They are graded, printed, and EXCLUDED from the pass/fail bar so the score is not",
+    "inflated by quietly dropping hard cases. Keep this list tiny (<= 2% of cases) and",
+    "re-check it whenever the router changes."
+  ],
+  "cases": [
+    {
+      "set": "routing-cases-c.json",
+      "text": "summarize the pull request on my screen",
+      "router": "harness",
+      "other_label": "llm",
+      "ruling": "Pointing at the screen is the agent's job: it is the only target that can see the screen, and the chat model would have to invent the contents. The independent labeler read 'summarize' as a knowledge task."
+    }
+  ]
+}

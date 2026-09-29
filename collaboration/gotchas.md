@@ -118,7 +118,15 @@ so these safeguards are load-bearing:
   goes to the direct conversational LLM. The direct LLM receives no tools and no
   prose handoff escape hatch. Forced `llm` mode is a deliberate direct-only user
   override, not an implicit harness route. `smoke:routing-invariant` executes this
-  boundary and must remain aligned with `ralph/STATE.md`.
+  boundary in the real app and must remain aligned with `ralph/STATE.md`.
+- `router.ts` is an ordered decision list (explicit → creative writing → on-screen
+  reference → imperative order → knowledge framing → live lookups → advice framing
+  → broad keywords → stickiness → chat). The order is load-bearing: the broad
+  keyword list matches NOUNS, so an imperative check and the knowledge/advice
+  framings must run BEFORE it, or "how do I take a screenshot on a Mac" and
+  "what's the best way to back up my files" get dragged to the agent. Adding a
+  keyword is therefore not free — re-run `smoke:routing-accuracy` (a labeled
+  benchmark with a per-category floor) and `smoke:router` together.
 - Harness replies get an `[agent tools used: …]` note appended in the **live
   history only** (not the persisted/spoken transcript) so the fast chat mode can
   see what the agent did. Anything scanning history text (e.g. the

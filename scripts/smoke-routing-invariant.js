@@ -124,6 +124,19 @@ async function main() {
     !/ARIA_AGENT_HANDOFF|delegate_to_agent/i.test(String(request.system || '')));
   check(checks, 'direct response reaches user', /direct explanation/i.test(chat.final));
 
+  // The two upstream complaints, end to end in the real app: a knowledge
+  // question that merely CONTAINS tool nouns must reach the chat model, and a
+  // deictic reference to something on screen must reach the agent (only it can
+  // see or touch the screen).
+  const advice = await drive('what is the best way to back up my files', 'auto');
+  check(checks, 'advice question with tool nouns stays on the chat model',
+    advice.rec.llmRequests.length === 1 && advice.rec.harnessTasks.length === 0);
+  check(checks, 'advice answer reaches the user', /direct explanation/i.test(advice.final));
+
+  const onScreen = await drive('summarize the document i am looking at', 'auto');
+  check(checks, 'on-screen reference goes to the agent, not the chat model',
+    onScreen.rec.harnessTasks.length === 1 && onScreen.rec.llmRequests.length === 0);
+
   const forced = await drive('what is the weather in austin', 'llm');
   const forcedRequest = forced.rec.llmRequests[0] || {};
   check(checks, 'forced LLM mode remains direct without a harness handoff',

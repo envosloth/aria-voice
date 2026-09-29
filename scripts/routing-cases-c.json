@@ -1,0 +1,454 @@
+{
+  "cases": [
+    {
+      "cat": "harness-code",
+      "expect": "llm",
+      "text": "explain how a reverse proxy works"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "set up a reverse proxy on port 8080"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "llm",
+      "text": "why does this regex fail on empty strings"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "fix this regex so it passes on empty strings"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "llm",
+      "text": "summarize this function in one sentence"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "refactor this function to use a map instead"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "llm",
+      "text": "write a regex that matches email addresses"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "grep the build log for lines matching that regex"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "llm",
+      "text": "what does git rebase actually do"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "rebase my branch onto main"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "llm",
+      "text": "explain how the checksum is computed"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "compute the checksum of this tarball"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "llm",
+      "text": "what does this API endpoint return normally"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "call this API endpoint and show me the response"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "llm",
+      "text": "explain the failing test output"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "rerun the failing test and show the output"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "llm",
+      "text": "convert 45 minutes into seconds"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "set a timer for 45 minutes"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "llm",
+      "text": "explain how recurring calendar invites work"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "create a recurring calendar invite for the standup"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "llm",
+      "text": "how many time zones does Russia span"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "what time is it in Berlin right now"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "llm",
+      "text": "explain how exchange rates are determined"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "convert 240 dollars to euros at today's rate"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "llm",
+      "text": "what year was Node.js first released"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "what's the latest Node.js release this week"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "llm",
+      "text": "explain what this error class is for"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "look up this error message online"
+    },
+    {
+      "cat": "harness-screen",
+      "expect": "llm",
+      "text": "explain the error in this log file"
+    },
+    {
+      "cat": "harness-screen",
+      "expect": "harness",
+      "text": "fix the error in this log by patching the handler"
+    },
+    {
+      "cat": "harness-screen",
+      "expect": "llm",
+      "text": "what does that button in the screenshot do"
+    },
+    {
+      "cat": "harness-screen",
+      "expect": "harness",
+      "text": "click that button in the screenshot"
+    },
+    {
+      "cat": "harness-screen",
+      "expect": "llm",
+      "text": "summarize the pull request on my screen"
+    },
+    {
+      "cat": "harness-screen",
+      "expect": "harness",
+      "text": "merge the pull request on my screen"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "how do SSH keys actually work"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "harness",
+      "text": "generate an SSH key for this machine"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "llm",
+      "text": "what's the difference between merge and rebase"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "merge my feature branch into main"
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "do it"
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "the second one"
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "yes, go ahead"
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "run that again"
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "undo that"
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "use the staging branch"
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "skip the last step"
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "go ahead and push"
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "no, the first option"
+    },
+    {
+      "cat": "continuation",
+      "expect": "harness",
+      "text": "keep going"
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "check the weather and reschedule the standup if it's going to rain"
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "look up the flight status and add it to my calendar"
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "find the latest kernel release and upgrade this machine to it"
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "check my inbox for the invoice and file it under finance"
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "see if the CI build passed and open a ticket if it failed"
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "check disk usage and archive anything older than a year"
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "look up the meeting time and set a reminder before it"
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "check if the server is up and restart it if it isn't"
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "pull the latest changes and run the test suite"
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "find which process is using the most CPU and kill it"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "why do disks fill up with log files"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "explain the CAP theorem in plain terms"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "what's the difference between threads and processes"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "why do compilers need a linker"
+    },
+    {
+      "cat": "chat-explain-code",
+      "expect": "llm",
+      "text": "what does this loop actually do"
+    },
+    {
+      "cat": "chat-explain-code",
+      "expect": "llm",
+      "text": "explain what this config block sets"
+    },
+    {
+      "cat": "chat-explain-code",
+      "expect": "llm",
+      "text": "why does this snippet use a generator"
+    },
+    {
+      "cat": "chat-explain-code",
+      "expect": "llm",
+      "text": "walk me through the code I'm looking at"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "what's 37 squared minus 129"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "convert 0.75 into a fraction"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "what's the average of 12, 19, and 44"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "what's the weather like right now"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "remind me at 4pm to submit the report"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "what's my next meeting"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "search the web for the current price of that SSD"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "find the docs page for this library"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "look up whether that CVE has been patched"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "search the web for examples of this API call"
+    },
+    {
+      "cat": "harness-screen",
+      "expect": "harness",
+      "text": "read the error dialog on my screen"
+    },
+    {
+      "cat": "harness-screen",
+      "expect": "harness",
+      "text": "copy the highlighted text from this window"
+    },
+    {
+      "cat": "harness-screen",
+      "expect": "harness",
+      "text": "click the save button in the dialog I'm looking at"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "add a cron job for the nightly backup"
+    },
+    {
+      "cat": "harness-code",
+      "expect": "harness",
+      "text": "create a branch and commit these changes"
+    },
+    {
+      "cat": "explicit-harness",
+      "expect": "harness",
+      "text": "use the agent to fetch the latest release notes"
+    },
+    {
+      "cat": "explicit-harness",
+      "expect": "harness",
+      "text": "have the agent check the build logs for warnings"
+    },
+    {
+      "cat": "explicit-harness",
+      "expect": "harness",
+      "text": "agent, take over and fix the failing tests"
+    },
+    {
+      "cat": "explicit-llm",
+      "expect": "llm",
+      "text": "just tell me what a mutex is, no tools"
+    },
+    {
+      "cat": "explicit-llm",
+      "expect": "llm",
+      "text": "answer from memory, don't look anything up"
+    },
+    {
+      "cat": "trap-chat",
+      "expect": "llm",
+      "text": "how would I check the weather from a shell script"
+    },
+    {
+      "cat": "trap-chat",
+      "expect": "llm",
+      "text": "explain how to set a timer in Python"
+    },
+    {
+      "cat": "trap-harness",
+      "expect": "harness",
+      "text": "explain why my build failed"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "explain the results of my benchmark run"
+    }
+  ]
+}

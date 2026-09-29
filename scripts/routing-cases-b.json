@@ -1,0 +1,454 @@
+{
+  "cases": [
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "hey aria, why does the sky go red at sunset"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "what's the capital of Portugal again"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "explain photosynthesis like I'm in ninth grade"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "why do onions make me cry when I chop them"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "how long do elephants usually live in the wild"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "what's the difference between a simile and a metaphor"
+    },
+    {
+      "cat": "chat-knowledge",
+      "expect": "llm",
+      "text": "tell me about the water cycle for my quiz tomorrow"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "my roommate never does the dishes, how do I bring it up"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "I have two hours, should I study math or finish my essay"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "is it worth buying a used bike or a cheap new one"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "why do I always run out of time on exams"
+    },
+    {
+      "cat": "chat-reasoning",
+      "expect": "llm",
+      "text": "should I drop the class I keep skipping or stick it out"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "what's fifteen percent tip on forty two dollars"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "if I study three hours a day for two weeks, how many hours"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "what's nine times seven minus twelve"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "split eighty four dollars four ways for me"
+    },
+    {
+      "cat": "chat-math",
+      "expect": "llm",
+      "text": "how many minutes are in a whole week"
+    },
+    {
+      "cat": "chat-language",
+      "expect": "llm",
+      "text": "how do you say good morning in Japanese"
+    },
+    {
+      "cat": "chat-language",
+      "expect": "llm",
+      "text": "translate let's meet at noon into Spanish please"
+    },
+    {
+      "cat": "chat-language",
+      "expect": "llm",
+      "text": "rewrite my text to the professor, shorter and friendlier"
+    },
+    {
+      "cat": "chat-language",
+      "expect": "llm",
+      "text": "what's another word for nervous"
+    },
+    {
+      "cat": "chat-language",
+      "expect": "llm",
+      "text": "fix my grammar: me and her went to the store"
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "write me a short poem about rainy Mondays"
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "help me come up with a name for my study group"
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "brainstorm a few birthday caption ideas for my best friend"
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "write a silly song about my cat waking me at six"
+    },
+    {
+      "cat": "chat-creative",
+      "expect": "llm",
+      "text": "give me a story idea about a lost umbrella"
+    },
+    {
+      "cat": "chat-smalltalk",
+      "expect": "llm",
+      "text": "hey aria, how's your day going"
+    },
+    {
+      "cat": "chat-smalltalk",
+      "expect": "llm",
+      "text": "I'm so tired, tell me something nice"
+    },
+    {
+      "cat": "chat-smalltalk",
+      "expect": "llm",
+      "text": "good morning, did you sleep okay"
+    },
+    {
+      "cat": "chat-smalltalk",
+      "expect": "llm",
+      "text": "thanks, you're honestly the best"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "what's the weather looking like tomorrow morning"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "what time is sunset today"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "what's my first class today"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "any new emails from my professor"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "what's the score of the game right now"
+    },
+    {
+      "cat": "harness-live-data",
+      "expect": "harness",
+      "text": "how's traffic on the highway before I head out"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "go ahead and put pasta on the shopping list"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "text my mom that I'll be home late"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "add milk and eggs to my grocery list"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "set a timer for the pasta, twelve minutes"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "send my study group an email, meeting moved to Tuesday"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "cancel my seven o'clock alarm for tomorrow"
+    },
+    {
+      "cat": "harness-action",
+      "expect": "harness",
+      "text": "put the dentist appointment on my calendar for Thursday"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "look up that new cafe on Fifth street and see if it's open"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "search for the cheapest flight to Denver next month"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "find me a lasagna recipe with no ricotta"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "look up how much concert tickets cost this year"
+    },
+    {
+      "cat": "harness-web",
+      "expect": "harness",
+      "text": "find reviews for that vacuum I keep seeing ads for"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "turn on the living room lights"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "pause the music for a second"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "skip to the next song"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "turn my phone brightness down a little"
+    },
+    {
+      "cat": "harness-device",
+      "expect": "harness",
+      "text": "read me what's on my screen"
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "find a Thai place near me and book a table for two"
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "check my email, and if the professor replied, let me know"
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "compare the same headphones at three stores and tell me the cheapest"
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "look up the recipe, then add whatever ingredients I'm missing to my list"
+    },
+    {
+      "cat": "harness-multistep",
+      "expect": "harness",
+      "text": "plan my study schedule for finals week and put it in my calendar"
+    },
+    {
+      "cat": "explicit-harness",
+      "expect": "harness",
+      "text": "hey aria, use your tools and find when the next train leaves"
+    },
+    {
+      "cat": "explicit-harness",
+      "expect": "harness",
+      "text": "don't just tell me, actually add it to my calendar"
+    },
+    {
+      "cat": "explicit-harness",
+      "expect": "harness",
+      "text": "can you actually check my email for me right now"
+    },
+    {
+      "cat": "explicit-harness",
+      "expect": "harness",
+      "text": "do it for real this time, set the reminder"
+    },
+    {
+      "cat": "explicit-harness",
+      "expect": "harness",
+      "text": "as my assistant, go look that up online"
+    },
+    {
+      "cat": "explicit-llm",
+      "expect": "llm",
+      "text": "just explain it, don't look anything up"
+    },
+    {
+      "cat": "explicit-llm",
+      "expect": "llm",
+      "text": "no tools, just tell me from what you already know"
+    },
+    {
+      "cat": "explicit-llm",
+      "expect": "llm",
+      "text": "don't search, just give me your best guess"
+    },
+    {
+      "cat": "explicit-llm",
+      "expect": "llm",
+      "text": "answer from your own knowledge only: who invented the telephone"
+    },
+    {
+      "cat": "explicit-llm",
+      "expect": "llm",
+      "text": "let's just chat, no searching or checking anything"
+    },
+    {
+      "cat": "trap-chat",
+      "expect": "llm",
+      "text": "how do streaming services pick what to recommend"
+    },
+    {
+      "cat": "trap-chat",
+      "expect": "llm",
+      "text": "what does a smart thermostat actually do"
+    },
+    {
+      "cat": "trap-chat",
+      "expect": "llm",
+      "text": "how does a search engine decide what shows up first"
+    },
+    {
+      "cat": "trap-chat",
+      "expect": "llm",
+      "text": "why does my phone think I'm somewhere I'm not"
+    },
+    {
+      "cat": "trap-chat",
+      "expect": "llm",
+      "text": "how do the reminders inside apps actually work"
+    },
+    {
+      "cat": "trap-chat",
+      "expect": "llm",
+      "text": "my wifi keeps dropping, what should I do about it"
+    },
+    {
+      "cat": "trap-chat",
+      "expect": "llm",
+      "text": "why is my laptop so slow these days"
+    },
+    {
+      "cat": "trap-chat",
+      "expect": "llm",
+      "text": "how does email actually travel from one person to another"
+    },
+    {
+      "cat": "trap-harness",
+      "expect": "harness",
+      "text": "can you knock the volume down a bit"
+    },
+    {
+      "cat": "trap-harness",
+      "expect": "harness",
+      "text": "would you mind bumping the heat up a couple degrees"
+    },
+    {
+      "cat": "trap-harness",
+      "expect": "harness",
+      "text": "I'd love it if Sam knew I'm running late"
+    },
+    {
+      "cat": "trap-harness",
+      "expect": "harness",
+      "text": "my hands are full, can you make it quieter"
+    },
+    {
+      "cat": "trap-harness",
+      "expect": "harness",
+      "text": "get mom in the loop that I'm on my way"
+    },
+    {
+      "cat": "trap-harness",
+      "expect": "harness",
+      "text": "the kitchen's pitch dark, help me out here"
+    },
+    {
+      "cat": "trap-harness",
+      "expect": "harness",
+      "text": "don't let me forget to call the dentist at four"
+    },
+    {
+      "cat": "trap-harness",
+      "expect": "harness",
+      "text": "I'm out of shampoo, get me some more"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "llm",
+      "text": "what should I make for dinner tonight"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "should I take an umbrella today"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "remind me what we talked about yesterday"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "llm",
+      "text": "what's the best phone for me to buy"
+    },
+    {
+      "cat": "ambiguous",
+      "expect": "harness",
+      "text": "how far am I from the airport right now"
+    }
+  ]
+}
