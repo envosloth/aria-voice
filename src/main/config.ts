@@ -188,8 +188,10 @@ const defaults: AppConfig = {
     enabled: true,
   },
   conversation: {
-    enabled: false,
-    voiceBargeIn: false,
+    // On by default: after a spoken reply ARIA keeps listening briefly, and you
+    // can cut it off just by talking (echo-aware; see app.js voice barge-in).
+    enabled: true,
+    voiceBargeIn: true,
   },
   remote: {
     enabled: false,

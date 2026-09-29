@@ -4,14 +4,18 @@
 
 /* ── Per-message actions (copy / edit / retry) ── */
 .message .msg-actions {
-  position: absolute; top: -12px; display: flex; gap: 2px; padding: 2px;
+  /* Beside the bubble, level with its top — never over this bubble's text or
+     the neighbouring message. (The hover timestamp sits below it.) */
+  position: absolute; top: 2px; display: flex; gap: 2px; padding: 2px;
   border-radius: 999px; background: var(--chip-fill, rgba(20, 22, 30, .85));
   box-shadow: var(--chip-rim, 0 0 0 1px rgba(255, 255, 255, .12));
   opacity: 0; pointer-events: none; transition: opacity .12s ease; z-index: 2;
 }
-.message.user .msg-actions { right: 8px; }
-.message.assistant .msg-actions { left: 8px; }
+.message.user .msg-actions { right: calc(100% + 8px); }
+.message.assistant .msg-actions { left: calc(100% + 8px); }
 .message:hover .msg-actions, .message:focus-within .msg-actions { opacity: 1; pointer-events: auto; }
+/* Hover timestamp: under the action bar so the two never collide. */
+.message.user::after, .message.assistant::after { bottom: auto; top: 34px; }
 .msg-action {
   width: 24px; height: 24px; border: 0; border-radius: 999px; cursor: pointer;
   background: transparent; color: var(--text-muted, #aab); font: 13px/1 system-ui, sans-serif;
