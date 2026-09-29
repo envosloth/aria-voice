@@ -358,12 +358,12 @@ window.addEventListener('unhandledrejection', (e) => {
 
 function assistantSay(text) {
   addMessage('assistant', text);
-  try { stopPlayback(true); ttsPlay(text, null, true); orbState('speaking'); } catch (e) {}
+  try { stopPlayback(true); ttsPlay(text, null, true); enterSpeech(); } catch (e) {}
 }
 
 // Speak without adding a transcript line (used for the "hold on" filler).
 function speakOnly(text) {
-  try { stopPlayback(true); ttsPlay(text, null, true); orbState('speaking'); } catch (e) {}
+  try { stopPlayback(true); ttsPlay(text, null, true); enterSpeech(); } catch (e) {}
 }
 
 // Single entry point for user turns (text box + voice). Handles screen-share
@@ -437,7 +437,7 @@ function holdOnPhrase(text) {
 // rather than truncate it. `speakOnly` runs stopPlayback first (which clears the
 // flag), so set the flag AFTER it.
 function speakFiller(phrase) {
-  try { stopPlayback(true); ttsPlay(phrase, currentReplyId, false); orbState('speaking'); } catch (e) {}
+  try { stopPlayback(true); ttsPlay(phrase, currentReplyId, false); enterSpeech(); } catch (e) {}
   fillerSpeaking = true;
 }
 
@@ -779,6 +779,42 @@ function orbState(s) {
   refreshActivity();
 }
 
+// ---- Truthful speaking state ---------------------------------------------
+// `speechActive` = this turn owns speech output (was: orb === 'speaking').
+// The VISIBLE state follows real audio: requesting speech shows 'processing'
+// (Kokoro needs ~0.6-0.8s to synthesize), the first scheduled PCM flips to
+// 'speaking', and a sustained silence mid-turn (a "hold on" filler finished
+// while the agent still works, or synthesis lagging playback) falls back to
+// 'processing'. Barge-in/listening is never overwritten.
+let speechActive = false;
+let speechGapTimer = null;
+const SPEECH_GAP_MS = 450; // ignore normal inter-sentence gaps
+function enterSpeech() {
+  speechActive = true;
+  clearTimeout(speechGapTimer); speechGapTimer = null;
+  if (orbStateName === 'listening') return;
+  const playing = ttsSources.length > 0;
+  orbState(playing ? 'speaking' : 'processing');
+}
+function markAudioStarted(leadSec) {
+  if (!speechActive || orbStateName === 'listening') return;
+  clearTimeout(speechGapTimer); speechGapTimer = null;
+  if (orbStateName === 'speaking') return;
+  const delay = Math.max(0, (leadSec || 0) * 1000);
+  const flip = () => { if (speechActive && ttsSources.length && orbStateName !== 'listening') orbState('speaking'); };
+  if (delay < 20) flip(); else setTimeout(flip, delay);
+}
+function markAudioGap() {
+  if (!speechActive) return;
+  clearTimeout(speechGapTimer);
+  speechGapTimer = setTimeout(() => {
+    speechGapTimer = null;
+    if (!speechActive || ttsSources.length || orbStateName !== 'speaking') return;
+    if (ttsSynthDone && !awaitingFirstToken) return; // end-of-reply: armIdleAtAudioEnd owns it
+    orbState('processing');
+  }, SPEECH_GAP_MS);
+}
+
 // ---- Plain-language activity strip --------------------------------------
 // One place that says, in words, what ARIA is doing right now and what the user
 // can do about it. Derived from: orb phase, route target, tool use, sidecar
@@ -812,7 +848,8 @@ function computeActivity() {
     case 'listening':
       return { phase: 'listening', title: 'Listening…', detail: pttActive ? 'Release the mic button when you are done.' : 'Just talk. I will stop when you pause.', busy: true };
     case 'processing': {
-      const detail = activityTool ? `Using ${activityTool}…` : `Waiting for ${who} to answer.`;
+      const detail = speechActive && !awaitingFirstToken ? 'Preparing to speak…'
+        : activityTool ? `Using ${activityTool}…` : `Waiting for ${who} to answer.`;
       return { phase: 'thinking', title: 'Thinking…', detail, busy: true };
     }
     case 'speaking':
@@ -1244,7 +1281,7 @@ function speakChunk(text) {
     } else {
       stopPlayback(true); // cut any prior/leftover audio once, at turn start
     }
-    orbState('speaking'); // agent is about to talk -> dynamic motion
+    enterSpeech(); // orb shows 'speaking' only once audio actually plays
     ttsTurnSpeaking = true;
   }
   if (!ttsFirstRequestMarked) { ttsFirstRequestMarked = true; perf.mark(currentTurnId, 'tts_first_request'); }
@@ -1377,7 +1414,7 @@ function armIdleAtAudioEnd() {
   const remainMs = audioCtx ? Math.max(0, (nextPlayTime - audioCtx.currentTime) * 1000) : 0;
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
-    if (orbStateName !== 'speaking') return;
+    if (!speechActive) return;
     // A "hold on" filler just finished playing but the REAL reply hasn't started
     // streaming yet (awaitingFirstToken is still set) — the turn is NOT over. Do
     // not drop to idle or re-open the mic for a follow-up; the filler is not the
@@ -1389,6 +1426,7 @@ function armIdleAtAudioEnd() {
     // the latency panel's "full reply" is measured to here (not to turn_complete,
     // which is only when the LLM text finished and can precede the audio).
     try { perf.mark(currentTurnId, 'tts_done'); } catch (e) {}
+    speechActive = false;
     // Conversation mode: roll straight from speaking into listening for the
     // follow-up — no idle flash in between. Otherwise settle to idle.
     if (conversationMode && lastTurnWasVoice) { maybeStartFollowup(); return; }
@@ -1431,6 +1469,8 @@ function stopPlayback(cancelSidecar) {
   ttsSources = [];
   nextPlayTime = 0;
   fillerSpeaking = false; // audio is being hard-stopped: no filler left to protect
+  speechActive = false;   // no speech owned by any turn until enterSpeech() again
+  clearTimeout(speechGapTimer); speechGapTimer = null;
   ttsSynthDone = false;   // a fresh turn is not done until its 'done' state arrives
   clearTimeout(idleTimer); idleTimer = null;
   // Drop any PCM still in flight from the interrupted utterance until the next
@@ -1529,9 +1569,11 @@ aria.tts.onAudio((packet) => {
     nextPlayTime += buffer.duration;
     ttsSources.push(source);
     startTtsLevelPoll(); // drive the reactive orb only while audio is actually playing
+    markAudioStarted(nextPlayTime - buffer.duration - now);
     source.onended = () => {
       const i = ttsSources.indexOf(source);
       if (i >= 0) ttsSources.splice(i, 1);
+      if (!ttsSources.length) markAudioGap();
     };
     // If this chunk landed AFTER the sidecar's 'done', extend the idle deadline to
     // the new (later) audio end so the orb stays green through the final words.
@@ -1591,7 +1633,7 @@ aria.timers.onFired(function onTimerFired(text) {
 // well above this, so genuine barge-in still works.
 const BARGE_IN_MIN_SCORE = 0.6;
 aria.wakeword.onDetected((phrase, score) => {
-  if (orbStateName === 'speaking' && typeof score === 'number' && score < BARGE_IN_MIN_SCORE) {
+  if ((speechActive || orbStateName === 'speaking') && typeof score === 'number' && score < BARGE_IN_MIN_SCORE) {
     return; // too weak to be a real interruption — don't cut off the reply
   }
   if (listening) return; // repeated detection: do not chime into active STT audio

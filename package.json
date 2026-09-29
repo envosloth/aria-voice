@@ -47,7 +47,7 @@
     "smoke:ux": "node scripts/smoke-ux.js",
     "smoke:status-dots": "node scripts/smoke-status-dots.js",
     "smoke:update-progress": "node scripts/smoke-update-progress.js",
-    "smoke:all": "npm run smoke && npm run smoke:tts && npm run smoke:stt && npm run smoke:stt-turn && npm run smoke:release-whisper && npm run smoke:resilience && npm run smoke:pdeathsig && npm run smoke:memory && npm run smoke:llm && npm run smoke:llm-models && npm run smoke:router && npm run smoke:local-intents && npm run smoke:tunnel && npm run smoke:session-features && npm run smoke:hardware && npm run smoke:updater && npm run smoke:orb && npm run smoke:ui-stability && npm run smoke:ux && npm run smoke:status-dots && npm run smoke:update-progress && npm run smoke:models && npm run smoke:audio && npm run smoke:main-hardening && npm run smoke:harness-detect && npm run smoke:supervisor-hardening && npm run smoke:sidecar-scripts && npm run smoke:ipc-hardening && npm run smoke:turn-isolation && npm run smoke:model-startup && npm run smoke:routing-accuracy && npm run smoke:turn-classifier && npm run smoke:classifier-check && npm run smoke:e2e",
+    "smoke:all": "npm run smoke && npm run smoke:tts && npm run smoke:stt && npm run smoke:stt-turn && npm run smoke:release-whisper && npm run smoke:resilience && npm run smoke:pdeathsig && npm run smoke:memory && npm run smoke:llm && npm run smoke:llm-models && npm run smoke:router && npm run smoke:local-intents && npm run smoke:tunnel && npm run smoke:session-features && npm run smoke:hardware && npm run smoke:updater && npm run smoke:orb && npm run smoke:orb-truth && npm run smoke:ui-stability && npm run smoke:ux && npm run smoke:status-dots && npm run smoke:update-progress && npm run smoke:models && npm run smoke:audio && npm run smoke:main-hardening && npm run smoke:harness-detect && npm run smoke:supervisor-hardening && npm run smoke:sidecar-scripts && npm run smoke:ipc-hardening && npm run smoke:turn-isolation && npm run smoke:model-startup && npm run smoke:routing-accuracy && npm run smoke:turn-classifier && npm run smoke:classifier-check && npm run smoke:e2e",
     "package:sidecars": "bash scripts/package-sidecars.sh",
     "package:whisper": "bash scripts/stage-whisper.sh",
     "dist": "npm run build && npm run package:sidecars && npm run package:whisper && electron-builder --config electron-builder.yml",
@@ -77,7 +77,8 @@
     "smoke:routing-accuracy:quick": "npm run build && node scripts/routing-benchmark.js",
     "smoke:turn-classifier": "npm run build && node scripts/smoke-turn-classifier.js",
     "routing:classifier-check": "npm run build && ARIA_VERIFY_CLASSIFIER=1 electron --no-sandbox --ozone-platform-hint=auto dist/main/index.js",
-    "smoke:classifier-check": "npm run build && node scripts/smoke-classifier-check.js"
+    "smoke:classifier-check": "npm run build && node scripts/smoke-classifier-check.js",
+    "smoke:orb-truth": "node scripts/smoke-orb-truth.js"
   },
   "author": "ARIA Project <aria@localhost>",
   "license": "MIT",
