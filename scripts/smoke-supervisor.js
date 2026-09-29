@@ -12,6 +12,9 @@ const { Supervisor } = require('../dist/main/supervisor');
 const targets = process.argv.slice(2);
 const sidecars = targets.length ? targets : ['wakeword', 'tts'];
 
+// Dump sidecar stacks if model initialization stalls (see base_sidecar.py).
+process.env.ARIA_SIDECAR_STARTUP_TRACE_S = process.env.ARIA_SIDECAR_STARTUP_TRACE_S || '20';
+
 const events = [];
 const pids = {};
 
@@ -21,7 +24,10 @@ function onStatus(name, status, detail) {
     const m = detail.match(/pid=(\d+)/);
     if (m) pids[name] = parseInt(m[1], 10);
   }
-  const line = `[${name}] ${status}${detail ? ': ' + detail.slice(0, 80) : ''}`;
+  // Diagnostics (stderr, errors, warnings) are printed in full; routine
+  // status details stay short.
+  const verbose = status === 'log' || status === 'error' || status === 'warning';
+  const line = `[${name}] ${status}${detail ? ': ' + (verbose ? detail : detail.slice(0, 80)) : ''}`;
   console.log(line);
 }
 

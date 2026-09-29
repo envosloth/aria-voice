@@ -34,6 +34,11 @@ class BaseSidecar(ABC):
         self._stdout_lock = threading.Lock()
 
     def run(self) -> None:
+        # PyInstaller-frozen Windows builds re-execute the sidecar binary for any
+        # multiprocessing child (joblib/scikit-learn can do this during import).
+        # Without freeze_support() that child re-runs ARIA's sidecar entry point.
+        import multiprocessing
+        multiprocessing.freeze_support()
         parser = argparse.ArgumentParser()
         parser.add_argument("--socket", required=True, help="PCM data channel: a UDS path (POSIX) or tcp://host:port (Windows)")
         args = parser.parse_args()
@@ -58,8 +63,19 @@ class BaseSidecar(ABC):
         threading.Thread(target=self._heartbeat_loop, daemon=True).start()
         threading.Thread(target=self._stdin_loop, daemon=True).start()
 
+        # Opt-in startup stall diagnostics: dump every thread's stack to stderr
+        # if initialization has not finished in time (CI sets this for frozen
+        # smoke tests so a native-runner hang is diagnosable, not silent).
+        trace_after = self._startup_trace_seconds()
+        if trace_after:
+            import faulthandler
+            faulthandler.dump_traceback_later(trace_after, repeat=True, file=sys.stderr)
         try:
-            self.initialize()
+            try:
+                self.initialize()
+            finally:
+                if trace_after:
+                    faulthandler.cancel_dump_traceback_later()
             # A SIGTERM, stdin EOF, socket EOF or parent death during a slow model
             # load clears _running. Announcing 'ready' then would let the
             # supervisor route controls to a process that is already exiting.
@@ -73,6 +89,14 @@ class BaseSidecar(ABC):
         finally:
             self.cleanup()
             self._running = False
+
+    @staticmethod
+    def _startup_trace_seconds() -> float:
+        try:
+            value = float(os.environ.get("ARIA_SIDECAR_STARTUP_TRACE_S", "0") or 0)
+        except ValueError:
+            return 0.0
+        return value if 0 < value <= 600 else 0.0
 
     def _set_parent_death_signal(self) -> None:
         """Backstop so a sidecar doesn't orphan if the supervisor is hard-killed
