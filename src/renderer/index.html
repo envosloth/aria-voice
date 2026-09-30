@@ -235,7 +235,7 @@
     .sidebar > :not(.session-list) { flex-shrink: 0; }
     .sidebar > * { -webkit-app-region: no-drag; }
     .brand { display: flex; align-items: center; gap: 9px; padding: 2px 4px 12px; border-bottom: 1px solid var(--border); }
-    #tts-local-voice-row[hidden], #tts-cloud-voice-row[hidden], #tts-expressive-row[hidden], #stt-groq-model-row[hidden] { display: none !important; }
+    #tts-local-voice-row[hidden], #tts-cloud-voice-row[hidden], #tts-expressive-row[hidden], #tts-director-row[hidden], #tts-director-key-row[hidden], #stt-groq-model-row[hidden] { display: none !important; }
     .brand-mark { width: 26px; height: 26px; flex: none; object-fit: contain; border-radius: 7px; overflow: hidden; }
     .brand-name { font: 700 12px var(--mono); letter-spacing: .22em; color: var(--text); }
     .side-cap { padding: 12px 4px 4px; }
@@ -1174,6 +1174,15 @@
           <label><span id="tts-key-label">Cloud API key</span><input type="password" id="cfg-tts-key" autocomplete="off" spellcheck="false"></label>
           <label>Model ID<input id="cfg-tts-cloud-model" type="text" maxlength="100" spellcheck="false"></label>
           <label class="checkbox-label" id="tts-expressive-row" hidden><input type="checkbox" id="cfg-tts-expressive"> Expressive delivery — the assistant may add tags like [laughs] or [whispers]<span class="hint">Eleven v3/v4 only. Tags are performed, never read aloud or shown.</span></label>
+          <div id="tts-director-row" hidden>
+            <label>Delivery director
+              <select id="cfg-tts-director">
+                <option value="model">Reply model — decides tags on its own</option>
+                <option value="jev">Jev (TypeSafe) — picks the mood before each reply</option>
+              </select>
+            </label>
+            <label id="tts-director-key-row" hidden>Jev API key<input type="password" id="cfg-tts-director-key" autocomplete="off" spellcheck="false"><span class="hint">Separate from the routing coordinator. Each reply's text is sent to api.typesafe.ai; if Jev is slow or down, the reply model decides alone.</span></label>
+          </div>
           <label id="tts-cloud-voice-row">Voice ID<input id="cfg-tts-cloud-voice" type="text" maxlength="100" spellcheck="false"><span class="hint">Use a voice available to your provider account.</span></label>
         </div>
         <p class="hint" id="cfg-tts-engine-hint"></p>

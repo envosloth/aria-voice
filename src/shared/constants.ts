@@ -53,7 +53,7 @@ export const VAD_FRAME_MS = 80;
 // crossing ipcMain is shape-checked and bounded before it reaches privileged code.
 
 /** Secure-store keys the renderer may read/write/delete (see app.js settings + onboarding). */
-export const RENDERER_SECRET_KEYS: readonly string[] = ['llm-api-key', 'harness-api-key', 'jev-api-key', 'stt-api-key', 'stt-deepgram-api-key', 'stt-assemblyai-api-key', 'tts-elevenlabs-api-key', 'tts-cartesia-api-key', 'tts-openai-api-key', 'tts-deepgram-api-key'];
+export const RENDERER_SECRET_KEYS: readonly string[] = ['llm-api-key', 'harness-api-key', 'jev-api-key', 'stt-api-key', 'stt-deepgram-api-key', 'stt-assemblyai-api-key', 'tts-elevenlabs-api-key', 'tts-cartesia-api-key', 'tts-openai-api-key', 'tts-deepgram-api-key', 'jev-tone-api-key'];
 export function isRendererSecretKey(key: unknown): key is string {
   return typeof key === 'string' && RENDERER_SECRET_KEYS.includes(key);
 }

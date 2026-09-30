@@ -27,7 +27,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     let id = 0; const pending = new Map();
     ws.onmessage = m => { const d = JSON.parse(m.data); if (pending.has(d.id)) { pending.get(d.id)(d); pending.delete(d.id); } };
     const send = (method, params = {}) => Promise.race([new Promise(r => { const n = ++id; pending.set(n, r); ws.send(JSON.stringify({ id: n, method, params })); }), sleep(15000).then(() => { throw Error('CDP timeout'); })]);
-    const ev = async expression => { const d = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }); if (d.result.exceptionDetails) throw Error(JSON.stringify(d.result.exceptionDetails)); return d.result.result.value; };
+    const ev = async expression => { const d = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }); if (!d.result) throw Error("CDP error "+JSON.stringify(d.error||d).slice(0,300)); if (d.result.exceptionDetails) throw Error(JSON.stringify(d.result.exceptionDetails)); return d.result.result.value; };
     await send('Emulation.setFocusEmulationEnabled', { enabled: true });
     await sleep(1600);
     await ev(`document.head.insertAdjacentHTML('beforeend','<style>*{transition:none!important}.onboard-overlay{display:none!important}</style>'); document.getElementById('app-shell').inert=false`);
@@ -95,6 +95,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       if(engine==='elevenlabs'){
         check('V4 Turbo disables unsupported speed',await ev(`document.getElementById('cfg-tts-speed').disabled`));
         check('expressive toggle visible and on for V4 Turbo',await ev(`(()=>{const r=document.getElementById('tts-expressive-row');return getComputedStyle(r).display!=='none'&&document.getElementById('cfg-tts-expressive').checked})()`));
+        check('delivery director defaults to reply model, routing untouched',await ev(`(async()=>document.getElementById('cfg-tts-director').value==='model'&&getComputedStyle(document.getElementById('tts-director-key-row')).display==='none'&&(await aria.config.get('routing.coordinator'))==='builtin')()`));
+        check('Jev director reveals its own key field',await ev(`(()=>{const s=document.getElementById('cfg-tts-director');s.value='jev';s.dispatchEvent(new Event('change'));const shown=getComputedStyle(document.getElementById('tts-director-key-row')).display!=='none';s.value='model';s.dispatchEvent(new Event('change'));return shown})()`));
         check('expressive toggle hidden for Flash',await ev(`(()=>{const m=document.getElementById('cfg-tts-cloud-model'),v=m.value;m.value='eleven_flash_v2_5';m.dispatchEvent(new Event('input'));const hidden=getComputedStyle(document.getElementById('tts-expressive-row')).display==='none';m.value=v;m.dispatchEvent(new Event('input'));return hidden})()`));
       }
       const missingKeyState = await ev(`(async()=>({engine:await aria.config.get('tts.engine'), selected:document.getElementById('cfg-tts-engine').value,message:document.getElementById('settings-saved-msg').textContent}))()`);
@@ -106,6 +108,15 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       check(engine+' reopens with model and masked key', await ev(`document.getElementById('cfg-tts-engine').value==='${engine}' && document.getElementById('cfg-tts-key').value==='' && document.getElementById('cfg-tts-cloud-model').value.length>0`));
       await ev(`document.getElementById('settings-save').click()`); await settleSave();
       check(engine+' hides local voice picker visually', await ev(`getComputedStyle(document.getElementById('tts-local-voice-row')).display==='none'`));
+      if(engine==='elevenlabs'){
+        await ev(`(()=>{const s=document.getElementById('cfg-tts-director');s.value='jev';s.dispatchEvent(new Event('change'));document.getElementById('settings-save').click()})()`); await settleSave();
+        const refused=await ev(`(async()=>({msg:document.getElementById('settings-saved-msg').textContent,dir:await aria.config.get('tts.toneDirector')}))()`);
+        check('Jev director refuses to save without its key', /Jev API key/.test(refused.msg)&&refused.dir!=='jev' || (console.log('DIAG',JSON.stringify(refused)),false));
+        await ev(`document.getElementById('cfg-tts-director-key').value='fixture-jev-tone';document.getElementById('settings-save').click()`); await settleSave();
+        const saved=await ev(`(async()=>({dir:await aria.config.get('tts.toneDirector'),key:(await aria.secure.get('jev-tone-api-key'))==='fixture-jev-tone',coord:await aria.config.get('routing.coordinator'),routingKey:!!(await aria.secure.get('jev-api-key')),msg:document.getElementById('settings-saved-msg').textContent}))()`);
+        check('Jev director saves its own key without touching routing', saved.dir==='jev'&&saved.key&&saved.coord==='builtin'&&!saved.routingKey || (console.log('DIAG',JSON.stringify(saved)),false));
+        await ev(`(()=>{const s=document.getElementById('cfg-tts-director');s.value='model';s.dispatchEvent(new Event('change'));document.getElementById('settings-save').click()})()`); await settleSave();
+      }
       check(engine+' keeps key on blank save', await ev(`(async()=> (await aria.secure.get('tts-${engine}-api-key'))==='fixture-${engine}-tts')()`));
       if(engine==='cartesia') {
         await ev(`document.getElementById('cfg-tts-engine').closest('label').scrollIntoView({block:'start'})`); await sleep(250);

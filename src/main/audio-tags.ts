@@ -15,8 +15,20 @@ export function stripAudioTags(text: string): string {
   return String(text || '').replace(AUDIO_TAG, ' ').replace(/[ \t]{2,}/g, ' ').replace(/ +([.,!?;:])/g, '$1').replace(/^ +| +$/gm, '');
 }
 
-export function expressivePrompt(engine: unknown, model: unknown, enabled: unknown): string {
+const TONE_GUIDANCE: Record<string, string> = {
+  playful: ' Delivery direction for this reply: playful. A light tag such as [laughs] or [chuckles] fits if it lands naturally.',
+  warm: ' Delivery direction for this reply: warm. A gentle tag such as [warmly] fits if it lands naturally.',
+  calm: ' Delivery direction for this reply: calm and reassuring. At most a soft tag such as [softly]; nothing loud or joking.',
+  serious: ' Delivery direction for this reply: serious. No laughing or playful tags.',
+  neutral: ' Delivery direction for this reply: neutral. Use no audio tags in this reply.',
+};
+
+export function expressivePrompt(engine: unknown, model: unknown, enabled: unknown, tone?: string | null): string {
   if (!audioTagsActive(engine, model, enabled)) return '';
+  return expressiveRules() + (tone && TONE_GUIDANCE[tone] ? TONE_GUIDANCE[tone] : '');
+}
+
+function expressiveRules(): string {
   return '\n\nExpressive delivery: your voice supports audio tags in square brackets that ' +
     'direct HOW a line is spoken and are never read aloud, e.g. [laughs], [chuckles], ' +
     '[sighs], [whispers], [excited], [curious], [sarcastic], [warmly], [softly]. Place a tag ' +

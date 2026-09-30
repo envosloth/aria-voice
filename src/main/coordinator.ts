@@ -4,6 +4,7 @@ import https from 'https';
 import { URL } from 'url';
 import { config } from './config';
 import { audioTagsActive, expressivePrompt, stripAudioTags } from './audio-tags';
+import { classifyToneWithJev, ToneVerdict } from './jev-tone';
 import { getSecret } from './secure-storage';
 import { streamChat, LlmCallbacks, ChatMessage, ChatHandle, TokenUsage } from './llm-stream';
 import { credentialedEndpointSecurityError, requestHostname } from './endpoint-security';
@@ -603,6 +604,24 @@ export async function coordinate(
     ? prevReply.content.replace(/\n\n\[agent tools used: [^\]]*\]$/, '')
     : '';
   const lastWasQuestion = !!(prevReply && prevReply.role === 'assistant' && /\?\s*$/.test(prevText));
+
+  // ElevenLabs delivery director (a TTS setting, separate from routing). Jev
+  // picks the emotional register while routing and context capture proceed;
+  // the reply waits for it only up to its own short deadline.
+  const tagsOn = audioTagsActive(config.get('tts.engine'), config.get('tts.cloudModels.elevenlabs'), config.get('tts.expressive'));
+  const toneStarted = Date.now();
+  const tonePromise: Promise<ToneVerdict | null> = tagsOn && config.get('tts.toneDirector') === 'jev'
+    ? classifyToneWithJev(userMessage, { apiKey: readSecretSafely('jev-tone-api-key'), previousReply: prevText })
+    : Promise.resolve(null);
+  let toneLogged = false;
+  const awaitTone = async () => {
+    const verdict = await tonePromise;
+    if (!toneLogged && tagsOn && config.get('tts.toneDirector') === 'jev') {
+      toneLogged = true;
+      perfMark(turnId, 'tone_directed', { ms: Date.now() - toneStarted, tone: verdict?.tone || 'none' });
+    }
+    return verdict;
+  };
   const prevUser = history.length >= 3 ? history[history.length - 3] : null;
   const prevUserText = prevUser && prevUser.role === 'user' && typeof prevUser.content === 'string' ? prevUser.content : '';
 
@@ -730,8 +749,10 @@ export async function coordinate(
     // Routing contract: router.ts chooses the harness before an agentic turn is
     // sent. The conversational model receives no delegation tool or sentinel.
     // History records a compact note for tools the harness itself ran.
+    const tone = await awaitTone();
+    if (!isCurrent()) return;
     const systemContent = (target === 'harness' ? HARNESS_SYSTEM_PROMPT : LLM_SYSTEM_PROMPT)
-      + expressivePrompt(config.get('tts.engine'), config.get('tts.cloudModels.elevenlabs'), config.get('tts.expressive'))
+      + expressivePrompt(config.get('tts.engine'), config.get('tts.cloudModels.elevenlabs'), config.get('tts.expressive'), tone?.tone)
       + memoryContext(userMessage) + contextBlock;
     // The "voice output" hint is appended to the LAST user message because
     // LLMs reliably follow user-message instructions but inconsistently

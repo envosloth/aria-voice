@@ -21,6 +21,7 @@ interface AppConfig {
     voice: string;
     speed: number; // speaking rate multiplier, 0.5..2.0 (1.0 = normal)
     expressive: boolean; // ElevenLabs v3/v4 audio tags such as [laughs]
+    toneDirector: 'model' | 'jev'; // who picks the delivery register for those tags
   };
   wakeword: {
     enabled: boolean;
@@ -181,6 +182,7 @@ const defaults: AppConfig = {
     voice: 'bm_george', // "Jarvis" — refined British male
     speed: 1.0,
     expressive: true,
+    toneDirector: 'model',
   },
   wakeword: {
     enabled: true,
@@ -279,6 +281,7 @@ const ENUMS: Record<string, readonly string[]> = {
   'stt.provider': ['local', 'groq', 'deepgram', 'assemblyai'],
   'stt.groqModel': ['whisper-large-v3-turbo', 'whisper-large-v3'],
   'tts.engine': ['piper', 'kokoro', 'elevenlabs', 'cartesia', 'openai', 'deepgram'],
+  'tts.toneDirector': ['model', 'jev'],
   'routing.mode': ['auto', 'llm', 'harness'],
   'routing.classifier': ['auto', 'off'],
   'routing.coordinator': ['builtin', 'jev'],

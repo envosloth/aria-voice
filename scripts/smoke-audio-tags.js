@@ -37,5 +37,42 @@ const later = 'One more sentence here. [laughs] And then another.';
 const c2 = A.nextTtsCut(later, false, 0);
 check('chunker cuts at sentence before the tag', c2 > 0 && later.slice(0, c2).trim() === 'One more sentence here.', `cut=${c2}`);
 
-console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
-process.exit(pass ? 0 : 1);
+// ---- Jev tone director (ElevenLabs TTS setting, independent of routing) ----
+const http = require('http');
+const J = require('../dist/main/jev-tone.js');
+const serve = (handler) => new Promise((r) => { const s = http.createServer(handler); s.listen(0, '127.0.0.1', () => r(s)); });
+const reply = (body) => (req, res) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => { lastReq = { body: JSON.parse(b), auth: req.headers.authorization }; res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(body)); }); };
+let lastReq = null;
+(async () => {
+  for (const mood of ['playful', 'warm', 'calm', 'serious', 'neutral']) {
+    const g = M.expressivePrompt('elevenlabs', 'eleven_v4_turbo', true, mood);
+    check(`prompt carries ${mood} guidance`, g.includes(rules.trim().slice(0, 40)) && new RegExp(mood === 'neutral' ? 'no audio tags' : mood, 'i').test(g), g.slice(-120));
+  }
+  check('mood ignored when tags inactive', M.expressivePrompt('elevenlabs', 'eleven_flash_v2_5', true, 'playful') === '');
+  const ok = await serve(reply({ answers: { tone: { choice: 'playful', confidence: 0.82 } } }));
+  const ep = `http://127.0.0.1:${ok.address().port}/v1/systemone`;
+  const t0 = Date.now();
+  const v = await J.classifyToneWithJev('tell me a joke about cats', { endpoint: ep, apiKey: 'fixture-key', previousReply: 'Sure.' });
+  check('jev returns the tone', v && v.tone === 'playful' && v.confidence === 0.82, JSON.stringify(v));
+  check('jev request is one typed choice question', lastReq && lastReq.body.questions && Object.keys(lastReq.body.questions).join() === 'tone'
+    && lastReq.body.questions.tone.type === 'choice' && Object.keys(lastReq.body.questions.tone.criteria).sort().join() === 'calm,neutral,playful,serious,warm', JSON.stringify(lastReq && lastReq.body.questions));
+  check('jev state is bounded and has no history beyond the last reply', lastReq.body.state.length <= J.JEV_TONE_MAX_STATE_CHARS && /cats/.test(lastReq.body.state), lastReq.body.state);
+  check('jev uses bearer key', lastReq.auth === 'Bearer fixture-key');
+  check('jev fast path', Date.now() - t0 < 500);
+  ok.close();
+  const weak = await serve(reply({ answers: { tone: { choice: 'playful', confidence: 0.3 } } }));
+  check('weak verdict ignored', await J.classifyToneWithJev('hi', { endpoint: `http://127.0.0.1:${weak.address().port}/x`, apiKey: 'k' }) === null);
+  weak.close();
+  const bad = await serve(reply({ answers: { tone: { choice: 'furious', confidence: 0.99 } } }));
+  check('off-schema tone ignored', await J.classifyToneWithJev('hi', { endpoint: `http://127.0.0.1:${bad.address().port}/x`, apiKey: 'k' }) === null);
+  bad.close();
+  const slow = await serve(() => {});
+  const s0 = Date.now();
+  const late = await J.classifyToneWithJev('hi', { endpoint: `http://127.0.0.1:${slow.address().port}/x`, apiKey: 'k', timeoutMs: 200 });
+  check('stalled jev gives up within its deadline', late === null && Date.now() - s0 < 700, `${Date.now() - s0}ms`);
+  slow.close();
+  check('no key, no request', await J.classifyToneWithJev('hi', { endpoint: ep }) === null);
+  check('key never sent over remote plaintext', await J.classifyToneWithJev('hi', { endpoint: 'http://example.com/x', apiKey: 'k' }) === null);
+  console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
+  process.exit(pass ? 0 : 1);
+})().catch((e) => { console.error(e); process.exit(1); });
