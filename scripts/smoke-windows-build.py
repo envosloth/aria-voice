@@ -10,6 +10,24 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def bash():
+    """The Git Bash the release build uses. On Windows, a bare "bash" from
+    Python resolves to System32\\bash.exe (the WSL launcher), which fails on a
+    runner with no Linux distribution before the script under test even runs."""
+    import shutil
+    if os.name != "nt":
+        return "bash"
+    program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+    for candidate in (os.path.join(program_files, "Git", "bin", "bash.exe"),
+                      os.path.join(program_files, "Git", "usr", "bin", "bash.exe")):
+        if os.path.isfile(candidate):
+            return candidate
+    found = shutil.which("bash")
+    if found and "system32" not in found.lower():
+        return found
+    raise AssertionError("Git Bash not found; System32 bash.exe is the WSL launcher, not a shell")
+
+
 def run_script(args, env):
     """Run a bash script and, on failure, show what it printed (CI logs only
     showed the exit status, which hid the actual Windows failure)."""
@@ -40,7 +58,7 @@ class WindowsBuild(unittest.TestCase):
                 (source / name).write_bytes(b"staging-fixture")
             env = {**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"],
                    "WHISPER_BIN_DIR": str(source), "WHISPER_LIB_DIR": str(base / "absent")}
-            run_script(["bash", str(base / "scripts/stage-whisper.sh")], env)
+            run_script([bash(), str(base / "scripts/stage-whisper.sh")], env)
             for name in files:
                 self.assertTrue((base / "build/whisper/bin" / name).is_file(), name)
 
@@ -63,7 +81,7 @@ class WindowsBuild(unittest.TestCase):
             env = {**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"],
                    "TEST_CMAKE_LOG": str(log), "TEST_PYTHON": __import__("sys").executable,
                    "TMPDIR": str(base), "INSTALL_PREFIX": str(base / "install")}
-            run_script(["bash", str(ROOT / "scripts/build-whispercpp.sh")], env)
+            run_script([bash(), str(ROOT / "scripts/build-whispercpp.sh")], env)
             configure = json.loads(log.read_text().splitlines()[0])
             for flag in ("-DGGML_NATIVE=OFF", "-DGGML_BACKEND_DL=ON", "-DGGML_CPU_ALL_VARIANTS=ON"):
                 self.assertIn(flag, configure)
