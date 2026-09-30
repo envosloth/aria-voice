@@ -31,6 +31,7 @@ function harness() {
     micStarted: true, micLifecycle: new MicStartupGate(), createMicGraph: async () => () => {},
     lastTurnWasVoice: false, vadActive: false, vad: null, vadSafetyTimer: null, noSpeechTimer: null,
     FOLLOWUP_NO_SPEECH_MS: 6000, sttDiscardGate: new SttDiscardGate(),
+    softBarge: null, speechActive: false, SOFT_BARGE_NO_SPEECH_MS: 900,
     streamBuf: '', streamTextNode: null, currentAssistantMsg: null, currentToolsEl: null, toolChips: null,
     pendingRoute: null, ttsStreamBuf: '', partialEl: { textContent: '' },
     micBtn: { classList: { add() {}, remove() {} }, setAttribute() {} },

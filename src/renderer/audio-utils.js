@@ -539,8 +539,16 @@
   function EchoAwareBargeDetector(opts) {
     opts = opts || {};
     const frameMs = opts.frameMs || 20;
+    // Speech must hold 120 ms of a 200 ms window. On real speakers the echo
+    // canceller leaked a 100 ms burst of ARIA's own voice, exactly the old
+    // 5-frame vote; 6 frames rejects it while the user still interrupts within
+    // ~160 ms (scripts/smoke-barge-in.js, ARIA_BARGE_SWEEP=1 to re-measure).
     const windowFrames = opts.window != null ? opts.window : Math.round(200 / frameMs);
-    const votes = opts.votes != null ? opts.votes : Math.ceil(windowFrames * 0.5);
+    const votes = opts.votes != null ? opts.votes : Math.ceil(windowFrames * 0.6);
+    // Echo reaches the mic late (output buffering + room), so the prediction
+    // uses the loudest reference over this window, not just the current frame.
+    const echoFrames = Math.max(1, Math.round((opts.echoWindowMs != null ? opts.echoWindowMs : 180) / frameMs));
+    let refRing = [];
     const margin = opts.margin != null ? opts.margin : 1.8;
     const absFloor = opts.absFloor != null ? opts.absFloor : 0.03;
     const initCoupling = opts.initCoupling != null ? opts.initCoupling : 1.0; // assume loud until learned
@@ -558,7 +566,11 @@
     let done = false;
     this.push = function (micRms, refRms) {
       if (done) return false;
-      refEnv = Math.max(refRms || 0, refEnv * release);
+      refRing.push(refRms || 0);
+      if (refRing.length > echoFrames) refRing.shift();
+      let refMax = 0;
+      for (let i = 0; i < refRing.length; i++) if (refRing[i] > refMax) refMax = refRing[i];
+      refEnv = Math.max(refMax, refEnv * release);
       const predicted = coupling * refEnv;
       const gate = Math.max(absFloor, noise * 3, predicted * margin);
       const above = micRms > gate;
@@ -584,11 +596,39 @@
     };
     this.fired = function () { return done; };
     this.coupling = function () { return coupling; };
-    this.reset = function () { refEnv = 0; hist = []; done = false; }; // keeps learned coupling/noise
+    this.reset = function () { refEnv = 0; refRing = []; hist = []; done = false; }; // keeps learned coupling/noise
+  }
+
+  // --- Voice barge-in verdict ----------------------------------------------
+  // A voice barge-in only pauses ARIA; this decides what happens next from the
+  // transcript of the paused moment. Silence, a whisper hallucination, or ARIA's
+  // own words heard back through the speakers resume the reply. Anything else,
+  // or an explicit "stop"/"wait", is a real interruption.
+  const BARGE_FILLER = /^(?:you|thank you|thanks(?: for watching)?|bye|okay|ok|so|oh|ah+|uh+|um+|hm+|mm+|huh|yeah|the|and|i)$/;
+  const BARGE_STOP = new Set(['stop', 'wait', 'hold', 'pause', 'sorry', 'excuse', 'actually', 'hey', 'jarvis', 'aria', 'no', 'nope', 'cancel', 'quiet', 'enough']);
+  function bargeWords(text) {
+    return String(text || '').toLowerCase().replace(/\[[^\]]*\]|\([^)]*\)/g, ' ').replace(/[^a-z0-9' ]+/g, ' ').split(/\s+/).filter(Boolean);
+  }
+  function bargeVerdict(transcript, spoken) {
+    const words = bargeWords(transcript);
+    if (!words.length || BARGE_FILLER.test(words.join(' '))) return 'resume';
+    const said = bargeWords(spoken);
+    const saidSet = new Set(said);
+    if (words.some((w) => BARGE_STOP.has(w) && !saidSet.has(w))) return 'interrupt';
+    // Longest run of the transcript found verbatim, in order, in what ARIA said.
+    let best = 0;
+    for (let i = 0; i < words.length; i++) {
+      for (let j = 0; j < said.length; j++) {
+        let k = 0;
+        while (i + k < words.length && j + k < said.length && words[i + k] === said[j + k]) k++;
+        if (k > best) best = k;
+      }
+    }
+    return best >= Math.max(1, Math.ceil(words.length * 0.75)) ? 'resume' : 'interrupt';
   }
 
   const api = {
-    nextTtsCut, TTS_FIRST_WAIT_MS, EchoAwareBargeDetector,
+    nextTtsCut, TTS_FIRST_WAIT_MS, EchoAwareBargeDetector, bargeVerdict,
     SPECULATIVE_ENDPOINT_OPTS, looksComplete,
     TARGET_RATE, HANDSFREE_ENDPOINT_OPTS, downsampleTo16k, floatToInt16, micFrameToPcm16k, rms, VadEndpointer,
     SttDiscardGate, sanitizeForSpeech, collapseRepeats,

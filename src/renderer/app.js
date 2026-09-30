@@ -337,6 +337,7 @@ function ttsPlay(text, replyId, replyDone) {
   if (activeTtsReplyId !== id) {
     activeTtsReplyId = id;
     ttsRequestId = 0;
+    spokenSoFar = '';
   }
   const speakable = window.AriaAudio.sanitizeForSpeech(text, { audioTags: audioTagsOn });
   if (!speakable) {
@@ -344,6 +345,7 @@ function ttsPlay(text, replyId, replyDone) {
     return; // nothing worth speaking (e.g. a chunk that was just a URL)
   }
   ttsMuted = false;
+  spokenSoFar = (spokenSoFar + ' ' + speakable).slice(-1500);
   const requestId = `${id}:${++ttsRequestId}`;
   try {
     aria.tts.play({ text: speakable, replyId: id, requestId, epoch: ttsEpoch });
@@ -670,6 +672,7 @@ function holdOnPhrase(text) {
 // rather than truncate it. `speakOnly` runs stopPlayback first (which clears the
 // flag), so set the flag AFTER it.
 function speakFiller(phrase) {
+  if (listening) return; // never talk over the user
   try { stopPlayback(true); ttsPlay(phrase, currentReplyId, false); enterSpeech(); } catch (e) {}
   fillerSpeaking = true;
 }
@@ -713,7 +716,7 @@ let narrationCount = 0;
 let lastNarrationAt = 0;
 let narrationTimer = null; // a step that arrived too soon waits here; newer steps replace it
 function narrateTool(info) {
-  if (!awaitingFirstToken) return; // reply text already started: let it speak
+  if (!awaitingFirstToken || listening) return; // reply started, or the user is talking
   const phrase = window.AriaAudio.toolNarration(info && info.name, info && info.label);
   const key = String((info && info.name) || '');
   if (!phrase || narratedTools.has(key) || narrationCount >= NARRATION_MAX_PER_TURN) return;
@@ -1021,6 +1024,38 @@ function ttsReferenceRms() {
   return Math.sqrt(sum / _bargeRefBuf.length) * (ttsGain ? ttsGain.gain.value : 1);
 }
 
+// Soft voice barge-in: the detector pauses ARIA instead of cancelling her, and
+// what the user actually said decides. Silence, a whisper hallucination, or
+// ARIA's own words heard back through the speakers resume the reply exactly
+// where it paused; real words stop it and become the next turn. The reply keeps
+// streaming and synthesizing underneath, so a resume loses nothing.
+let softBarge = null;      // { spoken } while paused for a voice barge-in
+let spokenSoFar = '';      // text the current reply has sent to speech
+const SOFT_BARGE_NO_SPEECH_MS = 900; // nobody kept talking: it was noise/echo
+function startSoftBarge(preroll) {
+  if (listening || softBarge) return;
+  softBarge = { spoken: spokenSoFar };
+  clearTimeout(idleTimer); idleTimer = null;
+  try { if (audioCtx && audioCtx.state === 'running') audioCtx.suspend().catch(() => {}); } catch (e) {}
+  beginUtterance({ vad: true, preroll, soft: true });
+}
+function resumeFromSoftBarge() {
+  if (!softBarge) return;
+  softBarge = null;
+  partialEl.textContent = '';
+  try { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {}); } catch (e) {}
+  if (speechActive) { orbState(ttsSources.length ? 'speaking' : 'processing'); armIdleAtAudioEnd(); }
+  else orbState('idle');
+}
+// Decide a paused reply from the transcript. Returns true when handled.
+function settleSoftBarge(text, voiceTurnId) {
+  if (!softBarge) return false;
+  const verdict = window.AriaAudio.bargeVerdict(text, softBarge.spoken);
+  perf.mark(voiceTurnId, 'voice_barge_verdict', { verdict });
+  if (verdict === 'resume') { resumeFromSoftBarge(); return true; }
+  return false; // real interruption: submitUserMessage -> bargeIn stops the reply
+}
+
 function checkVoiceBargeIn(samples, pcm) {
   const playing = speechActive && ttsSources.length > 0 && !listening;
   if (!voiceBargeIn || !playing) {
@@ -1038,7 +1073,7 @@ function checkVoiceBargeIn(samples, pcm) {
     const preroll = bargePreroll;
     bargePreroll = [];
     perf.mark(currentTurnId, 'voice_barge_in');
-    beginUtterance({ vad: true, preroll });
+    startSoftBarge(preroll);
   }
 }
 
@@ -1138,7 +1173,7 @@ function markAudioStarted(leadSec) {
   clearTimeout(speechGapTimer); speechGapTimer = null;
   if (orbStateName === 'speaking') return;
   const delay = Math.max(0, (leadSec || 0) * 1000);
-  const flip = () => { if (speechActive && ttsSources.length && orbStateName !== 'listening') orbState('speaking'); };
+  const flip = () => { if (speechActive && ttsSources.length && orbStateName !== 'listening' && !softBarge) orbState('speaking'); };
   if (delay < 20) flip(); else setTimeout(flip, delay);
 }
 function markAudioGap() {
@@ -1286,17 +1321,20 @@ async function beginUtterance(opts) {
   // Duplicate wake detections while the mic is already open must not reset the
   // live buffer or create overlapping STT turns.
   if (listening) return;
-  bargeIn(); // interrupt whatever ARIA is currently saying/generating
+  const soft = !!(opts && opts.soft);
+  if (!soft) bargeIn(); // interrupt whatever ARIA is currently saying/generating
   const startupGeneration = utteranceStartGeneration;
   if (opts && opts.ptt) pttActive = true;
   if (!micStarted) await startMicCapture();
   if (startupGeneration !== utteranceStartGeneration) return;
   if (!micStarted) { pttActive = false; orbState('idle'); return; }
   const turnId = perf.newTurn('voice');
-  currentTurnId = turnId;
+  // A soft barge-in listens while the paused reply still owns currentTurnId, so
+  // its tokens and audio keep arriving for a possible resume.
+  if (!soft) currentTurnId = turnId;
   currentVoiceTurnId = turnId;
   sttDiscardGate.begin(turnId);
-  resetTurnMarkers();
+  if (!soft) resetTurnMarkers();
   perf.mark(turnId, 'audio_start');
   listening = true;
   micBtn.classList.add('listening');
@@ -1338,16 +1376,18 @@ async function beginUtterance(opts) {
   // than sending it — whisper hallucinates phantom phrases on pure silence
   // ("Thank you.", "you"), and those must never become a fake user turn.
   clearTimeout(noSpeechTimer); noSpeechTimer = null;
-  if (opts && opts.followup) {
+  if (opts && (opts.followup || soft)) {
     noSpeechTimer = setTimeout(() => {
       if (vad && !vad.hasSpeech()) endUtterance({ discard: true });
-    }, FOLLOWUP_NO_SPEECH_MS);
+    }, soft ? SOFT_BARGE_NO_SPEECH_MS : FOLLOWUP_NO_SPEECH_MS);
   }
 }
 
 function endUtterance(opts) {
   if (!listening) return;
-  const shouldPlayDoneChime = !(opts && opts.discard);
+  // No chime while a reply is paused: its audio context is suspended, so the
+  // tone would play later, on resume.
+  const shouldPlayDoneChime = !(opts && opts.discard) && !softBarge;
   listening = false;
   pttActive = false;
   vadActive = false;
@@ -1361,7 +1401,7 @@ function endUtterance(opts) {
   // it returns, and go straight back to idle instead of flashing 'processing'.
   if (opts && opts.discard) {
     sttDiscardGate.markDiscard(currentVoiceTurnId);
-    orbState('idle');
+    if (softBarge) resumeFromSoftBarge(); else orbState('idle');
   } else {
     orbState('processing'); // STT + LLM working
   }
@@ -1437,12 +1477,13 @@ aria.stt.onResult((result) => {
   if (sttDiscardGate.consume(resultTurnId)) {
     currentVoiceTurnId = null;
     partialEl.textContent = '';
-    orbState('idle');
+    if (!speechActive) orbState('idle'); // a resumed reply keeps its state
     return;
   }
   // De-loop: whisper can emit the same phrase repeated ("what's the weather"
   // ×3) on noisy audio — collapse a fully periodic transcript to one phrase.
   text = window.AriaAudio.collapseRepeats(text);
+  if (softBarge && settleSoftBarge(text, currentVoiceTurnId)) { currentVoiceTurnId = null; return; }
   if (text.trim()) {
     partialEl.textContent = '';
     perf.mark(currentVoiceTurnId, 'stt_result_render', { chars: text.trim().length });
@@ -1483,7 +1524,7 @@ aria.stt.onState((event) => {
   partialEl.textContent = '';
   try { window.AriaOrb && window.AriaOrb.endStt && window.AriaOrb.endStt(); } catch (e) {}
   try { window.AriaOrb && window.AriaOrb.endSttCompute && window.AriaOrb.endSttCompute(); } catch (e) {}
-  orbState('idle');
+  if (softBarge) resumeFromSoftBarge(); else orbState('idle');
   showError(`Speech recognition unavailable: ${event.error || 'startup timed out'}. Use text input instead.`);
 });
 
@@ -1847,7 +1888,7 @@ let ttsSynthDone = false;
 // the deadline at the true audio end. Gated on orbStateName so a barge-in that
 // moved us to listening/processing is never overridden.
 function armIdleAtAudioEnd() {
-  if (!ttsSynthDone) return;
+  if (!ttsSynthDone || softBarge) return; // paused: resume re-arms from the true remaining audio
   const remainMs = audioCtx ? Math.max(0, (nextPlayTime - audioCtx.currentTime) * 1000) : 0;
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
@@ -1895,7 +1936,7 @@ function getAudioCtx() {
       return null;
     }
   }
-  if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+  if (audioCtx.state === 'suspended' && !softBarge) audioCtx.resume().catch(() => {});
   return audioCtx;
 }
 
@@ -1903,6 +1944,9 @@ function getAudioCtx() {
 // the agent never speaks over itself). Cancels the sidecar synth too.
 function stopPlayback(cancelSidecar) {
   for (const s of ttsSources) { try { s.onended = null; s.stop(); } catch (e) {} }
+  // Any pause for a voice barge-in ends with the reply it paused.
+  softBarge = null;
+  try { if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {}); } catch (e) {}
   ttsSources = [];
   nextPlayTime = 0;
   fillerSpeaking = false; // audio is being hard-stopped: no filler left to protect

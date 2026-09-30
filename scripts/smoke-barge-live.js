@@ -99,7 +99,7 @@ async function connect(port) {
       out.echoOnlyCalls = calls.length;
       feed(20, (i) => 0.4 * env(i) + 0.3, env);
       out.userCalls = calls.length;
-      out.opts = calls[0] ? { vad: calls[0].vad, prerollLen: calls[0].preroll.length,
+      out.opts = calls[0] ? { vad: calls[0].vad, soft: calls[0].soft, prerollLen: calls[0].preroll.length,
         prerollIsBuffer: calls[0].preroll.every((p) => p instanceof ArrayBuffer || ArrayBuffer.isView(p)) } : null;
       calls.length = 0; speechActive = false; ttsSources = [];
       feed(60, () => 0.5, () => 0);
@@ -108,11 +108,50 @@ async function connect(port) {
       feed(60, () => 0.5, () => 0.05);
       out.offCalls = calls.length;
       speechActive = false; ttsSources = [];
+      voiceBargeIn = true;
+      return JSON.stringify(out);
+    })()`;
+    // Pause-and-decide, against the real functions (no hook): a barge-in
+    // pauses the reply; the transcript of that moment resumes or stops it.
+    const soft = `(() => {
+      const out = {}; softBarge = null;
+      const suspends = []; let ctxState = 'running';
+      audioCtx = { get state() { return ctxState; }, currentTime: 0,
+        suspend() { suspends.push('suspend'); ctxState = 'suspended'; return Promise.resolve(); },
+        resume() { suspends.push('resume'); ctxState = 'running'; return Promise.resolve(); } };
+      const utterances = []; const submitted = []; let cancelled = 0; const aborted = [];
+      beginUtterance = (opts) => { utterances.push(opts); listening = true; currentVoiceTurnId = 'voice-soft-' + utterances.length; };
+      submitUserMessage = (text) => { submitted.push(text); };
+      aria.llm.cancel = () => { cancelled++; };
+      const stop = { called: 0 }; const realStop = stopPlayback;
+      const says = 'Flights from Denver to Cairo are the biggest cost, about thirteen hundred dollars each round trip.';
+      const reply = (turn) => { speechActive = true; ttsSources = [{ stop() { aborted.push(turn); } }]; listening = false; spokenSoFar = says; ttsSynthDone = false; orbStateName = 'speaking'; };
+      const result = (text) => { listening = false; window.__stt(text, currentVoiceTurnId); };
+      // 1. Echo-only burst: paused, nobody spoke, resumed where it was.
+      reply('a'); startSoftBarge([]);
+      out.pausedOnDetect = ctxState === 'suspended' && utterances.length === 1 && utterances[0].soft === true && cancelled === 0 && aborted.length === 0;
+      resumeFromSoftBarge();
+      out.resumedAfterSilence = ctxState === 'running' && speechActive && aborted.length === 0 && cancelled === 0 && orbStateName === 'speaking';
+      // 2. STT heard ARIA's own words: resume, nothing submitted.
+      reply('b'); startSoftBarge([]);
+      out.echoWordsResume = settleSoftBarge('about thirteen hundred dollars each', 'voice-x') === true && ctxState === 'running' && submitted.length === 0 && aborted.length === 0;
+      // 3. Real words: not handled here, so the normal path stops the reply.
+      reply('c'); startSoftBarge([]);
+      out.realWordsInterrupt = settleSoftBarge('wait what about hotels in Luxor', 'voice-y') === false && !!softBarge;
+      stopPlayback(false);
+      out.stopClearsPause = softBarge === null && ctxState === 'running' && aborted.includes('c');
+      // 4. The pause never plays the chime or re-opens a hands-free wake turn.
+      reply('d'); startSoftBarge([]); const before = utterances.length; startSoftBarge([]);
+      out.singlePause = utterances.length === before;
+      softBarge = null; speechActive = false; ttsSources = []; listening = false;
       return JSON.stringify(out);
     })()`;
     const res = await send('Debugger.evaluateOnCallFrame', { callFrameId: paused.params.callFrames[0].callFrameId, expression: scenario, returnByValue: true });
     if (res.result.exceptionDetails) throw new Error(JSON.stringify(res.result.exceptionDetails).slice(0, 400));
     Object.assign(r, JSON.parse(res.result.result.value));
+    const res2 = await send('Debugger.evaluateOnCallFrame', { callFrameId: paused.params.callFrames[0].callFrameId, expression: soft, returnByValue: true });
+    if (res2.result.exceptionDetails) throw new Error(JSON.stringify(res2.result.exceptionDetails).slice(0, 400));
+    Object.assign(r, JSON.parse(res2.result.result.value));
     await send('Debugger.resume', {});
     ws.close();
     console.log(JSON.stringify(r, null, 2));
@@ -123,7 +162,13 @@ async function connect(port) {
       micFramesReachDetector: r.micFramesReachDetector === true,
       echoDoesNotInterrupt: r.echoOnlyCalls === 0,
       userInterruptsOnce: r.userCalls === 1,
-      handsFreeWithPreroll: !!r.opts && r.opts.vad === true && r.opts.prerollLen > 0 && r.opts.prerollLen <= 16 && r.opts.prerollIsBuffer,
+      handsFreeWithPreroll: !!r.opts && r.opts.vad === true && r.opts.soft === true && r.opts.prerollLen > 0 && r.opts.prerollLen <= 16 && r.opts.prerollIsBuffer,
+      pausesNotCancels: r.pausedOnDetect === true,
+      resumesAfterSilence: r.resumedAfterSilence === true,
+      echoWordsResume: r.echoWordsResume === true,
+      realWordsInterrupt: r.realWordsInterrupt === true,
+      stopClearsPause: r.stopClearsPause === true,
+      singlePause: r.singlePause === true,
       idleNeverFires: r.idleCalls === 0,
       disabledNeverFires: r.offCalls === 0,
     };

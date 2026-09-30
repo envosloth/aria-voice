@@ -45,7 +45,7 @@ const rate = aria.rate;
 const frame = Math.round(rate * 0.02);
 const rmsOf = (a, s, n) => { let t = 0; for (let i = s; i < s + n; i++) t += (a[i] || 0) * (a[i] || 0); return Math.sqrt(t / n); };
 
-function run(gain, userAtSec, userGain) {
+function run(gain, userAtSec, userGain, detOpts) {
   const lat = Math.round(rate * 0.06);
   const taps = [[0, 1], [Math.round(rate * 0.023), 0.35], [Math.round(rate * 0.061), 0.15]];
   const len = aria.samples.length + rate;
@@ -62,12 +62,30 @@ function run(gain, userAtSec, userGain) {
   let onset = -1;
   if (userStart >= 0) for (let s = 0; s < user.samples.length; s += frame) if (rmsOf(user.samples, s, frame) * userGain > 0.02) { onset = userStart + s; break; }
 
-  const det = new A.EchoAwareBargeDetector({ frameMs: 20 });
+  const det = new A.EchoAwareBargeDetector({ frameMs: 20, ...detOpts });
   for (let s = 0; s + frame <= aria.samples.length; s += frame) {
     const ref = rmsOf(aria.samples, s, frame); // what ARIA is emitting now (analyser)
     if (det.push(rmsOf(mic, s, frame), ref)) return { firedAt: s, onset };
   }
   return { firedAt: -1, onset };
+}
+
+// ARIA_BARGE_SWEEP=1: search detector settings against every case below and exit.
+if (process.env.ARIA_BARGE_SWEEP) {
+  const real = require('./fixtures/barge-echo-real.json').frames;
+  const out = [];
+  for (const echoWindowMs of [100, 140, 180, 220, 260, 300]) for (const window of [8, 10, 12, 15]) for (const vf of [0.5, 0.6, 0.7]) for (const margin of [1.8, 2.2, 2.6]) {
+    const o = { echoWindowMs, window, votes: Math.ceil(window * vf), margin };
+    const d = new A.EchoAwareBargeDetector({ frameMs: 20, ...o }); let rf = -1; real.forEach(([m, r], i) => { if (rf < 0 && d.push(m, r)) rf = i; });
+    const echoOk = [0.3, 0.6, 0.9, 1.2, 1.6].every((g) => run(g, null, 0, o).firedAt < 0);
+    let worst = 0, miss = 0;
+    for (const [g, ug] of [[0.3, 0.5], [0.3, 1.0], [0.6, 1.0], [0.6, 1.5], [0.9, 1.5]]) for (const at of [2.5, 5.0]) { const r = run(g, at, ug, o); if (r.firedAt < r.onset) { miss++; continue; } worst = Math.max(worst, (r.firedAt - r.onset) / rate * 1000); }
+    out.push({ ...o, real: rf < 0, echoOk, miss, worst: Math.round(worst) });
+  }
+  const good = out.filter((r) => r.real && r.echoOk && r.miss === 0).sort((a, b) => a.worst - b.worst);
+  console.log('configs passing everything:', good.length); good.slice(0, 10).forEach((g) => console.log(JSON.stringify(g)));
+  console.log('closest:'); out.filter((r) => r.real && r.echoOk).sort((a, b) => a.miss - b.miss || a.worst - b.worst).slice(0, 6).forEach((g) => console.log(JSON.stringify(g)));
+  process.exit(0);
 }
 
 let pass = true;
@@ -87,6 +105,37 @@ for (const [gain, ug] of [[0.3, 0.5], [0.3, 1.0], [0.6, 1.0], [0.6, 1.5], [0.9, 
     check(`user-${ug}-over-echo-${gain}-at-${at}s`, r.firedAt >= r.onset && ms <= 400,
       r.firedAt < 0 ? 'missed' : r.firedAt < r.onset ? 'fired before user spoke' : `fired ${ms.toFixed(0)}ms after onset`);
   }
+}
+// Real hardware: this machine's speakers + mic with nobody talking. The
+// echo canceller leaks short bursts of ARIA's voice ~240 ms late; the old
+// detector (100 ms vote, 160 ms echo memory) cut the reply off here.
+{
+  const real = require('./fixtures/barge-echo-real.json').frames;
+  const det = new A.EchoAwareBargeDetector({ frameMs: 20 });
+  let firedAt = -1;
+  real.forEach(([mic, ref], i) => { if (firedAt < 0 && det.push(mic, ref)) firedAt = i; });
+  check('real-hardware-echo-burst-does-not-interrupt', firedAt < 0, firedAt >= 0 ? `self-interrupt at ${(firedAt * 0.02).toFixed(2)}s` : 'no fire');
+}
+// Late echo: the speaker->mic path adds up to ~300 ms (output buffering +
+// room). A burst that fades in after the reference must still be predicted.
+for (const gain of [0.6, 1.2]) {
+  const det = new A.EchoAwareBargeDetector({ frameMs: 20 });
+  const lag = 12; // 240 ms: the measured speaker->mic delay on this machine
+  const refs = []; for (let i = 0; i < 600; i++) refs.push(0.1 + 0.08 * Math.sin(i / 4) * (i % 40 < 30 ? 1 : 0.1));
+  let fired = -1;
+  for (let i = 0; i < refs.length; i++) { const echo = (refs[i - lag] || 0) * gain * (i % 97 < 5 ? 1 : 0.08); /* 100 ms leaks, as measured */ if (fired < 0 && det.push(echo + 0.004, refs[i])) fired = i; }
+  check(`late-echo-bursts-${gain}`, fired < 0, fired >= 0 ? `fired at ${(fired * 0.02).toFixed(2)}s` : 'no fire');
+}
+// What the user actually said decides a voice barge-in: nothing, a
+// hallucination, or ARIA's own words resume the reply; real words stop it.
+const V = A.bargeVerdict;
+const said = "Flights from Denver to Cairo are the biggest cost, about thirteen hundred dollars each round trip. A good hotel near the pyramids runs around ninety dollars a night.";
+for (const [t, want] of [['', 'resume'], ['   ', 'resume'], ['[BLANK_AUDIO]', 'resume'], ['you', 'resume'], ['Thank you.', 'resume'], ['Um.', 'resume'],
+  ['thirteen hundred dollars each', 'resume'], ['near the pyramids', 'resume'], ['dollars', 'resume'], ['A good hotel near the pyramids runs', 'resume'],
+  ['stop', 'interrupt'], ['Wait.', 'interrupt'], ['hold on', 'interrupt'], ['Sorry for interrupting.', 'interrupt'],
+  ['what about the hotel in Luxor instead', 'interrupt'], ['can you check the hotel prices', 'interrupt'], ['no that is too expensive', 'interrupt'],
+  ['thirteen hundred dollars each wait how much for kids', 'interrupt']]) {
+  check(`verdict "${t}"`, V(t, said) === want, V(t, said));
 }
 console.log(`\n=== RESULT: ${pass ? 'PASS' : 'FAIL'} ===`);
 process.exit(pass ? 0 : 1);
