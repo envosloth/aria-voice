@@ -10,6 +10,15 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def run_script(args, env):
+    """Run a bash script and, on failure, show what it printed (CI logs only
+    showed the exit status, which hid the actual Windows failure)."""
+    proc = subprocess.run(args, env=env, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise AssertionError(f"{args[-1]} exited {proc.returncode}\n--- stdout ---\n{proc.stdout[-3000:]}\n--- stderr ---\n{proc.stderr[-3000:]}")
+    return proc
+
+
 class WindowsBuild(unittest.TestCase):
     def test_windows_stages_cpu_plugins_beside_executables(self):
         # GGML v1.7.6 scans the exe directory, not PATH, for CPU backend plugins.
@@ -31,8 +40,7 @@ class WindowsBuild(unittest.TestCase):
                 (source / name).write_bytes(b"staging-fixture")
             env = {**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"],
                    "WHISPER_BIN_DIR": str(source), "WHISPER_LIB_DIR": str(base / "absent")}
-            subprocess.run(["bash", str(base / "scripts/stage-whisper.sh")], env=env,
-                           check=True, capture_output=True, text=True)
+            run_script(["bash", str(base / "scripts/stage-whisper.sh")], env)
             for name in files:
                 self.assertTrue((base / "build/whisper/bin" / name).is_file(), name)
 
@@ -55,8 +63,7 @@ class WindowsBuild(unittest.TestCase):
             env = {**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"],
                    "TEST_CMAKE_LOG": str(log), "TEST_PYTHON": __import__("sys").executable,
                    "TMPDIR": str(base), "INSTALL_PREFIX": str(base / "install")}
-            subprocess.run(["bash", str(ROOT / "scripts/build-whispercpp.sh")], env=env,
-                           check=True, capture_output=True, text=True)
+            run_script(["bash", str(ROOT / "scripts/build-whispercpp.sh")], env)
             configure = json.loads(log.read_text().splitlines()[0])
             for flag in ("-DGGML_NATIVE=OFF", "-DGGML_BACKEND_DL=ON", "-DGGML_CPU_ALL_VARIANTS=ON"):
                 self.assertIn(flag, configure)
