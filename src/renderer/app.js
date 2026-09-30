@@ -321,13 +321,24 @@ let ttsRequestId = 0;
 // code, emoji and stray symbols so the voice never reads "asterisk" or spells
 // out a URL (the on-screen transcript keeps the original text). Marks audio as
 // wanted again so the onAudio gate lets the freshly-synthesized PCM through.
+// ElevenLabs v3/v4 perform "[laughs]"-style delivery tags; every other engine
+// would read them aloud. Refreshed at startup and after each Settings save.
+let audioTagsOn = false;
+async function refreshAudioTags() {
+  try {
+    const [engine, model, on] = await Promise.all([aria.config.get('tts.engine'), aria.config.get('tts.cloudModels.elevenlabs'), aria.config.get('tts.expressive')]);
+    audioTagsOn = window.AriaAudio.audioTagsActive(engine, model, on);
+  } catch (e) { audioTagsOn = false; }
+}
+refreshAudioTags();
+
 function ttsPlay(text, replyId, replyDone) {
   const id = replyId || `speech-${++ttsRequestId}`;
   if (activeTtsReplyId !== id) {
     activeTtsReplyId = id;
     ttsRequestId = 0;
   }
-  const speakable = window.AriaAudio.sanitizeForSpeech(text);
+  const speakable = window.AriaAudio.sanitizeForSpeech(text, { audioTags: audioTagsOn });
   if (!speakable) {
     if (replyDone) { try { aria.tts.replyDone({ replyId: id, epoch: ttsEpoch }); } catch (e) {} }
     return; // nothing worth speaking (e.g. a chunk that was just a URL)
@@ -1471,6 +1482,7 @@ aria.llm.onRoute((info) => {
 // forces a synchronous reflow per token — that layout thrashing is what dragged
 // the UI to ~5 FPS while the agent was responding.
 let streamTextNode = null;
+let streamRawText = '';
 let streamBuf = '';
 let streamFlushScheduled = false;
 // Tool-usage row for the in-progress assistant message (the harness's tool calls
@@ -1497,6 +1509,7 @@ function ensureAssistantMsg() {
   currentAssistantMsg.appendChild(currentToolsEl);
 
   streamTextNode = document.createTextNode('');
+  streamRawText = '';
   currentAssistantMsg.appendChild(streamTextNode);
 }
 
@@ -1631,7 +1644,9 @@ function flushStream() {
   streamFlushScheduled = false;
   if (!streamBuf) return;
   const pinned = isPinned();
-  if (streamTextNode) streamTextNode.nodeValue += streamBuf;
+  streamRawText += streamBuf;
+  // Tags steer the voice only: hide them on screen, including one mid-stream.
+  if (streamTextNode) streamTextNode.nodeValue = audioTagsOn ? window.AriaAudio.stripAudioTags(streamRawText, { partial: true }) : streamRawText;
   streamBuf = '';
   scrollIfPinned(pinned); // one reflow per frame
 }
@@ -1732,11 +1747,14 @@ aria.llm.onDone((info) => {
   perf.mark(currentTurnId, 'turn_complete', { chars: (fullText || '').length });
   cancelThinkingHold();
   flushStream(); // drain any tokens buffered since the last frame
+  // The stream may end on an unclosed "[" held back as a possible tag.
+  if (streamTextNode && audioTagsOn) streamTextNode.nodeValue = window.AriaAudio.stripAudioTags(streamRawText);
   // Streaming already populated the message text (preserving the route badge);
   // only fill in if nothing streamed (e.g. non-streaming reply).
   if (currentAssistantMsg && !currentAssistantMsg.textContent.trim()) {
-    if (streamTextNode) streamTextNode.nodeValue = fullText;
-    else currentAssistantMsg.appendChild(document.createTextNode(fullText));
+    const shown = audioTagsOn ? window.AriaAudio.stripAudioTags(fullText) : fullText;
+    if (streamTextNode) streamTextNode.nodeValue = shown;
+    else currentAssistantMsg.appendChild(document.createTextNode(shown));
   }
   currentAssistantMsg = null;
   streamTextNode = null;
@@ -3721,6 +3739,7 @@ settingsSave.addEventListener('click', async () => {
       await aria.config.set('tts.voice', voiceOk ? ttsVoice : TTS_DEFAULT_VOICE[ttsEngine]);
     }
     await aria.config.set('tts.engine', ttsEngine);
+    await refreshAudioTags();
     await aria.config.set('wakeword.enabled', cfg.wwEnabled.checked);
     await aria.config.set('wakeword.phrase', cfg.wwPhrase.value.trim());
     loadWakeConfig();

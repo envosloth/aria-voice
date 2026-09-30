@@ -178,9 +178,30 @@
   // markup but KEEP the words, turn links/emails into a short spoken placeholder,
   // and drop code blocks. The on-screen transcript still shows the raw text —
   // this only affects what TTS receives. Returns '' if nothing speakable is left.
-  function sanitizeForSpeech(text) {
+  // ElevenLabs v3/v4 expressive audio tags ("[laughs]"). Mirrors
+  // src/main/audio-tags.ts; only these models act on them, others would read
+  // them aloud, so speech, display and prompt all share one predicate.
+  const EXPRESSIVE_MODEL = /^eleven_v(?:3|4)(?:_|$)/;
+  const AUDIO_TAG = /\[[A-Za-z][A-Za-z ,'-]{0,40}\]/g;
+  const OPEN_AUDIO_TAG = /\[[A-Za-z][A-Za-z ,'-]{0,40}$/;
+  function audioTagsActive(engine, model, enabled) {
+    return enabled !== false && engine === 'elevenlabs' && typeof model === 'string' && EXPRESSIVE_MODEL.test(model);
+  }
+  function tidySpaces(s) {
+    return s.replace(/[ \t]{2,}/g, ' ').replace(/ +([.,!?;:])/g, '$1').replace(/^ +| +$/gm, '');
+  }
+  // Display/transcript form: delivery directions are never shown. `partial`
+  // hides a tag still streaming in ("Hello [whisp") until it closes.
+  function stripAudioTags(text, opts) {
+    let s = String(text || '').replace(AUDIO_TAG, ' ');
+    if (opts && opts.partial) s = s.replace(OPEN_AUDIO_TAG, '');
+    return tidySpaces(s).trim();
+  }
+
+  function sanitizeForSpeech(text, opts) {
     if (!text) return '';
     let s = String(text);
+    const keepTags = !!(opts && opts.audioTags);
 
     // Fenced + indented code blocks: don't read code aloud at all.
     s = s.replace(/```[\s\S]*?```/g, ' ');
@@ -192,6 +213,10 @@
     // alt; [text](url) -> text.
     s = s.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1');
     s = s.replace(/\[([^\]]+)\]\([^)]*\)/g, '$1');
+    // Audio tags: protect them from the symbol strip when the engine performs
+    // them, otherwise drop them whole so "[laughs]" never becomes the word.
+    const tags = [];
+    s = s.replace(AUDIO_TAG, (t) => keepTags ? '\uE000' + (tags.push(t) - 1) + '\uE001' : ' ');
 
     // Bare URLs / emails -> short spoken placeholders (reading the raw string is
     // noise). Order matters: URLs before the generic symbol strip.
@@ -304,6 +329,7 @@
     // Collapse whitespace and tidy spacing before punctuation.
     s = s.replace(/\s+([,.!?;:])/g, '$1');
     s = s.replace(/\s+/g, ' ').trim();
+    if (tags.length) s = s.replace(/\uE000(\d+)\uE001/g, (_, i) => tags[Number(i)] || '');
     return s;
   }
 
@@ -411,7 +437,13 @@
 
   // Where to cut the next speakable chunk out of `buf`, or -1 to keep buffering.
   // `isFirst` makes chunk #1 eager so audio starts within a beat.
+  // A delivery tag still streaming in ("[whisp") must travel with the words
+  // it colours, so no cut may land inside or after it until it closes.
   function nextTtsCut(buf, isFirst, elapsedMs) {
+    const open = OPEN_AUDIO_TAG.exec(buf);
+    return cutAt(open ? buf.slice(0, open.index) : buf, isFirst, elapsedMs);
+  }
+  function cutAt(buf, isFirst, elapsedMs) {
     TTS_SENTENCE_END.lastIndex = 0;
     const sm = TTS_SENTENCE_END.exec(buf);
     const sentenceEnd = sm ? TTS_SENTENCE_END.lastIndex : -1;
@@ -524,6 +556,7 @@
     SPECULATIVE_ENDPOINT_OPTS, looksComplete,
     TARGET_RATE, HANDSFREE_ENDPOINT_OPTS, downsampleTo16k, floatToInt16, micFrameToPcm16k, rms, VadEndpointer,
     SttDiscardGate, sanitizeForSpeech, collapseRepeats,
+    audioTagsActive, stripAudioTags,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

@@ -43,11 +43,14 @@
     el('cfg-tts-key').placeholder = meta ? `Enter a key to enable ${meta.label}` : '';
     el('cfg-tts-cloud-model').oninput = null;
     el('cfg-tts-speed').title = '';
+    el('tts-expressive-row').hidden = true;
     if (!meta) return;
     const updateSpeed = () => {
-      const v4 = engine === 'elevenlabs' && /^eleven_v4(?:_|$)/.test(el('cfg-tts-cloud-model').value);
+      const model = el('cfg-tts-cloud-model').value;
+      const v4 = engine === 'elevenlabs' && /^eleven_v4(?:_|$)/.test(model);
       el('cfg-tts-speed').disabled = v4;
       el('cfg-tts-speed').title = v4 ? 'Eleven v4 does not support speed control' : '';
+      el('tts-expressive-row').hidden = !window.AriaAudio.audioTagsActive(engine, model.trim(), true);
     };
     el('cfg-tts-cloud-model').oninput = updateSpeed;
     el('tts-key-label').textContent = `${meta.label} API key`;
@@ -56,10 +59,12 @@
     el('cfg-tts-speed').disabled = false;
     el('cfg-tts-cloud-model').value = meta.model;
     el('cfg-tts-cloud-voice').value = meta.voice;
-    const [model, voice, saved] = await Promise.all([
+    const [model, voice, saved, expressive] = await Promise.all([
       aria.config.get(`tts.cloudModels.${engine}`), aria.config.get(`tts.cloudVoices.${engine}`), aria.secure.get(`tts-${engine}-api-key`).catch(() => null),
+      aria.config.get('tts.expressive'),
     ]);
     if (version !== ttsVersion) return;
+    el('cfg-tts-expressive').checked = expressive !== false;
     el('cfg-tts-cloud-model').value = edits[engine]?.model ?? model ?? meta.model;
     el('cfg-tts-cloud-voice').value = edits[engine]?.voice ?? voice ?? meta.voice;
     updateSpeed();
@@ -87,6 +92,7 @@
   async function saveTts(aria, engine) {
     await aria.config.set(`tts.cloudModels.${engine}`, el('cfg-tts-cloud-model').value.trim());
     await aria.config.set(`tts.cloudVoices.${engine}`, el('cfg-tts-cloud-voice').value.trim());
+    if (engine === 'elevenlabs') await aria.config.set('tts.expressive', el('cfg-tts-expressive').checked);
   }
   window.AriaSpeechSettings = { tts, updateStt, updateTts, validateAndSaveKeys, saveTts };
 })();

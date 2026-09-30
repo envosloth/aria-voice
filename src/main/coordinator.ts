@@ -3,6 +3,7 @@ import http from 'http';
 import https from 'https';
 import { URL } from 'url';
 import { config } from './config';
+import { audioTagsActive, expressivePrompt, stripAudioTags } from './audio-tags';
 import { getSecret } from './secure-storage';
 import { streamChat, LlmCallbacks, ChatMessage, ChatHandle, TokenUsage } from './llm-stream';
 import { credentialedEndpointSecurityError, requestHostname } from './endpoint-security';
@@ -730,6 +731,7 @@ export async function coordinate(
     // sent. The conversational model receives no delegation tool or sentinel.
     // History records a compact note for tools the harness itself ran.
     const systemContent = (target === 'harness' ? HARNESS_SYSTEM_PROMPT : LLM_SYSTEM_PROMPT)
+      + expressivePrompt(config.get('tts.engine'), config.get('tts.cloudModels.elevenlabs'), config.get('tts.expressive'))
       + memoryContext(userMessage) + contextBlock;
     // The "voice output" hint is appended to the LAST user message because
     // LLMs reliably follow user-message instructions but inconsistently
@@ -800,8 +802,11 @@ export async function coordinate(
         const note = target === 'harness' && agentActions.length
           ? `\n\n[agent tools used: ${agentActions.join(', ')}]`
           : '';
-        history.push({ role: 'assistant', content: fullText + note });
-        persistSafely('record assistant turn', () => sessions.recordTurn('assistant', fullText));
+        // Delivery tags steer the voice only; transcripts keep the plain words.
+        const plainText = audioTagsActive(config.get('tts.engine'), config.get('tts.cloudModels.elevenlabs'), config.get('tts.expressive'))
+          ? stripAudioTags(fullText) : fullText;
+        history.push({ role: 'assistant', content: plainText + note });
+        persistSafely('record assistant turn', () => sessions.recordTurn('assistant', plainText));
       }
       if (history.length > MAX_TURNS) history = history.slice(-MAX_TURNS);
       // Attribute tokens spent to the current session, split by target. Prefer the

@@ -20,6 +20,7 @@ interface AppConfig {
     cloudVoices: { elevenlabs: string; cartesia: string; openai: string; deepgram: string };
     voice: string;
     speed: number; // speaking rate multiplier, 0.5..2.0 (1.0 = normal)
+    expressive: boolean; // ElevenLabs v3/v4 audio tags such as [laughs]
   };
   wakeword: {
     enabled: boolean;
@@ -179,6 +180,7 @@ const defaults: AppConfig = {
     cloudVoices: { elevenlabs: 'JBFqnCBsd6RMkjVDRZzb', cartesia: 'db6b0ed5-d5d3-463d-ae85-518a07d3c2b4', openai: 'onyx', deepgram: '' },
     voice: 'bm_george', // "Jarvis" — refined British male
     speed: 1.0,
+    expressive: true,
   },
   wakeword: {
     enabled: true,

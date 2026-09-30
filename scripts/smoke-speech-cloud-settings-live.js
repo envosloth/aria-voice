@@ -92,7 +92,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     for (const engine of ['elevenlabs','cartesia','openai','deepgram']) {
       const localVoice=await ev(`aria.config.get('tts.voice')`);
       await ev(`document.getElementById('cfg-tts-engine').value='${engine}';document.getElementById('cfg-tts-engine').dispatchEvent(new Event('change'));document.getElementById('settings-save').click()`); await settleSave();
-      if(engine==='elevenlabs')check('V4 Turbo disables unsupported speed',await ev(`document.getElementById('cfg-tts-speed').disabled`));
+      if(engine==='elevenlabs'){
+        check('V4 Turbo disables unsupported speed',await ev(`document.getElementById('cfg-tts-speed').disabled`));
+        check('expressive toggle visible and on for V4 Turbo',await ev(`(()=>{const r=document.getElementById('tts-expressive-row');return getComputedStyle(r).display!=='none'&&document.getElementById('cfg-tts-expressive').checked})()`));
+        check('expressive toggle hidden for Flash',await ev(`(()=>{const m=document.getElementById('cfg-tts-cloud-model'),v=m.value;m.value='eleven_flash_v2_5';m.dispatchEvent(new Event('input'));const hidden=getComputedStyle(document.getElementById('tts-expressive-row')).display==='none';m.value=v;m.dispatchEvent(new Event('input'));return hidden})()`));
+      }
       const missingKeyState = await ev(`(async()=>({engine:await aria.config.get('tts.engine'), selected:document.getElementById('cfg-tts-engine').value,message:document.getElementById('settings-saved-msg').textContent}))()`);
       check(engine+' rejects missing TTS key', !['elevenlabs','cartesia','openai','deepgram'].includes(missingKeyState.engine) && /key/i.test(missingKeyState.message) || (()=>{console.log('DIAGNOSTIC',JSON.stringify(missingKeyState));return false;})());
       await ev(`document.getElementById('cfg-tts-key').value='fixture-${engine}-tts';document.getElementById('settings-save').click()`); await settleSave();
