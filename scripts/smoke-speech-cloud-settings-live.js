@@ -88,9 +88,11 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
       check(provider+' reopens with secret masked', state.provider===provider && await ev(`document.getElementById('cfg-stt-key').value===''`));
       await ev(`document.getElementById('cfg-stt-provider').value='local';document.getElementById('cfg-stt-provider').dispatchEvent(new Event('change'));document.getElementById('settings-save').click()`); await settleSave();
     }
+    check('ElevenLabs fresh default is V4 Turbo with George',await ev(`(async()=> (await aria.config.get('tts.cloudModels.elevenlabs'))==='eleven_v4_turbo'&&window.AriaSpeechSettings.tts.elevenlabs.model==='eleven_v4_turbo'&&(await aria.config.get('tts.cloudVoices.elevenlabs'))==='JBFqnCBsd6RMkjVDRZzb')()`));
     for (const engine of ['elevenlabs','cartesia','openai','deepgram']) {
       const localVoice=await ev(`aria.config.get('tts.voice')`);
       await ev(`document.getElementById('cfg-tts-engine').value='${engine}';document.getElementById('cfg-tts-engine').dispatchEvent(new Event('change'));document.getElementById('settings-save').click()`); await settleSave();
+      if(engine==='elevenlabs')check('V4 Turbo disables unsupported speed',await ev(`document.getElementById('cfg-tts-speed').disabled`));
       const missingKeyState = await ev(`(async()=>({engine:await aria.config.get('tts.engine'), selected:document.getElementById('cfg-tts-engine').value,message:document.getElementById('settings-saved-msg').textContent}))()`);
       check(engine+' rejects missing TTS key', !['elevenlabs','cartesia','openai','deepgram'].includes(missingKeyState.engine) && /key/i.test(missingKeyState.message) || (()=>{console.log('DIAGNOSTIC',JSON.stringify(missingKeyState));return false;})());
       await ev(`document.getElementById('cfg-tts-key').value='fixture-${engine}-tts';document.getElementById('settings-save').click()`); await settleSave();

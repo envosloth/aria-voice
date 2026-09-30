@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Behavioral cloud TTS gate: stdlib only, synthetic PCM over loopback HTTP.
+"""Behavioral cloud TTS gate: synthetic PCM over loopback HTTP/WebSockets.
 
 No real credentials, provider calls, model downloads, or external uploads. Run:
-    python3 scripts/smoke-tts-cloud.py
+    sidecars/tts/venv/bin/python scripts/smoke-tts-cloud.py
 """
 import contextlib
+import base64
 import io
 import json
 import math
+import os
 from pathlib import Path
 import queue
 import socket
@@ -20,9 +22,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "sidecars" / "tts"))
+TTS_DIR = Path(__file__).resolve().parents[1] / "sidecars" / "tts"
+# npm invokes system python3; exercise the same isolated dependencies as the
+# actual sidecar instead of requiring a global WebSocket package installation.
+venv = TTS_DIR / "venv"
+python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+if __name__ == "__main__" and python.is_file() and Path(sys.prefix).resolve() != venv.resolve():
+    env = os.environ.copy()
+    for name in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "__PYVENV_LAUNCHER__"):
+        env.pop(name, None)
+    env["PYTHONNOUSERSITE"] = "1"
+    os.execve(str(python), [str(python), str(Path(__file__).resolve()), *sys.argv[1:]], env)
+
+sys.path.insert(0, str(TTS_DIR))
 from cloud_tts import CloudTts, CloudTtsError, CloudTtsCancelled, DEFAULTS
 from main import TtsSidecar
+from test_cloud_websocket import WebsocketTests, fixture as websocket_fixture, PCM as WS_PCM
 
 PCM = b"".join(struct.pack("<h", int(12000 * math.sin(i * 0.11))) for i in range(2400))
 KEY = "loopback-test-key-not-a-secret"
@@ -93,6 +108,9 @@ class CloudTests(unittest.TestCase):
         cls.thread.join(2)
 
     def client(self, engine="openai", **kwargs):
+        # This fixture speaks HTTP only; v4 has its own real WebSocket fixture.
+        if engine == "elevenlabs" and "model" not in kwargs:
+            kwargs["model"] = "eleven_flash_v2_5"
         return CloudTts(engine, KEY, endpoint=self.endpoint, **kwargs)
 
     def setUp(self):
@@ -316,6 +334,78 @@ class CloudTests(unittest.TestCase):
                 for m in packets:
                     self.assertEqual((m["sample_rate"], m["reply_id"], m["request_id"], m["epoch"], m["index"], m["total"]), (24000, "reply-1", "request-1", 71, 0, 1))
                 self.assertEqual([m["type"] for m in messages[-2:]], ["tts_done", "tts_reply_done"])
+
+    def test_v4_sidecar_waits_for_explicit_finality_and_preserves_pcm_metadata(self):
+        first, release = threading.Event(), threading.Event()
+        def delayed_final(ws):
+            ws.send(json.dumps({"audio": base64.b64encode(WS_PCM).decode()}))
+            first.set()
+            release.wait(2)
+            ws.send(json.dumps({"is_final": True}))
+        with websocket_fixture(delayed_final) as (endpoint, _, _):
+            with self.sidecar("elevenlabs") as (sidecar, output, audio):
+                sidecar._cloud = CloudTts("elevenlabs", KEY, endpoint=endpoint)
+                try:
+                    sidecar.on_control({"type": "synthesize", "text": "Hi.", "reply_id": "v4-reply", "request_id": "v4-request", "epoch": 7})
+                    sidecar.on_control({"type": "reply_done", "reply_id": "v4-reply", "epoch": 7})
+                    self.assertTrue(first.wait(1))
+                    end = time.monotonic() + 1
+                    while len(audio) < len(WS_PCM) and time.monotonic() < end:
+                        time.sleep(0.005)
+                    self.assertEqual(bytes(audio), WS_PCM)
+                    self.assertNotIn("tts_done", output.getvalue())
+                    self.assertNotIn("tts_reply_done", output.getvalue())
+                finally:
+                    release.set()
+                sidecar._synth_queue.join()
+            messages = [json.loads(line) for line in output.getvalue().splitlines()]
+            packets = [m for m in messages if m["type"] == "tts_chunk"]
+            self.assertEqual(sum(m["size"] for m in packets), len(WS_PCM))
+            self.assertTrue(all((m["sample_rate"], m["reply_id"], m["request_id"], m["epoch"]) == (24000, "v4-reply", "v4-request", 7) for m in packets))
+            self.assertEqual([m["type"] for m in messages[-2:]], ["tts_done", "tts_reply_done"])
+
+    def test_v4_sidecar_stop_discards_odd_carry_and_queued_text(self):
+        first = threading.Event()
+        def odd_stalled(ws):
+            ws.send(json.dumps({"audio": "eA=="}))
+            first.set()
+            try:
+                ws.recv(timeout=2)
+            except Exception:
+                pass
+        with websocket_fixture(odd_stalled) as (old_endpoint, old_requests, _), websocket_fixture() as (new_endpoint, new_requests, _):
+            with self.sidecar("elevenlabs") as (sidecar, output, audio):
+                sidecar._cloud = CloudTts("elevenlabs", KEY, endpoint=old_endpoint)
+                sidecar.on_control({"type": "synthesize", "text": "Old.", "request_id": "old", "epoch": 1})
+                self.assertTrue(first.wait(1))
+                sidecar.on_control({"type": "synthesize", "text": "Queued.", "request_id": "queued", "epoch": 1})
+                sidecar.on_control({"type": "stop", "epoch": 2})
+                sidecar._cloud = CloudTts("elevenlabs", KEY, endpoint=new_endpoint)
+                sidecar.on_control({"type": "synthesize", "text": "Fresh.", "request_id": "fresh", "reply_id": "fresh-reply", "epoch": 2})
+                sidecar.on_control({"type": "reply_done", "reply_id": "fresh-reply", "epoch": 2})
+                sidecar._synth_queue.join()
+            self.assertEqual(bytes(audio), WS_PCM)
+            self.assertEqual((old_requests.qsize(), new_requests.qsize()), (1, 1))
+            self.assertEqual(new_requests.get_nowait()[1][1]["inputs"][0]["text"], "Fresh.")
+            messages = [json.loads(line) for line in output.getvalue().splitlines()]
+            stopped = next(i for i, m in enumerate(messages) if m["type"] == "tts_stopped")
+            self.assertFalse(any(m.get("request_id") in ("old", "queued") for m in messages[stopped + 1:]))
+            self.assertEqual(messages[-1]["type"], "tts_reply_done")
+            self.assertFalse(any(m.get("status") == "error" for m in messages))
+
+    def test_v4_sidecar_error_never_signals_done_or_falls_back(self):
+        with websocket_fixture([{"error": KEY + " private response"}]) as (endpoint, requests, _):
+            with self.sidecar("elevenlabs") as (sidecar, output, audio):
+                sidecar._cloud = CloudTts("elevenlabs", KEY, endpoint=endpoint)
+                sidecar.on_control({"type": "synthesize", "text": "Hi.", "request_id": "bad"})
+                sidecar._synth_queue.join()
+            messages = [json.loads(line) for line in output.getvalue().splitlines()]
+            self.assertTrue(any(m.get("status") == "error" for m in messages))
+            self.assertFalse(any(m["type"] in ("tts_done", "tts_chunk") for m in messages))
+            self.assertEqual(bytes(audio), b"")
+            self.assertEqual(requests.qsize(), 1)
+            self.assertNotIn(KEY, output.getvalue())
+            self.assertNotIn("private response", output.getvalue())
 
     def test_cloud_initialization_reads_only_cloud_settings_without_loading_local_models(self):
         for engine in DEFAULTS:

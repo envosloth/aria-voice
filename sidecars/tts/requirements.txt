@@ -4,3 +4,6 @@ kokoro-onnx>=0.4.0
 # Piper is the lightweight CPU fallback engine (power-saver default).
 piper-tts>=1.4.0
 numpy>=1.26
+# Eleven v4 Turbo uses realtime dialogue WebSockets, not legacy HTTP TTS.
+# sync client supplies bounded messages/queues, TLS and explicit proxy disabling.
+websockets>=15.0.1,<16

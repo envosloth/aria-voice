@@ -175,7 +175,7 @@ const defaults: AppConfig = {
   },
   tts: {
     engine: 'kokoro',
-    cloudModels: { elevenlabs: 'eleven_flash_v2_5', cartesia: 'sonic-3.6', openai: 'gpt-4o-mini-tts', deepgram: 'aura-2-odysseus-en' },
+    cloudModels: { elevenlabs: 'eleven_v4_turbo', cartesia: 'sonic-3.6', openai: 'gpt-4o-mini-tts', deepgram: 'aura-2-odysseus-en' },
     cloudVoices: { elevenlabs: 'JBFqnCBsd6RMkjVDRZzb', cartesia: 'db6b0ed5-d5d3-463d-ae85-518a07d3c2b4', openai: 'onyx', deepgram: '' },
     voice: 'bm_george', // "Jarvis" — refined British male
     speed: 1.0,

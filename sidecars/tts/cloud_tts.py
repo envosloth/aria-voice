@@ -1,10 +1,11 @@
-"""Bounded, cancelable HTTP raw-PCM TTS transport (stdlib only).
+"""Bounded, cancelable HTTP/WebSocket raw-PCM TTS transport.
 
 Production origins are fixed: no environment endpoint overrides, redirects,
 proxy inheritance, retries, or cross-provider fallback. The optional endpoint
 argument is a loopback-only test seam, never populated by the sidecar.
 
 API contracts verified against:
+https://elevenlabs.io/docs/eleven-api/guides/how-to/websockets/realtime-tdd
 https://elevenlabs.io/docs/api-reference/text-to-speech/stream
 https://docs.cartesia.ai/api-reference/tts/bytes
 https://docs.cartesia.ai/build-with-cartesia/capability-guides/volume-speed-emotion
@@ -17,15 +18,19 @@ https://developers.deepgram.com/docs/tts-voice-controls
 
 All requests explicitly select mono signed-16 LE PCM at 24 kHz, without a
 container. ElevenLabs' 44.1 kHz PCM requires Pro; we request pcm_24000 instead.
-Provider account/model/voice entitlements still apply. Speed is guidance and is
-clamped to the provider's documented range; Cartesia PVCs ignore speed control.
+Provider account/model/voice entitlements still apply. Legacy HTTP speed is
+clamped to provider ranges; Cartesia PVCs ignore it. v4 Turbo supports neither
+speed nor style and ignores the legacy speed parameter without uploading it.
 """
 import http.client
+import base64
 import json
+import logging
 import math
 import queue
 import re
 import socket
+import ssl
 import threading
 import time
 from urllib.parse import quote, urlencode, urlsplit
@@ -33,11 +38,15 @@ from urllib.parse import quote, urlencode, urlsplit
 # One stalled resolver can be abandoned while the next reply proceeds. Two
 # unrecoverable resolvers fail closed instead of accumulating daemon threads.
 _NETWORK_SLOTS = threading.BoundedSemaphore(2)
+# A private, unregistered logger cannot inherit root DEBUG configuration.
+# Library frame/handshake debug logs otherwise disclose auth and spoken text.
+_WS_LOGGER = logging.Logger("aria-cloud-tts-websocket", level=logging.CRITICAL + 1)
+_WS_LOGGER.addHandler(logging.NullHandler())
 
 SAMPLE_RATE = 24000
 MAX_TEXT = 5000
 DEFAULTS = {
-    "elevenlabs": ("eleven_flash_v2_5", "JBFqnCBsd6RMkjVDRZzb"),
+    "elevenlabs": ("eleven_v4_turbo", "JBFqnCBsd6RMkjVDRZzb"),
     "cartesia": ("sonic-3.6", "db6b0ed5-d5d3-463d-ae85-518a07d3c2b4"),
     "openai": ("gpt-4o-mini-tts", "onyx"),
     "deepgram": ("aura-2-odysseus-en", "aura-2-odysseus-en"),
@@ -216,6 +225,9 @@ class CloudTts:
         The outer bounded worker consumer enforces timeout/cancel during DNS;
         check() after connect prevents abandoned work from uploading text.
         """
+        if self.engine == "elevenlabs" and self.model == "eleven_v4_turbo":
+            yield from self._stream_websocket(text, cancelled)
+            return
         path, headers, body = self._request(text, speed)
         origin = urlsplit(self._origin)
         timeout = min(self._idle_timeout_s, self._deadline_s)
@@ -336,4 +348,168 @@ class CloudTts:
             if response is not None:
                 response.close()
             connection.close()
+            watcher.join(timeout=0.2)
+
+    def _stream_websocket(self, text, cancelled):
+        # v4 Turbo is NOT a legacy HTTP text-to-speech model. Register exactly
+        # one voice; close_socket flushes even a short sentence. No speed/style.
+        from websockets.sync.client import connect
+
+        if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT:
+            raise CloudTtsError("Cloud TTS text must contain 1 to 5000 characters")
+        uri = self._origin.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+        uri += "/v1/text-to-dialogue/stream-input?" + urlencode({
+            "model_id": self.model, "output_format": "pcm_24000"})
+        deadline = time.monotonic() + self._deadline_s
+        finished = threading.Event()
+        active_socket: list[socket.socket | None] = [None]
+        raw_socket = None
+
+        def check():
+            if cancelled():
+                raise CloudTtsCancelled("Cloud TTS canceled")
+            if time.monotonic() >= deadline:
+                raise CloudTtsError("Cloud TTS request deadline exceeded")
+
+        def watchdog():
+            while not finished.wait(0.025):
+                if cancelled() or time.monotonic() >= deadline:
+                    sock = active_socket[0]
+                    if sock is not None:
+                        try:
+                            sock.shutdown(socket.SHUT_RDWR)
+                        except OSError:
+                            pass
+
+        # The sync library owns its receiver thread/socket after TLS. Capture
+        # that socket BEFORE the authenticated WebSocket handshake begins.
+        from websockets.sync.client import ClientConnection
+        class CancelableConnection(ClientConnection):
+            def __init__(self, sock, protocol, **kwargs):
+                active_socket[0] = sock
+                check()
+                super().__init__(sock, protocol, **kwargs)
+
+        class CancelableTLSContext(ssl.SSLContext):
+            def wrap_socket(self, *args, **kwargs):
+                # TLS wrapping detaches the original socket's FD. Publish the
+                # SSL socket BEFORE its potentially stalled handshake, otherwise
+                # the watchdog can only shutdown the now-detached TCP socket.
+                kwargs["do_handshake_on_connect"] = False
+                wrapped = super().wrap_socket(*args, **kwargs)
+                active_socket[0] = wrapped
+                try:
+                    check()
+                    wrapped.do_handshake()
+                    check()
+                    return wrapped
+                except BaseException:
+                    wrapped.close()
+                    raise
+
+        watcher = threading.Thread(target=watchdog, name="cloud-tts-ws-watchdog", daemon=True)
+        watcher.start()
+        try:
+            check()
+            origin = urlsplit(uri)
+            # Resolve/connect ourselves: sync connect() otherwise sends auth
+            # immediately after uninterruptible DNS, even for abandoned work.
+            raw_socket = socket.create_connection((origin.hostname, origin.port or 443),
+                                                  timeout=min(self._idle_timeout_s, self._deadline_s))
+            active_socket[0] = raw_socket
+            check()
+            raw_socket.settimeout(None)
+            tls = None
+            if origin.scheme == "wss":
+                # PROTOCOL_TLS_CLIENT requires certificate + hostname checks;
+                # system roots only, never insecure overrides or keylog env.
+                tls = CancelableTLSContext(ssl.PROTOCOL_TLS_CLIENT)
+                tls.load_default_certs()
+            with connect(uri, sock=raw_socket, proxy=None, compression=None,
+                         ssl=tls,
+                         additional_headers={"xi-api-key": self._key},
+                         open_timeout=min(self._idle_timeout_s, deadline - time.monotonic()),
+                         create_connection=CancelableConnection, ping_interval=None, logger=_WS_LOGGER,
+                         close_timeout=0.1, max_size=128 * 1024, max_queue=2) as ws:
+                check()
+                ws.send(json.dumps({"voices": [self.voice]}))
+                check()
+                ws.send(json.dumps({"inputs": [{"text": text, "voice_id": self.voice, "new_turn": False}]}))
+                check()
+                ws.send(json.dumps({"close_socket": True}))
+                carry = b""
+                received = 0
+                first = True
+                idle_deadline = time.monotonic() + self._idle_timeout_s
+                while True:
+                    check()
+                    try:
+                        raw = ws.recv(timeout=min(0.025, self._idle_timeout_s))
+                    except TimeoutError:
+                        check()
+                        if time.monotonic() >= idle_deadline:
+                            raise CloudTtsError("Cloud TTS WebSocket idle read timed out") from None
+                        continue
+                    check()
+                    idle_deadline = time.monotonic() + self._idle_timeout_s
+                    try:
+                        if not isinstance(raw, str):
+                            raise ValueError()
+                        message = json.loads(raw)
+                        if not isinstance(message, dict):
+                            raise ValueError()
+                        if "is_final" in message and not isinstance(message["is_final"], bool):
+                            raise ValueError()
+                    except (ValueError, TypeError, RecursionError):
+                        raise CloudTtsError("Cloud TTS malformed WebSocket response") from None
+                    if "error" in message:
+                        raise CloudTtsError("Cloud TTS provider rejected synthesis; check key, quota, model and voice access")
+                    encoded = message.get("audio")
+                    if encoded is not None:
+                        if not isinstance(encoded, str):
+                            raise CloudTtsError("Cloud TTS malformed WebSocket audio")
+                        # Bound BEFORE allocation by base64 decoding as well as
+                        # at the library's complete-message/frame-buffer layer.
+                        if len(encoded) > ((64 * 1024 + 2) // 3) * 4:
+                            raise CloudTtsError("Cloud TTS audio chunk limit exceeded")
+                        try:
+                            chunk = base64.b64decode(encoded, validate=True)
+                        except (ValueError, TypeError):
+                            raise CloudTtsError("Cloud TTS malformed WebSocket audio") from None
+                        if len(chunk) > 64 * 1024:
+                            raise CloudTtsError("Cloud TTS audio chunk limit exceeded")
+                        received += len(chunk)
+                        if received > self._max_bytes:
+                            raise CloudTtsError("Cloud TTS response exceeds audio byte limit")
+                        data = carry + chunk
+                        carry = b""
+                        if first and len(data) < 4:
+                            carry = data
+                        else:
+                            if first:
+                                if data[:4] in (b"RIFF", b"OggS", b"fLaC") or data[:3] == b"ID3":
+                                    raise CloudTtsError("Cloud TTS container received instead of raw PCM")
+                                first = False
+                            aligned = len(data) & ~1
+                            carry = data[aligned:]
+                            for offset in range(0, aligned, 4096):
+                                check()
+                                yield data[offset:min(offset + 4096, aligned)]
+                    if message.get("is_final") is True:
+                        if not received:
+                            raise CloudTtsError("Cloud TTS empty audio response")
+                        if len(carry) % 2:
+                            raise CloudTtsError("Cloud TTS unaligned audio response")
+                        if carry:
+                            yield carry
+                        return
+        except CloudTtsError:
+            raise
+        except Exception:
+            check()
+            raise CloudTtsError("Cloud TTS WebSocket connection failed or audio response interrupted") from None
+        finally:
+            finished.set()
+            if raw_socket is not None:
+                raw_socket.close()
             watcher.join(timeout=0.2)

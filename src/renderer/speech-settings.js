@@ -2,7 +2,7 @@
  * enter config JSON; each provider has its own secure-store alias. */
 (() => {
   const tts = {
-    elevenlabs: { label: 'ElevenLabs', model: 'eleven_flash_v2_5', voice: 'JBFqnCBsd6RMkjVDRZzb', hint: 'Flash synthesis; PCM access depends on your account. Text is sent to api.elevenlabs.io.' },
+    elevenlabs: { label: 'ElevenLabs', model: 'eleven_v4_turbo', voice: 'JBFqnCBsd6RMkjVDRZzb', hint: 'Default: Eleven v4 Turbo dialogue streaming; George is the recommended British voice. V4 has no speed control. PCM and voice access depend on your account. Text is sent to api.elevenlabs.io. George is a legacy default voice scheduled to retire on December 31, 2026; choose a replacement before then.' },
     cartesia: { label: 'Cartesia', model: 'sonic-3.6', voice: 'db6b0ed5-d5d3-463d-ae85-518a07d3c2b4', hint: 'Sonic streaming synthesis. Text is sent to api.cartesia.ai.' },
     openai: { label: 'OpenAI', model: 'gpt-4o-mini-tts', voice: 'onyx', hint: 'AI-generated speech with built-in voices. Text is sent to api.openai.com.' },
     deepgram: { label: 'Deepgram', model: 'aura-2-odysseus-en', voice: '', hint: 'Aura synthesis; the model ID selects the voice. Text is sent to api.deepgram.com. Speaking speed is limited to 0.7–1.5×.' },
@@ -41,7 +41,15 @@
     el('tts-local-voice-row').hidden = !!meta;
     el('cfg-tts-key').value = '';
     el('cfg-tts-key').placeholder = meta ? `Enter a key to enable ${meta.label}` : '';
+    el('cfg-tts-cloud-model').oninput = null;
+    el('cfg-tts-speed').title = '';
     if (!meta) return;
+    const updateSpeed = () => {
+      const v4 = engine === 'elevenlabs' && /^eleven_v4(?:_|$)/.test(el('cfg-tts-cloud-model').value);
+      el('cfg-tts-speed').disabled = v4;
+      el('cfg-tts-speed').title = v4 ? 'Eleven v4 does not support speed control' : '';
+    };
+    el('cfg-tts-cloud-model').oninput = updateSpeed;
     el('tts-key-label').textContent = `${meta.label} API key`;
     el('cfg-tts-engine-hint').textContent = `${meta.hint} Your own key and account quota are required; speed is clamped to the provider’s range. Local voices remain available. No automatic upload to another provider.`;
     el('tts-cloud-voice-row').hidden = engine === 'deepgram';
@@ -54,6 +62,7 @@
     if (version !== ttsVersion) return;
     el('cfg-tts-cloud-model').value = edits[engine]?.model ?? model ?? meta.model;
     el('cfg-tts-cloud-voice').value = edits[engine]?.voice ?? voice ?? meta.voice;
+    updateSpeed();
     if (saved) el('cfg-tts-key').placeholder = 'Key saved — leave blank to keep';
   }
   async function validateAndSaveKeys(aria) {
