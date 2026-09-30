@@ -58,6 +58,16 @@
   const PANELS = ['.sidebar', '.chat', '.ops'];
   const INK_VARS = ['--text', '--text-muted', '--ink-shadow', '--ink-scrim', '--ink-orb', '--success', '--warning', '--error', '--ink-chip', '--ink-chip-hover', '--ink-bubble'];
   const LIGHT = [244, 246, 251], DARK = [12, 15, 22];
+  // The ink is the THEME's text colour whenever it can be: a light theme text
+  // for light ink, a dark one for dark ink. When the theme has no text of that
+  // lightness, the neutral ink is tinted with the theme accent, so every theme
+  // colours its text either way. Contrast is still guaranteed by decide().
+  function themeInks(theme) {
+    const t = theme.text || LIGHT, a = theme.accent || [77, 163, 255];
+    const light = lum(t) > 0.5 ? t : mix(LIGHT, a, 0.12);
+    const dark = lum(t) < 0.08 ? t : mix(DARK, a, 0.28);
+    return { light, dark };
+  }
   const TARGET = 4.5;
   let customBitmap = null;
   let inkTimer = 0;
@@ -141,16 +151,17 @@
   // Chips and bubbles add their own fill over the glass; text must read on both.
   const CHIP = { light: [[255, 255, 255], 0.07], dark: [[255, 255, 255], 0.34] };
   const BUBBLE = { light: [[8, 10, 16], 0.26], dark: [[255, 255, 255], 0.5] };
+  const isLight = (ink) => lum(ink) > 0.3;
   function layers(under, ink) {
-    const k = ink === LIGHT ? 'light' : 'dark';
+    const k = isLight(ink) ? 'light' : 'dark';
     return under.concat(under.map((p) => mix(p, CHIP[k][0], CHIP[k][1])), under.map((p) => mix(p, BUBBLE[k][0], BUBBLE[k][1])));
   }
-  function decide(pixels, fill, fillA) {
+  function decide(pixels, fill, fillA, inks) {
     if (!pixels.length) return null;
     const under = pixels.map((p) => mix(p, fill, fillA));
     let best = null;
-    for (const ink of [LIGHT, DARK]) {
-      const scrimC = ink === LIGHT ? [0, 0, 0] : [255, 255, 255];
+    for (const ink of [inks.light, inks.dark]) {
+      const scrimC = isLight(ink) ? [0, 0, 0] : [255, 255, 255];
       const base = layers(under, ink);
       let s = 0, sc = score(base, ink);
       while (sc < TARGET && s < 0.9) { s = Math.round((s + 0.05) * 100) / 100; sc = score(base.map((p) => mix(p, scrimC, s)), ink); }
@@ -165,7 +176,7 @@
   }
 
   function inkVars(dec, theme) {
-    const light = dec.ink === LIGHT;
+    const light = isLight(dec.ink);
     // Semantic colours keep their hue but are pulled toward the ink until they
     // read at 4.5:1 against the worst sample (green "Ready" on a green scene).
     const toward = light ? [255, 255, 255] : [0, 0, 0];
@@ -193,6 +204,8 @@
     const num = (n, f) => { const v = parseFloat(cs.getPropertyValue(n)); return Number.isFinite(v) ? v : f; };
     const theme = {
       bg: parseColor(cs.getPropertyValue('--bg')) || [4, 6, 11],
+      text: parseColor(cs.getPropertyValue('--text')),
+      accent: parseColor(cs.getPropertyValue('--accent-active')),
       success: parseColor(cs.getPropertyValue('--success')) || [16, 185, 129],
       warning: parseColor(cs.getPropertyValue('--warning')) || [245, 158, 11],
       error: parseColor(cs.getPropertyValue('--error')) || [239, 68, 68],
@@ -200,22 +213,23 @@
     const fill = parseColor(cs.getPropertyValue('--glass-rgb')) || [16, 18, 24];
     const a = Math.min(1, num('--glass-tint', 0.3) * num('--glass-k', 1));
     const sm = sampleBackdrop(theme);
+    const inks = themeInks(theme);
     const report = {};
     for (const sel of PANELS) {
       const el = document.querySelector(sel);
       if (!el) continue;
       const r = el.getBoundingClientRect();
-      const dec = r.width && r.height ? decide(pixelsIn(sm, r), fill, a) : null;
+      const dec = r.width && r.height ? decide(pixelsIn(sm, r), fill, a, inks) : null;
       if (!dec) { clearVars(el); delete el.dataset.ink; continue; }
       writeVars(el, inkVars(dec, theme));
-      el.dataset.ink = dec.ink === LIGHT ? 'light' : 'dark';
-      report[sel] = { ink: dec.ink === LIGHT ? 'light' : 'dark', scrim: dec.scrim, contrast: Math.round(dec.score * 10) / 10 };
+      el.dataset.ink = isLight(dec.ink) ? 'light' : 'dark';
+      report[sel] = { ink: isLight(dec.ink) ? 'light' : 'dark', scrim: dec.scrim, contrast: Math.round(dec.score * 10) / 10 };
     }
     // Floating surfaces: centre of the window, behind the overlay veil + denser glass.
     const veiled = pixelsIn(sm, { left: sm.vw * 0.2, top: sm.vh * 0.1, right: sm.vw * 0.8, bottom: sm.vh * 0.9 }).map((p) => mix(p, [3, 5, 10], 0.35));
-    const dec = decide(veiled, fill, Math.min(0.9, a + 0.38));
-    if (dec) { writeVars(root, inkVars(dec, theme)); report.overlay = { ink: dec.ink === LIGHT ? 'light' : 'dark', scrim: dec.scrim, contrast: Math.round(dec.score * 10) / 10 }; }
-    root.dataset.ink = report['.chat'] ? report['.chat'].ink : (dec && dec.ink === LIGHT ? 'light' : 'dark');
+    const dec = decide(veiled, fill, Math.min(0.9, a + 0.38), inks);
+    if (dec) { writeVars(root, inkVars(dec, theme)); report.overlay = { ink: isLight(dec.ink) ? 'light' : 'dark', scrim: dec.scrim, contrast: Math.round(dec.score * 10) / 10 }; }
+    root.dataset.ink = report['.chat'] ? report['.chat'].ink : (dec && isLight(dec.ink) ? 'light' : 'dark');
     const orbChanged = (lastInk['.ops'] || {}).ink !== (report['.ops'] || {}).ink;
     lastInk = report;
     if (orbChanged && window.AriaOrb && window.AriaOrb.refreshAccent) window.AriaOrb.refreshAccent();

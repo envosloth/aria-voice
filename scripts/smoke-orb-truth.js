@@ -25,6 +25,7 @@ function harness() {
   const ctx = {
     speechActive: false, speechGapTimer: null, ttsSources: [], orbStateName: 'idle',
     ttsSynthDone: false, awaitingFirstToken: false, idleTimer: null, audioCtx: null, nextPlayTime: 0,
+    softBarge: null,
     conversationMode: false, lastTurnWasVoice: false, currentTurnId: 't',
     perf: { mark() {} }, maybeStartFollowup() {},
     states: [],

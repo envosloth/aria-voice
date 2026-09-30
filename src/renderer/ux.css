@@ -13,7 +13,19 @@
 }
 .message.user .msg-actions { right: calc(100% + 8px); }
 .message.assistant .msg-actions { left: calc(100% + 8px); }
-.message:hover .msg-actions, .message:focus-within .msg-actions { opacity: 1; pointer-events: auto; }
+/* A hover bridge fills the 8px gap between bubble and bar, so the pointer never
+   leaves the hovered bubble on its way to Copy. It is part of the bar (hence of
+   the bubble) and only takes pointer events while the bar is showing. */
+.message .msg-actions::before { content: ""; position: absolute; top: -8px; bottom: -8px; width: 28px; z-index: -1; }
+.message.user .msg-actions::before { left: calc(100% - 16px); }
+.message.assistant .msg-actions::before { right: calc(100% - 16px); }
+/* Showing is immediate; hiding waits a moment so a pointer cutting a corner
+   between the bubble and a button keeps the bar. Hidden-ness rides on
+   visibility (which can be delayed) rather than pointer-events (which can't). */
+.message .msg-actions { transition: opacity .12s ease .25s, visibility 0s linear .37s; visibility: hidden; pointer-events: auto; }
+.message:hover .msg-actions, .message:focus-within .msg-actions, .message .msg-actions:hover {
+  opacity: 1; pointer-events: auto; visibility: visible; transition: opacity .12s ease, visibility 0s;
+}
 /* Hover timestamp: under the action bar so the two never collide. */
 .message.user::after, .message.assistant::after { bottom: auto; top: 34px; }
 .msg-action {
