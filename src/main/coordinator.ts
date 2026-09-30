@@ -93,7 +93,10 @@ const LLM_SYSTEM_PROMPT = ARIA_PERSONA +
   'naming the exact thing, e.g. "Want me to check the weather in Longmont?" ' +
   'If a needed detail is missing, ask only for that detail ("Which city?"). If ' +
   'speech recognition garbled a word, make your best guess and confirm it inside ' +
-  'the same offer rather than asking twice.\n\n' +
+  'the same offer rather than asking twice. You cannot start any lookup or action ' +
+  'in this reply, so never say you are doing it or about to ("I\'m on it", "give me ' +
+  'a moment", "I\'ll pull that now"): end with the offer as a question and stop; ' +
+  'when the user says yes, it will be done.\n\n' +
   'Critical honesty rules: ' +
   '(1) If asked about anything current (the time, date, weather, news, prices, ' +
   'scores, traffic, local events, what\'s on screen), NEVER guess or invent a value. ' +
@@ -144,6 +147,28 @@ let lastTarget: Target | null = null;
 // resetConversation() (the UI "New session" button), which is exactly when the
 // user wants a fresh Hermes session. Non-Hermes harnesses ignore the header.
 let harnessSessionId: string | null = null;
+// Hermes continues a pinned session from its OWN transcript (state.db) and
+// ignores the request body's history, so turns answered by the chat model never
+// reached it: "yes, price it out" arrived with no trip, and it answered about
+// the weather it last saw. Track which shared-history entries the harness
+// session already holds and hand it the rest with the next request.
+let harnessSeen = new WeakSet<ChatMessage>();
+const HARNESS_CATCHUP_MAX_MESSAGES = 12;
+const HARNESS_CATCHUP_MAX_CHARS = 700;
+function harnessCatchUp(current: ChatMessage | undefined): string {
+  const missed = history.filter((m) => m !== current && !harnessSeen.has(m) && (m.role === 'user' || m.role === 'assistant'))
+    .slice(-HARNESS_CATCHUP_MAX_MESSAGES);
+  if (!missed.length) return '';
+  const lines = missed.map((m) => {
+    const text = (typeof m.content === 'string' ? m.content : '').replace(/\s+/g, ' ').trim();
+    return text ? `${m.role === 'user' ? 'User' : 'You'}: ${text.length > HARNESS_CATCHUP_MAX_CHARS ? text.slice(0, HARNESS_CATCHUP_MAX_CHARS) + '…' : text}` : '';
+  }).filter(Boolean);
+  return lines.length
+    ? '[Conversation so far that is not in your session history — you said these replies yourself; ' +
+      'use them to understand the request below]\n' + lines.join('\n') + '\n\n[Current request]\n'
+    : '';
+}
+function markHarnessSeen(): void { for (const m of history) harnessSeen.add(m); }
 function harnessSession(): string {
   if (!harnessSessionId) harnessSessionId = `aria-${randomUUID()}`;
   return harnessSessionId;
@@ -157,6 +182,7 @@ export function resetConversation(): void {
   history = [];
   lastTarget = null;
   harnessSessionId = null; // next harness turn opens a fresh Hermes session
+  harnessSeen = new WeakSet();
   sessions.startNewSession(); // next turn opens a fresh persisted session
 }
 
@@ -172,6 +198,10 @@ export function resumeSession(id: string): sessions.SessionRecord | null {
   if (history.length > MAX_TURNS) history = history.slice(-MAX_TURNS);
   lastTarget = null;
   harnessSessionId = rec.harnessSessionId || null;
+  // A reopened Hermes session already holds its transcript; a fresh one holds
+  // nothing, so it gets the restored conversation with its first request.
+  harnessSeen = new WeakSet();
+  if (harnessSessionId) markHarnessSeen();
   sessions.setCurrentSession(id);
   return rec;
 }
@@ -778,7 +808,8 @@ export async function coordinate(
       const last = messages[lastIdx];
       if (last && last.role === 'user') {
         const prev = typeof last.content === 'string' ? last.content : '';
-        messages[lastIdx] = { role: 'user', content: prev + voiceOutputHint };
+        const catchUp = target === 'harness' ? harnessCatchUp(history[history.length - 1]) : '';
+        messages[lastIdx] = { role: 'user', content: catchUp + prev + voiceOutputHint };
       }
     }
     // Attach the screen-share frame to the final (current) user message as an
@@ -827,6 +858,8 @@ export async function coordinate(
         const plainText = audioTagsActive(config.get('tts.engine'), config.get('tts.cloudModels.elevenlabs'), config.get('tts.expressive'))
           ? stripAudioTags(fullText) : fullText;
         history.push({ role: 'assistant', content: plainText + note });
+        // The harness session now holds everything up to and including this reply.
+        if (target === 'harness') markHarnessSeen();
         persistSafely('record assistant turn', () => sessions.recordTurn('assistant', plainText));
       }
       if (history.length > MAX_TURNS) history = history.slice(-MAX_TURNS);

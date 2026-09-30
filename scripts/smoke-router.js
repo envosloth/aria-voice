@@ -58,6 +58,27 @@ const offer = { prevUserText: 'is it going to rain', prevAssistantText: 'Want me
 check('accept-offer-yes', route('yes please', { ...both, lastTarget: 'llm', lastWasQuestion: true, ...offer }), 'harness');
 check('accept-offer-sure', route('sure, go ahead', { ...both, lastTarget: 'llm', lastWasQuestion: true, ...offer }), 'harness');
 check('decline-offer', route('no thanks', { ...both, lastTarget: 'llm', lastWasQuestion: true, ...offer }), 'llm');
+// The Giza trip, as spoken: the chat model promised live prices and never
+// handed off. Offers phrased "Want me to pull/price…", "Give me a moment and
+// I'll pull…", and a user nudge after a promise must all reach the tools.
+const giza = { ...both, lastTarget: 'llm', lastWasQuestion: true };
+check('offer-price-it-out', route('okay from longmont colorado and its going to be me and two other friends', { ...giza, lastWasQuestion: false,
+  prevUserText: 'how much would it cost if i wanted to visit the pyramids of Giza from october 31 to november 15',
+  prevAssistantText: "Sure — that's mostly flights, hotel, and the site tickets, and I'd need to check live prices for those. Want me to price it out? Just tell me what city you'd be flying from, and how many of you are going." }), 'harness');
+check('accept-offer-pull-live-flights', route('yes', { ...giza,
+  prevUserText: 'okay from longmont colorado and its going to be me and two other friends',
+  prevAssistantText: 'Got it — three of you flying out of Denver, October 31 to November 15. Want me to pull live flights, a hotel near the pyramids, and the site tickets so I can give you a real total?' }), 'harness');
+const promised = { ...both, lastTarget: 'llm', lastWasQuestion: false };
+check('ack-after-promise', route('sounds good', { ...promised, prevUserText: 'yes',
+  prevAssistantText: "Give me a moment and I'll pull flights out of Denver for those dates, a hotel near the pyramids, and the Giza tickets, then add it all up for the three of you." }), 'harness');
+check('nudge-after-promise', route('so are you going to do it or what?', { ...promised, prevUserText: 'sounds good',
+  prevAssistantText: "Great — I'm on it. I'll have your three-person total for flights from Denver, the hotel by the pyramids, and the site tickets in just a moment." }), 'harness');
+check('chat-promise-without-tools-stays-chat', route('sounds good', { ...promised, prevUserText: 'write me a poem',
+  prevAssistantText: "Sure, I'll write you a short poem about autumn." }), 'llm');
+check('lead-in-hides-ask', route('great, and can you check the flight baggage rules too', { ...both, lastTarget: 'harness', lastWasQuestion: false }), 'harness');
+check('lead-in-bare-ack-kept', route('okay thanks', { ...both }), 'llm');
+check('decline-after-promise', route('no never mind', { ...promised, prevUserText: 'yes',
+  prevAssistantText: "Give me a moment and I'll pull flights out of Denver for those dates." }), 'llm');
 check('new-topic-after-offer', route('what is the capital of France', { ...both, lastTarget: 'llm', lastWasQuestion: true, ...offer }), 'llm');
 // A chat question about a chat topic keeps its answer on chat.
 check('chat-question-answer-stays-chat', route('Portland, probably', { ...both, lastTarget: 'llm', lastWasQuestion: true,

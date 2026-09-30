@@ -312,16 +312,24 @@ export function normalizeSttHomophones(text: string): string {
 }
 
 const AFFIRMATION = /^(?:yes|yeah|yep|yup|sure|ok(?:ay)?|please|go ahead|do it|do that|sounds good|that'?s right|correct|right)\b/i;
+const LEAD_IN = /^(?:\s*(?:ok(?:ay)?|great|cool|nice|awesome|perfect|thanks|thank you|alright|all right|sure|yes|yeah|so|and|also|then|oh|hey|well|now|right)\b[\s,.!-]*)+(?=\S)/i;
 const DECLINE = /^(?:no|nope|nah|not now|never ?mind|no thanks|don'?t|stop|cancel)\b/i;
 const SELF_CONTAINED_ASK = /\?\s*$|^(?:what|who|whom|why|how|when|where|which|can|could|would|will|is|are|do|does|did|tell|explain|give|show|write|make|help)\b/i;
 // The assistant offered, in the first person, to do something only tools can.
-const TOOL_OFFER = /\b(?:want me to|shall i|should i|would you like me to|i can|i could|let me)\b[^?.]{0,80}\b(?:check|look (?:it |that )?up|search|find|pull up|grab|fetch|open|set|send|book|order|run|install|play|turn (?:on|off)|remind|schedule|add)\b/i;
+const TOOL_VERBS = '(?:check|look (?:it |that |into )?up|look into|search|find|pull(?: up)?|grab|fetch|get|price|quote|compare|research|track down|total|open|set|send|book|order|run|install|play|turn (?:on|off)|remind|schedule|add)';
+const TOOL_OFFER = new RegExp(`\\b(?:want me to|shall i|should i|would you like me to|i can|i could|let me)\\b[^?.]{0,80}\\b${TOOL_VERBS}\\b`, 'i');
+// The reply says it needs live information to answer ("I'd need to check live prices").
+const NEEDS_LIVE = /\b(?:live|current|today'?s|real[- ]time|up[- ]to[- ]date) (?:prices?|fares?|rates?|flights?|availability|data|numbers|info(?:rmation)?|results)\b|\breal total\b|\bneed to (?:check|look up|search|pull)\b/i;
+// The chat model promised to act ("Give me a moment and I'll pull flights",
+// "I'm on it"). It has no tools, so the user's go-ahead belongs to the tools.
+const TOOL_PROMISE = new RegExp(`\\b(?:i'?ll|i will|i'?m going to|let me|i'?m (?:now )?(?:pulling|checking|searching|looking|getting|pricing))\\b[^.?!]{0,60}\\b${TOOL_VERBS}\\b|\\b(?:i'?m on it|give me a (?:moment|sec(?:ond)?|minute)|one moment)\\b`, 'i');
+const ACK_OR_NUDGE = /^(?:(?:ok(?:ay)?|sure|great|cool|thanks|thank you|sounds good|perfect|alright|go ahead|do it|please)\b|so\b.*\b(?:going to|gonna)\b|(?:are|will) you (?:going to |gonna )?(?:do|doing) it|(?:any|what'?s the) (?:update|news|progress)|(?:still )?waiting|well\??$|and\??$|hello\??$)/i;
 
 // A short reply with no fresh intent is treated as a continuation of the current
 // turn (e.g. answering the harness's "where are you?" with "Austin, Texas").
-function isContinuation(text: string): boolean {
+function isContinuation(text: string, maxWords = 8): boolean {
   const words = text.trim().split(/\s+/).filter(Boolean);
-  return words.length > 0 && words.length <= 8;
+  return words.length > 0 && words.length <= maxWords;
 }
 
 export interface RouteDecision {
@@ -348,7 +356,12 @@ export function routeDetailed(message: string, cfg: RouteConfig): RouteDecision 
   if (cfg.hasLlm && !cfg.hasHarness) return { target: 'llm', confident: true, reason: 'only-chat-configured' };
   if (!cfg.hasLlm && !cfg.hasHarness) return { target: 'llm', confident: true, reason: 'nothing-configured' };
 
-  const text = normalizeSttHomophones(message || '');
+  // A spoken lead-in ("great, and can you check…", "okay so look up…") hides
+  // the ask from every start-anchored rule; route on what follows it. A bare
+  // acknowledgement ("sounds good") has nothing after it and is kept whole.
+  const spoken = normalizeSttHomophones(message || '');
+  const stripped = spoken.replace(LEAD_IN, '');
+  const text = stripped.trim() ? stripped : spoken;
 
   // 1. Explicit asks win outright.
   if (EXPLICIT_LLM.test(text)) return { target: 'llm', confident: true, reason: 'explicit-chat' };
@@ -535,10 +548,25 @@ export function routeDetailed(message: string, cfg: RouteConfig): RouteDecision 
   //     where the original ask ("the whether…") itself routes to the tools;
   //   - accepted offer: "yes please" after "Want me to check the forecast?".
   // A decline, or a fresh self-contained question, starts over normally.
+  // 12c. The chat model promised to act ("Give me a moment and I'll pull
+  // flights…"); an acknowledgement or a nudge is the go-ahead for the tools.
+  if (cfg.lastTarget === 'llm' && cfg.prevAssistantText && TOOL_PROMISE.test(cfg.prevAssistantText)
+    && !DECLINE.test(text.trim()) && (ACK_OR_NUDGE.test(text.trim()) || AFFIRMATION.test(text.trim()))) {
+    return { target: 'harness', confident: true, reason: 'follow-through-on-promise' };
+  }
+  // Details supplied for an offer that needs live data ("Want me to price it
+  // out? Just tell me where you're flying from." -> "from Longmont, three of
+  // us"). The offer need not be the reply's last sentence.
+  if (cfg.lastTarget === 'llm' && cfg.prevAssistantText && /\?/.test(cfg.prevAssistantText)
+    && (TOOL_OFFER.test(cfg.prevAssistantText) || NEEDS_LIVE.test(cfg.prevAssistantText))
+    && isContinuation(text, 16) && !DECLINE.test(text.trim()) && !SELF_CONTAINED_ASK.test(text.trim())) {
+    return { target: 'harness', confident: true, reason: 'details-for-tool-offer' };
+  }
   if (cfg.lastTarget === 'llm' && cfg.lastWasQuestion && isContinuation(text) && !DECLINE.test(text.trim())) {
     if (AFFIRMATION.test(text.trim()) && cfg.prevAssistantText && TOOL_OFFER.test(cfg.prevAssistantText)) {
       return { target: 'harness', confident: true, reason: 'accepted-tool-offer' };
     }
+
     if (!SELF_CONTAINED_ASK.test(text.trim())) {
       // Either the original ask routes to the tools on its own, or the question
       // the assistant asked names the live thing it needs the detail for
