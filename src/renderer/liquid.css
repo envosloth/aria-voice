@@ -41,12 +41,22 @@ html[data-blur-off="true"] body :is(button, [role="button"], input[type="button"
 }
 /* Keep overflow controls quiet without removing their keyboard tab stop.
  * A body-reparented open menu still owns its trigger through aria-expanded. */
+/* The open button is the whole bubble; the dots float inside its right edge. */
+body .session-item { grid-template-columns: minmax(0, 1fr); position: relative; }
+body .session-item .session-open { width: 100%; }
+body .session-item .session-menu-btn {
+  position: absolute; right: 7px; top: 0; bottom: 0; margin: auto 0;
+  width: 26px; height: 26px; padding: 0; z-index: 1;
+}
+body .session-item:is(:hover, :focus-within) .session-open,
+body .session-item:has(.session-menu-btn[aria-expanded="true"]) .session-open { padding-right: 38px; }
 body .session-item .session-menu-btn { opacity: 0; pointer-events: none; }
 body .session-item:hover .session-menu-btn,
 body .session-item:focus-within .session-menu-btn,
 body .session-item .session-menu-btn[aria-expanded="true"] { opacity: 1; pointer-events: auto; }
 @media (hover: none) {
   body .session-item .session-menu-btn { opacity: 1; pointer-events: auto; }
+  body .session-item .session-open { padding-right: 38px; }
 }
 /* A compact voice key rather than an oversized solid microphone puck. */
 #mic-btn {

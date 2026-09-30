@@ -144,6 +144,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const material = () => ev(`(()=>{const row=window.__importRow,b=row.querySelector('.session-menu-btn'),r=row.getBoundingClientRect(),s=getComputedStyle(b);return {opacity:s.opacity,pointer:s.pointerEvents,expanded:b.getAttribute('aria-expanded'),x:r.x+4,y:r.y+4,width:r.width}})()`);
     await send('Input.dispatchMouseEvent', { type:'mouseMoved', x:600, y:20 });
     const idle = await material();
+    const fill = await ev(`(()=>{const row=window.__importRow,list=row.parentElement,o=row.querySelector('.session-open').getBoundingClientRect(),b=row.querySelector('.session-menu-btn').getBoundingClientRect(),r=row.getBoundingClientRect(),l=list.getBoundingClientRect(),ls=getComputedStyle(list);const inner=l.right-parseFloat(ls.paddingRight)-(list.offsetWidth-list.clientWidth);return {rowGap:Math.round(inner-r.right),openRight:Math.round(r.right-o.right),dotsInside:b.left>=r.left&&b.right<=r.right-2&&b.top>=r.top&&b.bottom<=r.bottom,dotsOverlay:getComputedStyle(row.querySelector('.session-menu-btn')).position==='absolute'}})()`);
     await send('Input.dispatchMouseEvent', { type:'mouseMoved', x:idle.x, y:idle.y });
     const hovered = await material();
     await send('Input.dispatchMouseEvent', { type:'mouseMoved', x:600, y:20 });
@@ -168,6 +169,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const leaks = /SECRET-THOUGHT|TOOL-OUTPUT|TOOL-JSON|DEV-PROMPT|environment_context|local-command|LEAK-|SUBAGENT/;
     const checks = {
       dotsHiddenAtRest: idle.opacity==='0'&&idle.pointer==='none',
+      bubbleFillsRowWidth: fill.rowGap<=8&&fill.openRight<=2 || (console.log('FILL',JSON.stringify(fill)),false),
+      dotsSitInsideBubble: fill.dotsInside&&fill.dotsOverlay || (console.log('FILL',JSON.stringify(fill)),false),
       dotsAppearOnHover: hovered.opacity==='1'&&hovered.pointer==='auto',
       dotsHideOnLeaveWithoutLayoutShift: left.opacity==='0'&&left.width===hovered.width,
       dotsAvailableToKeyboard: focused.opacity==='1'&&tabAccessible,
