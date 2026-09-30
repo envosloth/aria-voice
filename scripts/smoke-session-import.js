@@ -67,7 +67,7 @@ const port = 9800 + Math.floor(Math.random() * 150);
 const child = spawn(electron, ['--no-sandbox', `--remote-debugging-port=${port}`, `--user-data-dir=${userData}`,
   path.join(root, 'dist', 'main', 'index.js')], {
   cwd: root, stdio: ['ignore', 'pipe', 'pipe'],
-  env: { ...process.env, ARIA_SMOKE: '1', ARIA_SMOKE_HOLD: '1', ARIA_SMOKE_USER_DATA: userData, ARIA_IMPORT_HOME: fakeHome,
+  env: { ...process.env, ARIA_SMOKE: '1', ARIA_SMOKE_HOLD: '1', ARIA_SMOKE_SHOW: '1', ARIA_SMOKE_USER_DATA: userData, ARIA_IMPORT_HOME: fakeHome,
     HERMES_HOME: hh, XDG_CONFIG_HOME: path.join(tmp, 'x'), XDG_CACHE_HOME: path.join(tmp, 'c') },
 });
 let log = ''; child.stdout.on('data', (d) => { log += d; }); child.stderr.on('data', (d) => { log += d; });
@@ -86,8 +86,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
     let id = 0; const pend = new Map();
     ws.onmessage = (m) => { const d = JSON.parse(m.data); if (pend.has(d.id)) { pend.get(d.id)(d); pend.delete(d.id); } };
-    const ev = (expr) => new Promise((r) => { const n = ++id; pend.set(n, r);
-      ws.send(JSON.stringify({ id: n, method: 'Runtime.evaluate', params: { expression: expr, awaitPromise: true, returnByValue: true } })); })
+    const send = (method, params = {}) => new Promise((resolve, reject) => {
+      const n = ++id, timer = setTimeout(() => { pend.delete(n); reject(new Error('CDP timeout '+method)); }, 10000);
+      pend.set(n, d => { clearTimeout(timer); resolve(d); });
+      ws.send(JSON.stringify({ id: n, method, params }));
+    });
+    const ev = (expr) => send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
       .then((d) => { if (d.result.exceptionDetails) throw new Error(JSON.stringify(d.result.exceptionDetails).slice(0, 500)); return d.result.result.value; });
     await sleep(1500);
     const out = await ev(`(async () => {
@@ -135,8 +139,41 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       return r;
     })()`);
     console.log(JSON.stringify(out, null, 2));
+    await send('Emulation.setFocusEmulationEnabled', { enabled: true });
+    await ev(`document.head.insertAdjacentHTML('beforeend','<style>*{transition:none!important}</style>');document.body.tabIndex=-1;document.body.focus();window.__importRow=[...document.querySelectorAll('.session-item')].find(i=>i.querySelector('.s-meta').textContent.includes('from Claude Code'));`);
+    const material = () => ev(`(()=>{const row=window.__importRow,b=row.querySelector('.session-menu-btn'),r=row.getBoundingClientRect(),s=getComputedStyle(b);return {opacity:s.opacity,pointer:s.pointerEvents,expanded:b.getAttribute('aria-expanded'),x:r.x+4,y:r.y+4,width:r.width}})()`);
+    await send('Input.dispatchMouseEvent', { type:'mouseMoved', x:600, y:20 });
+    const idle = await material();
+    await send('Input.dispatchMouseEvent', { type:'mouseMoved', x:idle.x, y:idle.y });
+    const hovered = await material();
+    await send('Input.dispatchMouseEvent', { type:'mouseMoved', x:600, y:20 });
+    const left = await material();
+    await ev(`window.__importRow.querySelector('.session-open').focus()`);
+    const focused = await material();
+    await send('Input.dispatchKeyEvent', {type:'keyDown',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+    await send('Input.dispatchKeyEvent', {type:'keyUp',key:'Tab',code:'Tab',windowsVirtualKeyCode:9});
+    const tabAccessible = await ev(`document.activeElement===window.__importRow.querySelector('.session-menu-btn')`);
+    await ev(`window.__importRow.querySelector('.session-menu-btn').click()`);
+    const opened = await material();
+    await send('Input.dispatchKeyEvent', {type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+    await send('Input.dispatchKeyEvent', {type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
+    const returned = await ev(`document.activeElement===window.__importRow.querySelector('.session-menu-btn')&&document.activeElement.getAttribute('aria-expanded')==='false'`);
+    await ev(`document.body.focus()`);
+    await send('Emulation.setTouchEmulationEnabled', {enabled:true,maxTouchPoints:1});
+    await send('Emulation.setDeviceMetricsOverride', {width:820,height:900,deviceScaleFactor:1,mobile:true});
+    const shot = await send('Page.captureScreenshot', {format:'png'});
+    const shotFile = path.join(os.tmpdir(),'aria-session-hover-'+Date.now()+'.png');
+    fs.writeFileSync(shotFile,Buffer.from(shot.result.data,'base64')); console.log('SCREENSHOT '+shotFile);
+    const touch = await ev(`matchMedia('(hover: none)').matches&&getComputedStyle(window.__importRow.querySelector('.session-menu-btn')).opacity==='1'`);
     const leaks = /SECRET-THOUGHT|TOOL-OUTPUT|TOOL-JSON|DEV-PROMPT|environment_context|local-command|LEAK-|SUBAGENT/;
     const checks = {
+      dotsHiddenAtRest: idle.opacity==='0'&&idle.pointer==='none',
+      dotsAppearOnHover: hovered.opacity==='1'&&hovered.pointer==='auto',
+      dotsHideOnLeaveWithoutLayoutShift: left.opacity==='0'&&left.width===hovered.width,
+      dotsAvailableToKeyboard: focused.opacity==='1'&&tabAccessible,
+      dotsRemainWhileMenuIsOpen: opened.expanded==='true'&&opened.opacity==='1',
+      menuEscapeReturnsFocus: returned,
+      dotsAvailableWithoutHover: touch,
       buttonInSidebar: out.button,
       allSourcesOffered: out.tabs.join() === 'hermes,claude-code,codex',
       hermesOnlyRealChats: out.hermesRows.join() === 'Channel growth ideas',
