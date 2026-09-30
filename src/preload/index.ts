@@ -92,7 +92,7 @@ const api = {
       ipcRenderer.invoke(IPC.LLM_DETECT_HARNESS, id),
     onToken: (cb: (info: { token: string; turnId: string; generationId: number }) => void) =>
       ipcRenderer.on(IPC.LLM_TOKEN, (_e, info) => cb(info)),
-    onTool: (cb: (info: { name: string; args?: string; turnId: string; generationId: number }) => void) =>
+    onTool: (cb: (info: { name: string; args?: string; label?: string; turnId: string; generationId: number }) => void) =>
       ipcRenderer.on(IPC.LLM_TOOL, (_e, info) => cb(info)),
     onDone: (cb: (info: { text: string; turnId: string; generationId: number }) => void) =>
       ipcRenderer.on(IPC.LLM_DONE, (_e, info) => cb(info)),

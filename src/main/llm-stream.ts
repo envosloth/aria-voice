@@ -20,16 +20,25 @@ export interface LlmCallbacks {
   onError: (error: string) => void;
   // Harnesses may stream their own tool events. They are display-only here;
   // routing never depends on a conversational model requesting a tool.
-  onTool?: (info: { name: string; args?: string }) => void;
+  onTool?: (info: { name: string; args?: string; label?: string }) => void;
   onUsage?: (usage: TokenUsage) => void;
 }
 
 export interface TokenUsage { prompt: number; completion: number; total: number; }
 
-function extractTools(obj: unknown): { name: string; args?: string; key: string }[] {
-  const out: { name: string; args?: string; key: string }[] = [];
+function extractTools(obj: unknown): { name: string; args?: string; label?: string; key: string }[] {
+  const out: { name: string; args?: string; label?: string; key: string }[] = [];
   if (!obj || typeof obj !== 'object') return out;
   const o = obj as Record<string, any>;
+  // Hermes `event: hermes.tool.progress` frames: one per tool call start, with a
+  // human preview (the search query, the file, the command). Completion frames
+  // carry no new information for the user.
+  if (typeof o.tool === 'string' && o.tool && typeof o.toolCallId === 'string') {
+    if (o.status === 'completed') return out;
+    const label = typeof o.label === 'string' && o.label !== o.tool ? o.label.slice(0, 200) : undefined;
+    out.push({ name: o.tool, label, key: 'call:' + o.toolCallId });
+    return out;
+  }
   const choice = o.choices?.[0];
   const delta = choice?.delta || choice?.message || {};
   const calls = delta.tool_calls || o.tool_calls;
@@ -271,7 +280,7 @@ export function streamChat(opts: ChatOptions, callbacks: LlmCallbacks): ChatHand
             for (const tool of extractTools(parsed)) {
               if (!seenTools.has(tool.key)) {
                 seenTools.add(tool.key);
-                if (!cancelled) callbacks.onTool?.({ name: tool.name, args: tool.args });
+                if (!cancelled) callbacks.onTool?.({ name: tool.name, args: tool.args, label: tool.label });
               }
             }
             const finishReason = parsed.choices?.[0]?.finish_reason;

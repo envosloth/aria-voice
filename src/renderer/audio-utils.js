@@ -198,6 +198,42 @@
     return tidySpaces(s).trim();
   }
 
+  // --- Harness narration ---------------------------------------------------
+  // What ARIA says aloud while its tools work, in its own first-person voice.
+  // Never names agents, harnesses, models or "tools"; internal bookkeeping
+  // (todo, memory, skills, clarify) stays silent. `label` is the harness's
+  // human preview (the search query, the page) when it has one.
+  const SILENT_TOOLS = /^(?:_|todo|memory|skill_|skills_|clarify|session_search|context_notes|tool_search|tool_describe|send_message$)/;
+  const NARRATION = [
+    [/web_search|search_web|^search$|google|bing/, (q) => q ? `I'll search the web for ${q}.` : "I'll search the web for that."],
+    [/web_extract|fetch|read_url|scrape|crawl/, () => "I'm reading through what I found."],
+    [/browser|navigate|open_url|click|screenshot_page/, () => "I'm opening the page to read it."],
+    [/weather|forecast/, () => "I'm checking the forecast."],
+    [/vision|screenshot|screen|image_analy/, () => "I'm taking a look at the screen."],
+    [/terminal|shell|execute_code|run_command|bash|process/, () => "I'm running that on the computer now."],
+    [/patch|write_file|edit_file|apply_diff/, () => "I'm making that change now."],
+    [/read_file|search_files|list_dir|grep|glob/, () => "I'm looking through your files."],
+    [/calendar|event/, () => "I'm checking your calendar."],
+    [/mail|email|inbox/, () => "I'm checking your email."],
+    [/delegate|subagent|spawn/, () => "This one has a few parts, so I'm working through them."],
+    [/image_gen|generate_image|text_to_speech|tts/, () => "I'm creating that for you."],
+    [/cron|schedule|reminder|timer/, () => "I'm setting that up."],
+  ];
+  function spokenQuery(label) {
+    let q = String(label || '').replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, ' ').replace(/\s+/g, ' ').trim();
+    if (!q || /https?:|www\.|[\\/]{2}|[{}<>]/.test(q)) return '';
+    q = q.replace(/^["'`]+|["'`.?!]+$/g, '');
+    const words = q.split(' ');
+    if (words.length > 10) q = words.slice(0, 10).join(' ');
+    return q.length > 90 ? '' : q;
+  }
+  function toolNarration(name, label) {
+    const tool = String(name || '').toLowerCase().trim();
+    if (!tool || SILENT_TOOLS.test(tool)) return '';
+    for (const [re, say] of NARRATION) if (re.test(tool)) return say(spokenQuery(label));
+    return "I'm working on the next step now.";
+  }
+
   function sanitizeForSpeech(text, opts) {
     if (!text) return '';
     let s = String(text);
@@ -556,7 +592,7 @@
     SPECULATIVE_ENDPOINT_OPTS, looksComplete,
     TARGET_RATE, HANDSFREE_ENDPOINT_OPTS, downsampleTo16k, floatToInt16, micFrameToPcm16k, rms, VadEndpointer,
     SttDiscardGate, sanitizeForSpeech, collapseRepeats,
-    audioTagsActive, stripAudioTags,
+    audioTagsActive, stripAudioTags, toolNarration,
   };
 
   if (typeof module !== 'undefined' && module.exports) {

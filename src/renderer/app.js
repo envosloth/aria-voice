@@ -681,6 +681,7 @@ function armThinkingHold(text) {
   clearTimeout(thinkingTimer);
   clearTimeout(thinkingTimer2);
   awaitingFirstToken = true;
+  narratedTools = new Set(); narrationCount = 0; lastNarrationAt = 0;
   pendingFillerPhrase = holdOnPhrase(text);
 }
 
@@ -700,9 +701,47 @@ function armFillerForHarness() {
   }, HOLD_ESCALATE_MS);
 }
 
+// Tool narration: while the harness works, say what it is doing ("I'll search
+// the web for ...") in ARIA's own voice, each distinct step once, never over
+// itself, and never in the transcript. Once a real step has been announced the
+// generic "one moment" filler is redundant; the escalation re-arms from the
+// latest narration so a long run is never silent.
+const NARRATION_MIN_GAP_MS = 2500;
+const NARRATION_MAX_PER_TURN = 3;
+let narratedTools = new Set();
+let narrationCount = 0;
+let lastNarrationAt = 0;
+let narrationTimer = null; // a step that arrived too soon waits here; newer steps replace it
+function narrateTool(info) {
+  if (!awaitingFirstToken) return; // reply text already started: let it speak
+  const phrase = window.AriaAudio.toolNarration(info && info.name, info && info.label);
+  const key = String((info && info.name) || '');
+  if (!phrase || narratedTools.has(key) || narrationCount >= NARRATION_MAX_PER_TURN) return;
+  const wait = narrationCount > 0 ? NARRATION_MIN_GAP_MS - (performance.now() - lastNarrationAt) : 0;
+  clearTimeout(narrationTimer); narrationTimer = null;
+  if (wait > 0) { narrationTimer = setTimeout(() => { narrationTimer = null; narrateTool(info); }, wait); return; }
+  const now = performance.now();
+  narratedTools.add(key);
+  narrationCount++;
+  lastNarrationAt = now;
+  clearTimeout(thinkingTimer); thinkingTimer = null;
+  clearTimeout(thinkingTimer2);
+  thinkingTimer2 = setTimeout(() => {
+    if (awaitingFirstToken) queueFiller('Still working on it — hang tight.');
+  }, HOLD_ESCALATE_MS);
+  queueFiller(phrase);
+}
+// Like speakFiller, but queues behind a narration already playing instead of
+// cutting it off mid-word.
+function queueFiller(phrase) {
+  if (!fillerSpeaking) { speakFiller(phrase); return; }
+  try { ttsPlay(phrase, currentReplyId, false); } catch (e) {}
+}
+
 function cancelThinkingHold() {
   awaitingFirstToken = false;
   pendingFillerPhrase = null;
+  clearTimeout(narrationTimer); narrationTimer = null;
   clearTimeout(thinkingTimer);
   clearTimeout(thinkingTimer2);
   thinkingTimer = null;
@@ -1135,6 +1174,13 @@ async function loadWakeConfig() {
     if (hint) hint.textContent = activityWakeEnabled ? 'Say “' + activityWakePhrase + '”' : 'Wake word is off';
     const desc = hint && hint.nextElementSibling;
     if (desc) desc.textContent = activityWakeEnabled ? 'Hands-free. ARIA starts listening.' : 'Turn it on in Settings → Voice.';
+    // A disabled detector never reports; its dot must not sit on "Starting…".
+    if (!activityWakeEnabled) {
+      if (statusTexts.wakeword) statusTexts.wakeword.textContent = 'Off';
+      if (statusDots.wakeword) { statusDots.wakeword.className = 'status-dot'; statusDots.wakeword.title = 'Wake word is off.'; }
+    } else if (statusTexts.wakeword && statusTexts.wakeword.textContent === 'Off') {
+      statusTexts.wakeword.textContent = 'Starting…';
+    }
   } catch (e) {}
   refreshActivity();
 }
@@ -1725,6 +1771,7 @@ aria.llm.onTool((info) => {
   if (!info || info.turnId !== currentTurnId || info.generationId !== currentGenerationId) return;
   try { addToolChip(info); } catch (e) {}
   if (info.name) { activityTool = String(info.name).slice(0, 40); refreshActivity(); }
+  if (activityRoute && activityRoute.target === 'harness') narrateTool(info);
 });
 
 aria.llm.onToken((info) => {
@@ -2109,6 +2156,14 @@ function applySidecarStatus(name, status) {
   if (!dot) return;
   const cls = DOT_CLASS_FOR_STATUS[status];
   if (!cls) return; // 'log'/heartbeat/unknown — not a state change; keep the dot as-is
+  if (name === 'wakeword' && !activityWakeEnabled) { // stopped on purpose, not failed
+    sidecarState.wakeword = 'unavailable';
+    dot.className = 'status-dot'; dot.title = 'Wake word is off.';
+    if (statusLabel) statusLabel.textContent = 'Wake word is off.';
+    if (statusTexts.wakeword) statusTexts.wakeword.textContent = 'Off';
+    refreshActivity();
+    return;
+  }
   const state = cls === 'active' ? 'ready' : cls === 'loading' ? 'starting' : 'unavailable';
   const message = `${sidecarDisplayNames[name] || name} is ${state}.`;
   dot.className = 'status-dot ' + cls;
@@ -2116,7 +2171,7 @@ function applySidecarStatus(name, status) {
   if (statusLabel) statusLabel.textContent = message;
   sidecarState[name] = state;
   const statusText = statusTexts[name];
-  if (statusText) statusText.textContent = { ready: 'Ready', starting: 'Starting…', unavailable: 'Offline' }[state];
+  if (statusText) statusText.textContent = name === 'wakeword' && !activityWakeEnabled ? 'Off' : { ready: 'Ready', starting: 'Starting…', unavailable: 'Offline' }[state];
   refreshActivity();
 }
 aria.sidecar.onStatus(({ name, status }) => applySidecarStatus(name, status));
