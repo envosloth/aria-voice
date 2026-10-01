@@ -452,13 +452,13 @@ function friendlyError(raw) {
     const who = /harness/i.test(m[1]) ? 'your agent' : 'your AI service';
     return { text: `Can't reach ${who} at ${m[2]}. Is it running?`, action: lastUserText ? retry : settings };
   }
-  if (/rejected the API key|\b40[13]\b/.test(msg)) {
+  if (/rejected the API key|\b40[13]\b/.test(msg) && !/^(stt|tts|wakeword):/i.test(msg)) {
     return { text: 'Your AI service rejected the API key.', action: { label: 'Fix key', run: () => openSettingsTab('connections') } };
   }
   if (/Can't decrypt/i.test(msg)) {
     return { text: 'ARIA could not unlock your saved API key. Unlock your keyring, or re-enter the key.', action: settings };
   }
-  if (/\b(429|rate.?limit)/i.test(msg)) {
+  if (/\b(429|rate.?limit)/i.test(msg) && !/^(stt|tts|wakeword):/i.test(msg)) {
     return { text: 'Your AI service is rate-limiting requests. Wait a moment, then try again.', action: lastUserText ? retry : null };
   }
   if (/timed out|timeout/i.test(msg) && /LLM|harness|agent/i.test(msg)) {
@@ -471,8 +471,33 @@ function friendlyError(raw) {
     return { text: 'Something went wrong getting an answer. Typing and voice still work.', action: lastUserText ? retry : null };
   }
   if ((m = msg.match(/^(stt|tts|wakeword): ?(.*)$/i))) {
-    const who = SIDECAR_NAMES[m[1].toLowerCase()];
-    if (/circuit/i.test(m[2])) return { text: `${who} kept crashing, so ARIA paused it. Restart ARIA to try again.`, action: null };
+    const key = m[1].toLowerCase();
+    const who = SIDECAR_NAMES[key];
+    const rest = m[2] || '';
+    const voiceSettings = { label: 'Voice settings', run: () => openSettingsTab('voice') };
+    if (/^circuit-open\b/i.test(rest)) {
+      return { text: `${who} kept crashing, so ARIA paused it. Restart ARIA to try again.`, action: null };
+    }
+    if (/^error\b/i.test(rest)) {
+      // A failed attempt, not a dead sidecar: nothing restarts on an 'error'
+      // report, so the copy must not claim one (the old shared sentence did).
+      // The detail is a fixed, safe message — use it to point at real fixes.
+      const detail = rest.replace(/^error:?\s*/i, '');
+      const configIssue = /refused|rejected|entitlement|\bkey\b|quota|access/i.test(detail);
+      if (key === 'tts') {
+        if (configIssue) {
+          return { text: "ARIA couldn't speak that reply — the speech service refused it. Check the key, quota, or model in Voice settings; typing still works.", action: voiceSettings };
+        }
+        return { text: "ARIA couldn't speak that reply. Typing still works; the next reply will try again.", action: null };
+      }
+      if (key === 'stt') {
+        if (configIssue) {
+          return { text: "Speech recognition couldn't finish that attempt. Check the provider key or quota in Voice settings; typing still works.", action: voiceSettings };
+        }
+        return { text: "Speech recognition hit a problem with that attempt. Typing still works; try speaking again.", action: null };
+      }
+      return { text: 'The wake word hit a problem. Typing still works.', action: null };
+    }
     return { text: `${who} stopped unexpectedly. ARIA is restarting it; typing still works.`, action: null };
   }
   if (/^Microphone unavailable/i.test(msg)) {
@@ -2228,7 +2253,11 @@ try {
 } catch (e) {}
 
 aria.sidecar.onError(({ name, status, detail }) => {
-  showError(`${name}: ${detail || status}`);
+  // Keep the status token: friendlyError reads it to tell a sidecar that really
+  // died (and is being restarted) from a non-fatal 'error' report, where
+  // claiming a restart would be a lie. (Old shape dropped it whenever a detail
+  // existed, so circuit-open showed the wrong sentence too.)
+  showError(`${name}: ${status}${detail ? ': ' + detail : ''}`);
 });
 
 (async () => {
