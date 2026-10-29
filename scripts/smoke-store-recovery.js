@@ -70,5 +70,34 @@ try {
     assert.throws(() => store.set('value', 2));
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'backup-fail.json'))).value, 1);
   });
+  check('failed write rolls the live value back to the committed one', () => {
+    // Mutating then failing used to leave memory and disk disagreeing, so a
+    // rejected settings save (e.g. enabling clipboard context) still took effect.
+    const store = new JsonStore('rollback', { context: { clipboard: false } });
+    store.set('context.clipboard', false);
+    fs.mkdirSync(path.join(root, 'rollback.json.tmp'));
+    assert.throws(() => store.set('context.clipboard', true));
+    assert.equal(store.get('context.clipboard'), false, 'rejected write must not stay active');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'rollback.json'), 'utf8')).context.clipboard, false);
+    // A successful write after the obstruction clears still works.
+    fs.rmdirSync(path.join(root, 'rollback.json.tmp'));
+    store.set('context.clipboard', true);
+    assert.equal(store.get('context.clipboard'), true);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'rollback.json'), 'utf8')).context.clipboard, true);
+  });
+  check('serialization failure restores the committed value', () => {
+    const store = new JsonStore('rollback-json', { value: 'keep' });
+    store.set('value', 'keep');
+    const cyclic = {}; cyclic.self = cyclic;
+    assert.throws(() => store.set('value', cyclic), /circular/i);
+    assert.equal(store.get('value'), 'keep');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'rollback-json.json'), 'utf8')).value, 'keep');
+  });
+  check('failed delete restores the committed value', () => {
+    const store = new JsonStore('rollback-del', { value: 'keep' });
+    fs.mkdirSync(path.join(root, 'rollback-del.json.tmp'));
+    assert.throws(() => store.delete('value'));
+    assert.equal(store.get('value'), 'keep');
+  });
 } finally { fs.rmSync(root, { recursive: true, force: true }); }
 process.exitCode = failures ? 1 : 0;

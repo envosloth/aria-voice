@@ -943,17 +943,44 @@ async function toggleScreenShare() {
 }
 if (screenShareBtn) screenShareBtn.addEventListener('click', toggleScreenShare);
 
-// Natural-language control. OFF is checked first because "stop screen share"
-// also matches the ON pattern.
-const SCREEN_OFF_RE = /\b(stop|deactivate|disable|turn off|end)\b[^.!?]{0,24}\bscreen\b|\bstop sharing\b/i;
-const SCREEN_ON_RE = /\b(start|activate|enable|turn on|begin|share)\b[^.!?]{0,24}\bscreen\b|\bshare (my |the )?screen\b|\bscreen[- ]?shar/i;
+// Natural-language control. Every pattern is anchored to the WHOLE utterance
+// (after dropping a wake name and courtesy prefixes/suffixes). A control verb
+// inside a question or condition is discussion, not a command: "how do I start
+// screen sharing?" and "what happens if I stop screen sharing?" must reach the
+// agent, and a question must never start or stop capture.
+const SCREEN_OFF_RE = /^(?:stop|deactivate|disable|end|turn off)\s+(?:(?:the|my)\s+)?screen(?:[- ]?shar(?:e|ing))?$|^stop\s+(?:screen[- ]?)?sharing$/i;
+const SCREEN_ON_RE = /^(?:start|activate|enable|turn on|begin)\s+(?:(?:my|the)\s+)?screen(?:[- ]?shar(?:e|ing))?$|^(?:start|begin)\s+sharing\s+(?:my|the)\s+screen$|^(?:share|stream|show)\s+(?:my|the)\s+screen$/i;
+// Only a prohibitive imperative ("don't share my screen") refuses. The same
+// negation inside a question ("what happens if I don't share my screen?") is
+// discussion and must neither answer for the model nor end an active share.
+const SCREEN_REFUSAL_RE = /^(?:i\s+)?(?:do not|don'?t|never|no longer|refuse to|decline to|not going to|i won'?t|will not)\b[^.!?]{0,60}\b(?:share|sharing|screen|stream|show|enable|activate|capture)\b/i;
+const SCREEN_WAKE_RE = /^(?:(?:hey|ok(?:ay)?)[,\s]+)?(?:(?:aria|jarvis)[,\s]+)?(?:please\s+)?/i;
+const SCREEN_COURTESY_RE = /^(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?/i;
+const SCREEN_TAIL_RE = /(?:\s+(?:please|now|for me)){0,3}[.!?]*$/i;
+// The imperative alone, with the politeness that wraps a real request removed.
+// Anything left over that is not exactly an imperative is conversation.
+function screenCommandText(text) {
+  return String(text || '').trim()
+    .replace(SCREEN_WAKE_RE, '')
+    .replace(SCREEN_COURTESY_RE, '')
+    .replace(SCREEN_TAIL_RE, '')
+    .trim();
+}
 async function handleScreenCommand(text) {
-  if (SCREEN_OFF_RE.test(text)) {
+  const t = screenCommandText(text);
+  if (!t) return false;
+  if (SCREEN_OFF_RE.test(t)) {
     if (isSharing()) { stopScreenShare(); assistantSay('Screen sharing stopped.'); }
     else { assistantSay('Screen sharing is already off.'); }
     return true;
   }
-  if (SCREEN_ON_RE.test(text)) {
+  // A refusal about sharing never turns capture on, and stops it if it is live.
+  if (SCREEN_REFUSAL_RE.test(t)) {
+    if (isSharing()) { stopScreenShare(); assistantSay('Screen sharing stopped.'); }
+    else { assistantSay('Screen sharing stays off.'); }
+    return true;
+  }
+  if (SCREEN_ON_RE.test(t)) {
     if (isSharing()) assistantSay('Screen sharing is already on.');
     else await startScreenShare();
     return true;

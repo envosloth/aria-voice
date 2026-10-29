@@ -239,6 +239,15 @@ class CloudTests(unittest.TestCase):
                 with self.assertRaises(CloudTtsError):
                     self.stream(scenario=scenario, **kwargs)
 
+    def test_socket_deadline_timeout_keeps_its_reason(self):
+        # Windows may report the configured socket timeout a clock tick before
+        # monotonic() reaches the same absolute budget. Do not mislabel it as an
+        # unrelated connection failure just because the watchdog has not run.
+        with patch('cloud_tts.http.client.HTTPConnection') as connection:
+            connection.return_value.getresponse.side_effect = TimeoutError()
+            with self.assertRaisesRegex(CloudTtsError, "deadline"):
+                list(self.client(deadline_s=0.15)._stream_network("Hi.", 1, lambda: False))
+
     def test_deadline_interrupts_a_stalled_stream(self):
         release = threading.Event()
         self.server.scenarios.put({"release": release, "pieces": [PCM[:200], PCM[200:]]})

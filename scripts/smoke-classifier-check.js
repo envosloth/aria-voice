@@ -19,7 +19,9 @@ const path = require('path');
 const { spawn } = require('child_process');
 
 const root = path.join(__dirname, '..');
-const electron = path.join(root, 'node_modules', '.bin', 'electron');
+// The extensionless .bin/electron is a POSIX shim; require() resolves the
+// real platform binary (electron.cmd/.exe) on every OS.
+const electron = require('electron');
 const CASES = ['routing-cases.json', 'routing-cases-h5.json', 'routing-cases-h6.json'];
 
 let pass = true;

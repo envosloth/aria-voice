@@ -66,7 +66,9 @@ function harnessServer(rec) {
 function runApp(env) {
   return new Promise((resolve) => {
     const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aria-route-'));
-    const electron = path.join(__dirname, '..', 'node_modules', '.bin', 'electron');
+    // The extensionless .bin/electron is a POSIX shim; require() resolves the
+  // real platform binary (electron.cmd/.exe) on every OS.
+  const electron = require('electron');
     const child = spawn(electron, ['--no-sandbox', `--user-data-dir=${userDir}`, path.join(__dirname, '..', 'dist', 'main', 'index.js')], {
       env: { ...process.env, ARIA_SMOKE: '1', ARIA_VERIFY_ROUTING: '1', ...env },
     });

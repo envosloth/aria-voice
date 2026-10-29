@@ -35,7 +35,9 @@ async function main() {
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const endpoint = `http://127.0.0.1:${server.address().port}/v1/chat/completions`;
   const userDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aria-ss-'));
-  const electron = path.join(__dirname, '..', 'node_modules', '.bin', 'electron');
+  // The extensionless .bin/electron is a POSIX shim; require() resolves the
+  // real platform binary (electron.cmd/.exe) on every OS.
+  const electron = require('electron');
   const child = spawn(electron, ['--no-sandbox', `--user-data-dir=${userDir}`, path.join(__dirname, '..', 'dist', 'main', 'index.js')], {
     env: { ...process.env, ARIA_SMOKE: '1', ARIA_VERIFY_SCREENSHARE: '1', ARIA_VERIFY_LLM_ENDPOINT: endpoint },
   });

@@ -7,6 +7,7 @@ import json
 import os
 import sys
 import threading
+import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -91,6 +92,39 @@ class Tests(unittest.TestCase):
             self.assertEqual(self.sidecar._transcribe(b'\0\0'*160), 'local')
         self.assertNotIn('fixture-not-a-real-key', str(self.messages))
         self.assertLessEqual(self.sidecar._CLOUD_TIMEOUT_S, 5)
+    def test_dns_deadline_bounds_workers_and_prevents_late_upload(self):
+        self.configured()
+        self.sidecar._CLOUD_TIMEOUT_S = 0.1
+        release, started = threading.Event(), threading.Event()
+        original = m.socket.getaddrinfo
+        before = set(threading.enumerate())
+        worker_names = {'stt-cloud-request', 'stt-cloud-http'}
+
+        def resolve(*args, **kwargs):
+            started.set()
+            release.wait(3)
+            return original(*args, **kwargs)
+
+        with patch.object(m.socket, 'getaddrinfo', side_effect=resolve):
+            try:
+                for _ in range(3):
+                    start = time.monotonic()
+                    with self.assertRaises((TimeoutError, m.cloud_stt.CloudError)):
+                        self.sidecar._transcribe_cloud(b'\0\0')
+                    self.assertLess(time.monotonic() - start, 0.7)
+                self.assertTrue(started.is_set())
+                workers = [thread for thread in threading.enumerate()
+                           if thread not in before and thread.name in worker_names]
+                self.assertEqual(len(workers), 1, 'a stalled resolver must not accumulate workers')
+            finally:
+                release.set()
+                for thread in threading.enumerate():
+                    if thread not in before and thread.name in worker_names:
+                        thread.join(2)
+        self.assertEqual(Handler.requests, [], 'timed-out work must never upload audio later')
+        self.assertEqual(self.sidecar._transcribe_cloud(b'\0\0'), 'Turn on the lights.')
+        self.assertEqual(len(Handler.requests), 1, 'fresh requests recover after the resolver returns')
+
     def test_redirect_rejected_without_second_upload(self):
         self.configured(); Handler.status=302
         with patch.object(self.sidecar, '_transcribe_server', return_value='local'):

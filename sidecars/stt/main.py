@@ -23,6 +23,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 import wave
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -42,6 +43,10 @@ LIB_DIR = os.environ.get("ARIA_WHISPER_LIB_DIR") or os.path.expanduser("~/.local
 
 
 class SttSidecar(BaseSidecar):
+    # Short-lived cache for the Windows/macOS listener-ownership probes: readiness
+    # runs several times a second and spawning a process per probe is wasteful.
+    _LISTENER_PIDS_CACHE: dict = {}
+
     def __init__(self):
         super().__init__("stt")
         self.model_path: str = ""
@@ -53,6 +58,12 @@ class SttSidecar(BaseSidecar):
         self._utterance_id = ""
         # Speculative partial for the current utterance: (byte_count, text).
         self._spec: tuple[int, str] | None = None
+        # Bytes the last completed utterance declared but never delivered. They
+        # can still arrive on the socket, so the next `start` carries the count
+        # forward and drops them instead of contaminating the new turn.
+        self._owed_bytes = 0
+        # Bytes to discard from the incoming PCM stream (see _owed_bytes).
+        self._discard_pcm = 0
         self._server_proc: subprocess.Popen | None = None
         self._server_port = 0
         self._cli_bin = ""  # fallback
@@ -102,17 +113,37 @@ class SttSidecar(BaseSidecar):
 
     def on_pcm(self, data: bytes) -> None:
         with self._audio_ready:
+            drop = self._discard_pcm
+            if drop:
+                # Bytes still owed to the PREVIOUS utterance, arriving late.
+                take = min(drop, len(data))
+                self._discard_pcm = drop - take
+                data = data[take:]
+                if not data:
+                    return
             self._audio_buffer.extend(data)
             self._audio_ready.notify_all()
+
+    # PCM is ordered on one reliable stream. The entire declared shortfall
+    # still belongs to the old turn, even when it spans several recv() chunks.
 
     def on_control(self, msg: dict) -> None:
         mtype = msg.get("type")
         if mtype == "start":
             utterance_id = str(msg.get("utterance_id", ""))
             with self._audio_ready:
+                owed = self._owed_bytes + self._discard_pcm
+                self._owed_bytes = 0
+                # Anything already buffered arrived after the previous turn was
+                # cut off, so it counts against what that turn still owed.
+                already = min(len(self._audio_buffer), owed) if owed else 0
                 self._audio_buffer.clear()
                 self._utterance_id = utterance_id
                 self._spec = None
+                # Carry the remainder as a byte ledger: those bytes, if they ever
+                # arrive, belong to the turn that just ended and are dropped as
+                # they come in — never transcribed as the start of this one.
+                self._discard_pcm = owed - already
             self.emit({"type": "stt_started", "utterance_id": utterance_id})
         elif mtype == "speculate":
             self._speculate(msg)
@@ -135,6 +166,10 @@ class SttSidecar(BaseSidecar):
                 usable = len(self._audio_buffer) & ~1
                 pcm = bytes(self._audio_buffer[:usable])
                 del self._audio_buffer[:usable]
+                # Bytes that never arrived still belong to THIS utterance. Record
+                # the shortfall so the next `start` discards them instead of
+                # transcribing them as the start of the next thing the user says.
+                self._owed_bytes = max(0, expected_bytes - usable)
                 spec = self._spec if utterance_id == self._utterance_id else None
                 self._spec = None
             reused = self._reusable_speculation(spec, pcm)
@@ -170,6 +205,8 @@ class SttSidecar(BaseSidecar):
             with self._buffer_lock:
                 self._audio_buffer.clear()
                 self._spec = None
+                self._owed_bytes = 0
+                self._discard_pcm = 0
 
     # ---- speculative (early-endpoint) transcription ----
     # A tail counts as silence when its RMS stays under this (int16 units,
@@ -253,25 +290,29 @@ class SttSidecar(BaseSidecar):
         assert self._cloud is not None
         if self._cloud["provider"] in ("deepgram", "assemblyai"):
             return cloud_stt.transcribe(self._cloud, self._pcm_to_wav(pcm_data), self._CLOUD_TIMEOUT_S)
-        class NoRedirect(urllib.request.HTTPRedirectHandler):
-            def redirect_request(self, req, fp, code, msg, headers, newurl):
-                return None
+        deadline = time.monotonic() + self._CLOUD_TIMEOUT_S
         boundary = "----ariaCloud" + str(time.time_ns())
         extra = {"model": self._cloud["model"], "language": "en", "response_format": "json", "temperature": "0"}
         prompt = os.environ.get("ARIA_STT_PROMPT", "").strip()[:500]
         if prompt:
             extra["prompt"] = prompt
-        req = urllib.request.Request(self._cloud["endpoint"],
-            data=self._multipart(boundary, self._pcm_to_wav(pcm_data), extra=extra),
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}",
-                     "Authorization": "Bearer " + self._cloud["key"], "Accept": "application/json"}, method="POST")
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
-        with opener.open(req, timeout=self._CLOUD_TIMEOUT_S) as resp:
-            raw = resp.read(1024 * 1024 + 1)
-        if len(raw) > 1024 * 1024:
-            raise ValueError("Transcription response too large")
-        parsed = json.loads(raw)
-        if not isinstance(parsed, dict) or not isinstance(parsed.get("text"), str):
+        endpoint = urlsplit(self._cloud["endpoint"])
+        body = self._multipart(boundary, self._pcm_to_wav(pcm_data), extra=extra)
+        # Share the existing absolute-deadline transport. It bounds stalled DNS
+        # workers and checks abandonment after connect, BEFORE uploading audio;
+        # a thread around urllib.open() alone still uploads after its caller
+        # times out, and accumulates another resolver on every subsequent turn.
+        try:
+            parsed = cloud_stt._request_json(
+                f"{endpoint.scheme}://{endpoint.netloc}",
+                endpoint.path + ("?" + endpoint.query if endpoint.query else ""),
+                "Bearer " + self._cloud["key"], "POST", body,
+                f"multipart/form-data; boundary={boundary}", deadline)
+        except cloud_stt.CloudError as exc:
+            if str(exc) == "timeout":
+                raise TimeoutError("cloud transcription deadline exceeded") from None
+            raise
+        if not isinstance(parsed.get("text"), str):
             raise ValueError("Invalid transcription response")
         return parsed["text"].strip()
 
@@ -436,33 +477,103 @@ class SttSidecar(BaseSidecar):
             self._stop_server()
 
     def _server_identity_ok(self) -> bool:
-        """True only when the listener on our port is our whisper-server child.
+        """Require child process ownership AND a healthy HTTP service.
 
-        Linux: the LISTEN socket's inode must be among the child's own fds
-        (authoritative). Elsewhere: the proxy-less /health reply must come from a
-        whisper.cpp server. Either way the child must still be alive."""
+        OS-query failures leave ownership unknown, not trusted: the caller can
+        use whisper-cli rather than send microphone audio to a spoofable header.
+        """
         proc = self._server_proc
         if not proc or proc.poll() is not None:
             return False
         owned = self._listener_owned_by(getattr(proc, "pid", None), self._server_port)
-        if owned is False:
+        if owned is not True:
             return False
         try:
             with _LOOPBACK_OPENER.open(f"http://127.0.0.1:{self._server_port}/health", timeout=1) as resp:
-                server_hdr = (resp.headers.get("Server") or "").lower()
                 body = resp.read(256).decode("utf-8", errors="ignore").lower()
                 if resp.status != 200 or '"ok"' not in body:
                     return False
         except Exception:
             return False
-        return owned is True or "whisper" in server_hdr
+        return True
 
     @staticmethod
     def _listener_owned_by(pid, port: int):
-        """Linux: True/False whether pid owns the LISTEN socket on 127.0.0.1:port.
-        None where /proc is unavailable (macOS/Windows) or pid is unknown."""
-        if not sys.platform.startswith("linux") or not isinstance(pid, int):
+        """True/False whether `pid` owns the LISTEN socket on 127.0.0.1:port.
+
+        None means ownership could not be established at all (unknown platform or
+        an unavailable OS tool). Callers must not trust the listener in that case.
+        """
+        if not isinstance(pid, int):
             return None
+        if sys.platform.startswith("linux"):
+            return SttSidecar._listener_owned_by_proc(pid, port)
+        if sys.platform == "win32":
+            pids = SttSidecar._listener_pids_netstat(port)
+            return None if pids is None else pid in pids
+        if sys.platform == "darwin":
+            pids = SttSidecar._listener_pids_lsof(port)
+            return None if pids is None else pid in pids
+        return None
+
+    @staticmethod
+    def _run_os_tool(argv, timeout: float = 2.0):
+        """Run a read-only OS query; None when it is missing, errors, or hangs.
+
+        Deliberately broad: this is a best-effort identity hint, and a host where
+        the tool misbehaves (or where a test has patched subprocess) must degrade
+        to "ownership unknown" — never take the sidecar down with it.
+        """
+        try:
+            out = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                 timeout=timeout, text=True)
+        except Exception:  # noqa: BLE001 - ownership stays unknown, see docstring
+            return None
+        return out.stdout if out.returncode == 0 else None
+
+    @classmethod
+    def _listener_pids_netstat(cls, port: int):
+        """Windows: PIDs holding a LISTEN socket on `port` (None if unavailable).
+
+        Spoofable HTTP headers are not process identity; an unrelated local
+        process that wins the bind race must not be handed the user's audio.
+        """
+        now = time.monotonic()
+        cached = cls._LISTENER_PIDS_CACHE.get(port)
+        if cached is not None and now - cached[0] < 0.25:
+            return cached[1]
+        out = cls._run_os_tool(["netstat", "-ano", "-p", "TCP"])
+        pids = None
+        if out is not None:
+            pids = set()
+            suffix = ":" + str(port)
+            for line in out.splitlines():
+                cols = line.split()
+                if len(cols) < 5 or cols[0].upper() != "TCP" or cols[3].upper() != "LISTENING":
+                    continue
+                # 127.0.0.1:54321 and [::1]:54321 both end in ":<port>".
+                if not cols[1].endswith(suffix):
+                    continue
+                try:
+                    pids.add(int(cols[4]))
+                except (TypeError, ValueError):
+                    continue
+        if len(cls._LISTENER_PIDS_CACHE) > 32:
+            cls._LISTENER_PIDS_CACHE.clear()
+        cls._LISTENER_PIDS_CACHE[port] = (now, pids)
+        return pids
+
+    @classmethod
+    def _listener_pids_lsof(cls, port: int):
+        """macOS: PIDs holding a LISTEN socket on `port` (None if unavailable)."""
+        out = cls._run_os_tool(["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"])
+        if out is None:
+            return None
+        return {int(x) for x in out.split() if x.strip().isdigit()}
+
+    @staticmethod
+    def _listener_owned_by_proc(pid, port: int):
+        """Linux: match the LISTEN socket inode against the child's own fds."""
         inodes = set()
         for table in ("/proc/net/tcp", "/proc/net/tcp6"):
             try:

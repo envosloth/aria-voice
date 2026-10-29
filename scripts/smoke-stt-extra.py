@@ -355,6 +355,18 @@ class Tests(unittest.TestCase):
             self.assertEqual(self.fallback('assemblyai'), 'warm local fallback')
         self.assertEqual(sum(r[0] == 'GET' for r in self.server.requests), 3)
 
+    def test_assemblyai_does_not_schedule_a_poll_beyond_its_budget(self):
+        self.configured('assemblyai')
+        self.server.reply = lambda method, path: ({'id': ID, 'status': 'processing'}
+                        if method == 'GET' else self.success_reply(method, path))
+        self.sidecar._CLOUD_TIMEOUT_S = 0.18  # less than the 0.5 s poll cadence
+        with patch.object(m.cloud_stt.time, 'sleep',
+                          side_effect=AssertionError('no further poll fits in the deadline')) as sleep:
+            with self.assertRaisesRegex(m.cloud_stt.CloudError, 'timeout'):
+                self.sidecar._transcribe_cloud(PCM)
+        sleep.assert_not_called()
+        self.assertEqual(sum(r[0] == 'GET' for r in self.server.requests), 1)
+
     def test_assemblyai_polling_has_shared_total_deadline(self):
         self.server.reply = lambda method, path: ({'id': ID, 'status': 'processing'}
                         if method == 'GET' else self.success_reply(method, path))

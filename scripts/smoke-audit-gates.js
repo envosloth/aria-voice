@@ -4,7 +4,8 @@ const { scripts } = require('../package.json');
 const fs = require('node:fs'), path = require('node:path');
 const names = ['store-recovery', 'stream-completion', 'ipv6', 'latency-lifecycle', 'process-memory', 'stt-cleanup',
   'core-security', 'routing-invariant', 'mic-lifecycle', 'voice-lifecycle', 'supervisor-lifecycle', 'update-quiesce',
-  'release-packaging', 'session-import', 'sidebar', 'latency-test', 'sidecar-lifecycle'];
+  'release-packaging', 'session-import', 'sidebar', 'latency-test', 'sidecar-lifecycle',
+  'screenshare-consent', 'timer-delivery', 'startup-order'];
 function expanded(name, seen = new Set()) {
   assert.ok(!seen.has(name), `recursive script: ${name}`); seen.add(name);
   const command = scripts[name]; assert.equal(typeof command, 'string', `missing script ${name}`);

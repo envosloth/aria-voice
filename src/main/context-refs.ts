@@ -77,7 +77,10 @@ export function isTextWorkOnContext(utterance: string): boolean {
 
 export function looksLikeSecret(text: string): boolean {
   const t = String(text || '').trim();
-  if (!t || t.length > 4000) return false;
+  // Scan the WHOLE body. This used to bail out above 4000 characters, so a
+  // credential inside a longer document or log skipped every check — while
+  // buildContextBlock happily transmitted the first 6000 characters of it.
+  if (!t) return false;
   if (/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(t)) return true;
   if (/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{16,}\b/.test(t)) return true;            // OpenAI/Stripe-style
   if (/\b(?:ghp|gho|ghu|ghs|github_pat)_[A-Za-z0-9_]{20,}\b/.test(t)) return true; // GitHub

@@ -340,6 +340,12 @@ class CloudTts:
                 yield carry
         except CloudTtsError:
             raise
+        except TimeoutError:
+            check()
+            # Socket timers can fire just before the monotonic deadline on
+            # Windows; preserve the reason of the limit we actually configured.
+            reason = "request deadline exceeded" if self._deadline_s <= self._idle_timeout_s else "connection or audio idle timeout"
+            raise CloudTtsError("Cloud TTS " + reason) from None
         except Exception:
             check()
             raise CloudTtsError("Cloud TTS connection failed or audio response interrupted") from None
@@ -378,6 +384,14 @@ class CloudTts:
                     if sock is not None:
                         try:
                             sock.shutdown(socket.SHUT_RDWR)
+                        except OSError:
+                            pass
+                        # shutdown() alone does not wake a reader parked in the
+                        # sync library's select()/recv() on Windows, so the worker
+                        # stayed alive and kept its shared slot until the peer
+                        # finally answered. Closing the socket aborts it for real.
+                        try:
+                            sock.close()
                         except OSError:
                             pass
 
@@ -511,5 +525,9 @@ class CloudTts:
         finally:
             finished.set()
             if raw_socket is not None:
-                raw_socket.close()
+                # The watchdog may already have closed it after cancelling.
+                try:
+                    raw_socket.close()
+                except OSError:
+                    pass
             watcher.join(timeout=0.2)

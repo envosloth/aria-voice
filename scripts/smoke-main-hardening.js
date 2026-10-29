@@ -279,6 +279,45 @@ async function testStreamPolicy() {
   check('cancel-all-single-grammar', r.done === 'Cancelled your timer.', `got ${JSON.stringify(r.done)}`);
 }
 
+// ------------------------------------------- forced routing mode is a boundary
+// "Always the chat model" is a deliberate no-tools override. A connection error
+// or a screen frame must not quietly answer through the tool-capable harness.
+async function testForcedRoutingBoundary() {
+  config.set('llm.endpoint', 'http://127.0.0.1:9/direct');
+  config.set('harness.endpoint', 'http://127.0.0.1:9/agent');
+  config.set('routing.mode', 'llm');
+  config.set('routing.classifier', 'off');
+
+  coordinator.resetConversation();
+  let calls = scriptStream([
+    (cb) => { cb.onError('LLM connection failed: ECONNREFUSED. Check endpoint and network.'); },
+    (cb) => { cb.onTool({ name: 'synthetic_tool' }); cb.onToken('escalated'); cb.onDone('escalated'); },
+  ]);
+  let r = await runTurn('look up the news');
+  check('forced-llm-does-not-escalate-on-connection-error',
+    calls.length === 1 && r.done === null && r.errors.length === 1 && r.tools.length === 0,
+    `calls=${calls.length} done=${JSON.stringify(r.done)} tools=${JSON.stringify(r.tools)}`);
+
+  coordinator.resetConversation();
+  calls = scriptStream([(cb) => { cb.onToken('direct'); cb.onDone('direct'); }]);
+  r = await runTurn('what is on my screen', { image: 'data:image/jpeg;base64,AAAA' });
+  check('forced-llm-keeps-image-turns-on-the-chat-model',
+    calls.length === 1 && calls[0].opts.endpoint === config.get('llm.endpoint') && r.tools.length === 0,
+    `endpoint=${calls[0] && calls[0].opts.endpoint} calls=${calls.length}`);
+
+  // The auto-mode convenience must survive: a refused primary still fails over.
+  config.set('routing.mode', 'auto');
+  coordinator.resetConversation();
+  calls = scriptStream([
+    (cb) => { cb.onError('LLM connection failed: ECONNREFUSED. Check endpoint and network.'); },
+    (cb) => { cb.onToken('fallback'); cb.onDone('fallback'); },
+  ]);
+  r = await runTurn('look up the news');
+  check('auto-mode-fallback-preserved',
+    calls.length === 2 && r.done === 'fallback', `calls=${calls.length} done=${JSON.stringify(r.done)}`);
+  config.set('routing.mode', 'auto');
+}
+
 // ------------------------------------------------------------ tunnel supervisor
 function writeScript(name, body) {
   const p = path.join(tmpHome, name);
@@ -343,6 +382,7 @@ async function testTunnel() {
     testHarnessDetect();
     await testDeleteHarnessSession();
     await testStreamPolicy();
+    await testForcedRoutingBoundary();
     await testTunnel();
   } catch (e) {
     pass = false;

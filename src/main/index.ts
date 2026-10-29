@@ -76,6 +76,39 @@ let renderCrashes: number[] = [];
 let crashSafeUntil = 0;
 let rendererUnresponsiveTimer: ReturnType<typeof setTimeout> | null = null;
 
+// Timer/alarm/reminder announcements that fired before the renderer was able to
+// listen. timers.ts deletes the persisted record the moment it fires, so a send
+// into a not-yet-loaded window loses the announcement for good — true for every
+// reminder that came due while ARIA was closed, because initTimers() runs long
+// before createWindow() finishes loading the document.
+const pendingTimerAnnouncements: string[] = [];
+const MAX_PENDING_TIMER_ANNOUNCEMENTS = 20;
+let timerDeliveryReady = false;
+
+function deliverTimerAnnouncement(text: string): void {
+  if (timerDeliveryReady && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(IPC.TIMER_FIRED, text);
+    return;
+  }
+  // Keep the newest announcements when the bounded queue fills; log any loss
+  // instead of silently growing without limit while the renderer is unavailable.
+  if (pendingTimerAnnouncements.length >= MAX_PENDING_TIMER_ANNOUNCEMENTS) {
+    pendingTimerAnnouncements.shift();
+    console.warn('[ARIA] timer announcement queue full; dropped the oldest');
+  }
+  pendingTimerAnnouncements.push(text);
+}
+
+// Called once the document (and app.js's top-level `aria.timers.onFired`
+// registration) is live, so a queued announcement actually reaches the UI.
+function flushTimerAnnouncements(): void {
+  timerDeliveryReady = true;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  while (pendingTimerAnnouncements.length) {
+    mainWindow.webContents.send(IPC.TIMER_FIRED, pendingTimerAnnouncements.shift() as string);
+  }
+}
+
 function clearRendererUnresponsiveTimer(): void {
   if (!rendererUnresponsiveTimer) return;
   clearTimeout(rendererUnresponsiveTimer);
@@ -249,6 +282,11 @@ function createWindow(): BrowserWindow {
   });
   win.on('responsive', clearRendererUnresponsiveTimer);
   win.on('closed', clearRendererUnresponsiveTimer);
+
+  // Timer announcements wait for a document that can actually receive them: a
+  // reload starts a fresh renderer whose listeners do not exist yet.
+  win.webContents.on('did-start-loading', () => { timerDeliveryReady = false; });
+  win.webContents.on('did-finish-load', flushTimerAnnouncements);
 
   win.loadFile(RENDERER_INDEX);
   return win;
@@ -912,11 +950,11 @@ app.whenReady().then(async () => {
 
   // Re-arm persisted timers/alarms/reminders (see timers.ts). Firing pushes an
   // announcement to the renderer, which shows it in the transcript and speaks
-  // it — this works with the window hidden in the tray.
+  // it — this works with the window hidden in the tray. Announcements that fire
+  // while the document is still loading are queued (see
+  // deliverTimerAnnouncement) and flushed by the window's did-finish-load.
   initTimers((text) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(IPC.TIMER_FIRED, text);
-    }
+    deliverTimerAnnouncement(text);
   });
 
   supervisor = new Supervisor(
@@ -1008,17 +1046,19 @@ app.whenReady().then(async () => {
   // (model choice, STT backend, TTS voice, wake-word phrase/threshold).
   applyConfigToEnv();
 
-  // First-run: ensure STT/TTS model weights are present before starting
-  // sidecars. Downloads are resumable + checksummed; progress goes to the UI.
-  const modelsOk = await ensureModelsReady();
-
   // Always-on wake-word listener. Its models ship bundled, so it must NOT be
   // gated on STT/TTS model downloads — a missing/mismatched TTS voice file used
-  // to make modelsOk false and silently disable the wake word entirely.
+  // to make modelsOk false and silently disable the wake word entirely, and
+  // awaiting the download check first kept voice activation off for the whole
+  // download. Start it before (and independently of) that check.
   if (config.get('wakeword.enabled')) {
     try { await supervisor.start('wakeword'); }
     catch (e) { console.error('[ARIA] wakeword start failed:', (e as Error).message); }
   }
+
+  // First-run: ensure STT/TTS model weights are present before starting those
+  // sidecars. Downloads are resumable + checksummed; progress goes to the UI.
+  const modelsOk = await ensureModelsReady();
 
   // Pre-warm STT shortly after startup (unless disabled) so the first wake word
   // doesn't pay the whisper model-load cost mid-utterance — the main source of

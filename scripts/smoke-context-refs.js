@@ -73,6 +73,20 @@ check('secret-jwt', C.looksLikeSecret('eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3
 check('secret-prose-ok', C.looksLikeSecret('Ownership is a set of rules that govern memory.') === false);
 const keyClip = C.buildContextBlock({ clipboard: 'sk-proj-AbCdEf1234567890AbCdEf1234567890' }, ['clipboard']);
 check('block-withholds-secret', !keyClip.text.includes('sk-proj') && keyClip.used.length === 1 && keyClip.used[0].withheld === true);
+// A credential inside a longer document must still be withheld. The scan used to
+// return false immediately above 4000 characters, while buildContextBlock
+// transmits up to 6000 — so a key inside a pasted log or document went out.
+const longDoc = 'Detailed meeting notes about staffing and budget. '.repeat(110)
+  + '\nsk-SYNTHETICREVIEWONLY1234567890\n';
+check('secret-long-document-detected', C.looksLikeSecret(longDoc) === true, `${longDoc.length} chars`);
+const longBlock = C.buildContextBlock({ clipboard: longDoc }, ['clipboard']);
+check('block-withholds-secret-in-long-document',
+  !longBlock.text.includes('sk-SYNTHETIC') && longBlock.used[0].withheld === true,
+  JSON.stringify(longBlock.used));
+// ...without turning into a blanket block on ordinary long prose.
+const longProse = 'The quarterly report covers staffing and budget. '.repeat(160);
+check('long-prose-still-included',
+  C.looksLikeSecret(longProse) === false && C.buildContextBlock({ clipboard: longProse }, ['clipboard']).used[0].withheld !== true);
 // Files attached in the composer.
 const f = C.buildContextBlock({ files: [{ name: 'notes.md', text: '# Plan\nship memory' }] }, []);
 check('files-always-included', f.text.includes('notes.md') && f.text.includes('ship memory') && f.used[0].kind === 'file');

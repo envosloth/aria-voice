@@ -177,9 +177,9 @@ def _assemblyai(base, key, wav_bytes, deadline):
         # Poll immediately once after submission, then at a bounded cadence.
         if poll:
             remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            time.sleep(min(POLL_INTERVAL_S, remaining))
+            if remaining <= POLL_INTERVAL_S:
+                break  # the next permitted poll cannot fit; fall back now
+            time.sleep(POLL_INTERVAL_S)
         transcript = _request_json(base, '/v2/transcript/' + transcript_id, key,
                                    'GET', None, '', deadline)
         if transcript.get('id') != transcript_id:

@@ -376,8 +376,18 @@ def probe_start(pid):
     sc._free_port = lambda: spoof_port
     sc._emit_status = lambda *_a: None
     fake = PidServer(pid)
+    real_popen = stt_module.subprocess.Popen
+
+    def only_the_sidecar(argv, *args, **kwargs):
+        # Readiness also asks the OS who owns the listening socket now, and that
+        # query must run for real — otherwise the mock would hide the very check
+        # under test. Intercept just the sidecar spawn.
+        if isinstance(argv, (list, tuple)) and argv and str(argv[0]).endswith("fake-whisper-server"):
+            return fake
+        return real_popen(argv, *args, **kwargs)
+
     with mock.patch.dict(os.environ, {"ARIA_STT_START_TIMEOUT": "1.5", "http_proxy": "", "HTTP_PROXY": ""}, clear=False), \
-            mock.patch.object(stt_module.subprocess, "Popen", return_value=fake):
+            mock.patch.object(stt_module.subprocess, "Popen", side_effect=only_the_sidecar):
         sc._start_server("fake-whisper-server")
     return sc._server_proc is fake
 

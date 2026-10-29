@@ -688,10 +688,23 @@ export async function coordinate(
   // what I copied") needs no tools: keep it on the fast chat path.
   const contextIsTextWork = !!contextBlock && !opts.image && (isTextWorkOnContext(userMessage) || files.length > 0 && !/\b(?:open|run|execute|install|save|move|rename|delete|commit)\b/i.test(userMessage));
 
+  // A forced mode is a user instruction, not a routing guess: it applies to
+  // image turns too, and the automatic fallback below never widens it.
+  const forced: Target | null = mode === 'harness' ? 'harness' : mode === 'llm' ? 'llm' : null;
+  if (forced && ((forced === 'llm' && !hasLlm) || (forced === 'harness' && !hasHarness))) {
+    if (isCurrent()) {
+      cb.onError(forced === 'llm'
+        ? 'Routing is set to "Always the chat model", but no chat model endpoint is configured. Add one in Settings, or switch routing back to Automatic.'
+        : 'Routing is set to "Always the agent", but no agent harness endpoint is configured. Add one in Settings, or switch routing back to Automatic.');
+    }
+    return;
+  }
   // A screen-share frame is visual context for the agent: prefer the harness
   // (the agent that can see + act on the screen) when one is configured.
   let primary: Target;
-  if (contextIsTextWork && hasLlm && mode === 'auto') {
+  if (forced) {
+    primary = forced;
+  } else if (contextIsTextWork && hasLlm) {
     primary = 'llm';
   } else if (opts.image && hasHarness) {
     primary = 'harness';
@@ -738,9 +751,14 @@ export async function coordinate(
       }
     }
   }
-  const fallback: Target | null =
-    primary === 'harness' && hasLlm ? 'llm' :
-    primary === 'llm' && hasHarness ? 'harness' : null;
+  // Automatic fallback is an auto-mode convenience, and it must never widen a
+  // forced 'llm' boundary: the harness can run tools, so escalating to it after a
+  // connection error would answer with more capability than the user chose. A
+  // forced 'harness' turn may still fall back to the plain chat model (a
+  // capability reduction), which is the pre-existing outage behaviour.
+  const fallback: Target | null = mode === 'llm'
+    ? null
+    : (primary === 'harness' && hasLlm ? 'llm' : primary === 'llm' && hasHarness ? 'harness' : null);
 
   // `withImage` attaches the screen frame to THIS run. We never forward the image
   // on a fallback to a different target (a plain LLM usually can't take images —
